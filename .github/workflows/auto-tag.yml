@@ -51,9 +51,21 @@ jobs:
           echo "Listing remote tags:"
           git ls-remote --tags origin
 
+      - name: Configure Git
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Verify PAT is available
+        env:
+          PAT: ${{ secrets.PAT }}
+        run: |
+          if [ -z "$PAT" ]; then
+            echo "PAT secret is empty!" >&2
+            exit 1
+          else
+            echo "PAT secret length: ${#PAT}"
+          fi
 
       - name: Determine next tag
         id: version
