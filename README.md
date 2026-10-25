@@ -1,7 +1,5 @@
 # Warden
 
-<!-- Auto‑tag workflow ready -->
-
 [![CI](https://github.com/patpadgett/warden/actions/workflows/ci.yml/badge.svg)](https://github.com/patpadgett/warden/actions/workflows/ci.yml)
 
 **One door to your homelab.**
@@ -546,11 +544,3 @@ WARDEN_CONFIG=./warden.dev.yaml warden serve --host 127.0.0.1
 ## License
 
 MIT. See [LICENSE](LICENSE).
-
-<!-- Trigger auto‑tag workflow -->
-
-<!-- trigger -->
-
-# Trigger auto-tag
-
-# trigger again
