@@ -770,6 +770,7 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--port", type=int, default=None, help="HTTP port override")
     serve.add_argument("--https-port", type=int, default=None, help="HTTPS port override")
     serve.add_argument("--dev-tls", action="store_true", help="Generate a temporary self‑signed certificate and enable TLS for local development")
+    serve.add_argument("--no-access-log", action="store_true", help="disable uvicorn access log")
     serve.set_defaults(func=cmd_serve)
 
     init = sub.add_parser("init", help="write a starter warden.yaml")
