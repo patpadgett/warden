@@ -45,7 +45,12 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Configure Git
+      - name: Debug git auth (list tags)
+        run: |
+          echo "Remote URL: $(git config --get remote.origin.url)"
+          echo "Listing remote tags:"
+          git ls-remote --tags origin
+
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
