@@ -1,0 +1,78 @@
+name: Auto-Tag on Successful Tests
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package + dev deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Run tests
+        run: pytest -q
+
+  tag:
+    needs: test
+    if: success()
+    runs-on: ubuntu-latest
+    env:
+      PAT: ${{ secrets.PAT }}
+    steps:
+      - name: Checkout code (with PAT)
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PAT }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Verify PAT and set remote URL
+        run: |
+          if [ -z "${PAT}" ]; then
+            echo "❌ PAT secret missing" >&2
+            exit 1
+          fi
+          git remote set-url origin https://x-access-token:${PAT}@github.com/${GITHUB_REPOSITORY}.git
+          echo "Remote URL → $(git config --get remote.origin.url)"
+
+      - name: Determine next tag
+        id: version
+        run: |
+          git fetch --tags --force
+          latest=$(git tag -l 'v*' --sort=-v:refname | head -n1 || true)
+          if [ -z "$latest" ]; then
+            next="v0.1.0"
+          else
+            ver=${latest#v}
+            IFS='.' read -r major minor patch <<< "$ver"
+            patch=$((patch + 1))
+            next="v${major}.${minor}.${patch}"
+          fi
+          echo "latest=$latest"
+          echo "next=$next"
+          echo "next=$next" >> $GITHUB_OUTPUT
+
+      - name: Create and push tag
+        run: |
+          git tag -f "${{ steps.version.outputs.next }}"
+          echo "Pushing tag ${{ steps.version.outputs.next }} ..."
+          git push https://x-access-token:${PAT}@github.com/${GITHUB_REPOSITORY}.git "${{ steps.version.outputs.next }}" --force

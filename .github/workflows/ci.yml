@@ -1,8 +1,8 @@
 name: CI
 on:
   push:
-    branches:
-      - main
+    tags:
+      - 'v*'
 
 permissions:
   contents: write
@@ -64,6 +64,7 @@ jobs:
 
   publish:
     needs: build
+    if: ${{ github.ref_type == 'tag' }}
     runs-on: ubuntu-latest
     environment:
       name: pypi
