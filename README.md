@@ -550,3 +550,5 @@ MIT. See [LICENSE](LICENSE).
 <!-- Trigger auto‑tag workflow -->
 
 <!-- trigger -->
+
+# Trigger auto-tag
