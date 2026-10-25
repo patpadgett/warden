@@ -1,6 +1,6 @@
 # Warden
 
-[![CI](https://github.com/pat/warden/actions/workflows/ci.yml/badge.svg)](https://github.com/pat/warden/actions/workflows/ci.yml)
+[![CI](https://github.com/patpadgett/warden/actions/workflows/ci.yml/badge.svg)](https://github.com/patpadgett/warden/actions/workflows/ci.yml)
 
 **One door to your homelab.**
 
