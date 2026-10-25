@@ -37,6 +37,8 @@ jobs:
     needs: test
     if: success()
     runs-on: ubuntu-latest
+    env:
+      PAT: ${{ secrets.PAT }}
     steps:
       - name: Checkout code (with token)
         uses: actions/checkout@v4
@@ -56,7 +58,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Verify PAT is available
+      - name: Verify PAT and set remote
         env:
           PAT: ${{ secrets.PAT }}
         run: |
@@ -66,6 +68,9 @@ jobs:
           else
             echo "PAT secret length: ${#PAT}"
           fi
+          # Ensure remote URL includes PAT for push
+          git remote set-url origin https://x-access-token:${PAT}@github.com/${GITHUB_REPOSITORY}.git
+          echo "Remote URL set to $(git config --get remote.origin.url)"
 
       - name: Determine next tag
         id: version
