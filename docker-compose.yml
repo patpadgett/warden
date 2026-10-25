@@ -1,0 +1,36 @@
+services:
+  warden:
+    build: .
+    image: warden:local
+    container_name: warden
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      WARDEN_CONFIG: /config/warden.yaml
+      # Optional. Leave empty to let Warden print a random first-run code.
+      WARDEN_SETUP_TOKEN: ${WARDEN_SETUP_TOKEN:-}
+    ports:
+      - "8080:8080"
+      - "8443:8443"
+      # WireGuard mesh (see README). Requires the matching cap_add and a
+      # writable /etc/wireguard mount; host networking is usually needed.
+      # - "51820:51820/udp"
+    volumes:
+      # Mount the directory, not just the file: Warden replaces the YAML
+      # atomically when you save config from the dashboard.
+      - ./config:/config
+      - warden-data:/var/lib/warden
+      # Certificates are read-only. Point server.tls.certfile/keyfile at these
+      # paths, or mount your own certificate directory.
+      - ./certs:/etc/letsencrypt:ro
+    # cap_add:
+    #   - NET_ADMIN
+    # devices:
+    #   - /dev/net/tun
+    # network_mode: host
+
+volumes:
+  warden-data:

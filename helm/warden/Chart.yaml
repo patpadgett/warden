@@ -1,0 +1,6 @@
+apiVersion: v2
+name: warden
+description: A zero‑config, passkey‑protected reverse proxy and homelab dashboard.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

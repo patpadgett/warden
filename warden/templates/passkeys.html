@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">Access</p>
+    <h1>Keys to the door.</h1>
+    <p class="subhead">Passkeys are bound to this device and this domain. Add a second one before you need it — phones make excellent spares.</p>
+  </div>
+  <div class="page-actions">
+    <button class="btn btn-primary" id="add-passkey" type="button">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.6 9.1a3.6 3.6 0 1 0-2.4 0v7.1h2v-2h1.6v-2h-1.6V9.1Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M5.3 6.9a4.9 4.9 0 0 1 4.9-4.2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+      <span>Add passkey</span>
+    </button>
+  </div>
+</section>
+
+{% if added %}
+<div class="alert alert-success" role="status">Passkey added. Keep this device somewhere safe — or add another key as a backup.</div>
+{% endif %}
+
+{% if passkey_count == 1 %}
+<div class="alert alert-info" role="info">You have one passkey. A second one on another device prevents a lockout if this one is lost.</div>
+{% endif %}
+
+<div class="page-grid">
+  <div class="stack-lg">
+    <section class="card" aria-labelledby="passkeys-title">
+      <div class="card-head">
+        <h2 id="passkeys-title">Passkeys</h2>
+        <span class="aside">{{ passkey_count }} registered</span>
+      </div>
+      <div class="passkey-list" id="passkey-list">
+        {% for credential in credentials %}
+        <div class="passkey-row" data-credential-id="{{ credential.id }}" data-name="{{ credential.name }}">
+          <span class="passkey-icon" aria-hidden="true">
+            <svg viewBox="0 0 20 20"><path d="M12.6 9.1a3.6 3.6 0 1 0-2.4 0v7.1h2v-2h1.6v-2h-1.6V9.1Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M5.3 6.9a4.9 4.9 0 0 1 4.9-4.2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+          </span>
+          <div class="passkey-main">
+            <div class="passkey-name">
+              <span data-passkey-name>{{ credential.name }}</span>
+              {% if loop.first %}<span class="chip current">primary</span>{% endif %}
+              {% if credential.backup_state %}<span class="chip synced">synced</span>{% elif credential.backup_eligible %}<span class="chip">backup ready</span>{% endif %}
+            </div>
+            <div class="passkey-meta">
+              <span>added {{ credential.created_at|relative_time }}</span>
+              <span>last used {{ credential.last_used_at|relative_time }}</span>
+              {% if credential.transports %}<span>{{ credential.transports|join(' · ') }}</span>{% endif %}
+              {% if credential.user_verified %}<span>user verified</span>{% endif %}
+            </div>
+          </div>
+          <div class="passkey-actions">
+            <button class="btn btn-ghost btn-sm" type="button" data-rename-passkey>Rename</button>
+            <button class="btn btn-danger btn-sm" type="button" data-delete-passkey>Remove</button>
+          </div>
+        </div>
+        {% else %}
+        <div class="empty-list">No passkeys yet. Add one to sign in.</div>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="sessions-title">
+      <div class="card-head">
+        <h2 id="sessions-title">Sessions</h2>
+        <span class="aside">{{ session_count }} active · {{ session_ttl_hours }}h lifetime</span>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Client</th>
+              <th>Address</th>
+              <th>Last seen</th>
+              <th>Expires</th>
+              <th class="row-actions"><span class="visually-hidden">Actions</span></th>
+            </tr>
+          </thead>
+          <tbody id="session-list">
+            {% for item in sessions %}
+            <tr data-session-id="{{ item.id }}">
+              <td>
+                <span class="primary">{{ item.user_agent|client }}</span>
+                {% if item.id == current_session_id %}<span class="chip current">this device</span>{% endif %}
+              </td>
+              <td class="mono-cell">{{ item.ip or 'unknown' }}</td>
+              <td><time data-ts="{{ item.last_seen_at }}">{{ item.last_seen_at|relative_time }}</time></td>
+              <td class="mono-cell">{{ item.expires_at|absolute_time }}</td>
+              <td class="row-actions">
+                <button class="btn btn-ghost btn-sm revoke" type="button" data-revoke-session>
+                  {% if item.id == current_session_id %}Sign out{% else %}Revoke{% endif %}
+                </button>
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5" class="empty-list">No active sessions.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if session_count > 1 %}
+      <div class="card-pad" style="border-top: 1px solid var(--line); display: flex; justify-content: flex-end;">
+        <button class="btn btn-danger btn-sm" id="revoke-others" type="button">Revoke all other sessions</button>
+      </div>
+      {% endif %}
+    </section>
+  </div>
+
+  <aside class="stack">
+    <section class="card card-pad">
+      <p class="eyebrow" style="margin-bottom: 10px;">Account</p>
+      <div class="access-summary">
+        <div class="access-row">
+          <span class="access-label">Display name</span>
+          <span class="access-value"><strong>{{ user.display_name }}</strong></span>
+        </div>
+        <div class="access-row">
+          <span class="access-label">Username</span>
+          <span class="access-value mono">{{ user.username }}</span>
+        </div>
+        <div class="access-row">
+          <span class="access-label">Since</span>
+          <span class="access-value">{{ user.created_at|absolute_time }}</span>
+        </div>
+        <div class="access-row">
+          <span class="access-label">Session</span>
+          <span class="access-value">{{ session_ttl_hours }} hours</span>
+        </div>
+      </div>
+    </section>
+
+    <div class="side-note">
+      <h3>How this stays safe</h3>
+      <p>Warden stores only the public half of each passkey. The private key never leaves your device's secure enclave, and no password is ever transmitted.</p>
+      <p>Removing a passkey doesn't sign out browsers that are already signed in. Revoke sessions below if a device is lost. If you lose every key, run <code>warden auth reset</code> on the server.</p>
+    </div>
+
+    <div class="side-note warn">
+      <h3>Before you remove one</h3>
+      <p>Always leave at least one working passkey on a device you can reach. Warden refuses to delete the last key, but it can't replace a lost phone.</p>
+    </div>
+  </aside>
+</div>
+{% endblock %}
+
+{% block modals %}
+<dialog class="modal" id="passkey-modal" aria-labelledby="passkey-modal-title">
+  <form id="passkey-form" novalidate>
+    <div class="modal-head">
+      <div>
+        <h2 id="passkey-modal-title">Add a passkey</h2>
+        <p>Name it after the device or key you're enrolling.</p>
+      </div>
+      <button class="modal-close" type="button" data-close-modal aria-label="Close">
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="alert alert-error" id="passkey-error" role="alert" hidden></div>
+      <label class="field">
+        <span class="field-label">Passkey name</span>
+        <input class="input" id="passkey-name" type="text" maxlength="60" placeholder="MacBook Touch ID" autocomplete="off" required>
+      </label>
+      <p class="modal-note">Your browser will ask for the device PIN, fingerprint, face, or security key. This page needs a secure connection.</p>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" type="button" data-close-modal>Cancel</button>
+      <button class="btn btn-primary" id="passkey-submit" type="submit">
+        <span>Register passkey</span>
+        <span class="btn-spinner" aria-hidden="true"></span>
+      </button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="modal" id="rename-modal" aria-labelledby="rename-modal-title">
+  <form id="rename-form" novalidate>
+    <div class="modal-head">
+      <div>
+        <h2 id="rename-modal-title">Rename passkey</h2>
+        <p>A name you'll recognise later.</p>
+      </div>
+      <button class="modal-close" type="button" data-close-modal aria-label="Close">
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="alert alert-error" id="rename-error" role="alert" hidden></div>
+      <label class="field">
+        <span class="field-label">Passkey name</span>
+        <input class="input" id="rename-name" type="text" maxlength="60" autocomplete="off" required>
+      </label>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" type="button" data-close-modal>Cancel</button>
+      <button class="btn btn-primary" id="rename-submit" type="submit">
+        <span>Save name</span>
+        <span class="btn-spinner" aria-hidden="true"></span>
+      </button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}

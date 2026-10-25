@@ -1,0 +1,341 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">Control room</p>
+    <h1>Your homelab,<br>behind one door.</h1>
+    <p class="subhead">Every service below gets a real hostname, a valid certificate, and a passkey at the edge. Add a route and it is live immediately.</p>
+  </div>
+  <div class="page-actions">
+    <button class="btn btn-secondary" id="refresh-status" type="button">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M16.4 8.3A6.6 6.6 0 0 0 4.1 6.1L2.6 7.6M3.6 11.7a6.6 6.6 0 0 0 12.3 2.2l1.5-1.5M2.6 3.8v3.8h3.8M17.4 16.2v-3.8h-3.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>Refresh</span>
+    </button>
+    <button class="btn btn-primary" id="add-service" type="button">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      <span>Add service</span>
+    </button>
+  </div>
+</section>
+
+{% for warning in warnings %}
+<div class="alert alert-warn" role="status">{{ warning }}</div>
+{% endfor %}
+
+<section class="stats-grid" aria-label="Overview">
+  <div class="stat">
+    <div class="stat-label">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+      Services online
+    </div>
+    <div class="stat-value"><span id="stat-online">{{ stats.online }}</span><span class="unit">/ {{ stats.services }}</span></div>
+    <div class="stat-note"><span class="up">{{ stats.enabled }}</span> enabled · {{ stats.services - stats.enabled }} paused</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8h3l2-4.5 3 9 2-4.5h3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Requests proxied
+    </div>
+    <div class="stat-value"><span id="stat-requests">{{ "{:,}".format(stats.requests) }}</span></div>
+    <div class="stat-note">since this process started</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.1 14 5.2v5.6L8 13.9l-6-3.1V5.2L8 2.1Z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M8 7.4v3.1M8 5.4v.2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+      Upstream errors
+    </div>
+    <div class="stat-value"><span id="stat-errors">{{ "{:,}".format(stats.errors) }}</span></div>
+    <div class="stat-note">5xx and unreachable responses</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="5.2" cy="5.4" r="2.1" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M1.8 13c0-2 1.6-3.4 3.4-3.4S8.6 11 8.6 13M10 7.2h4.2M10 9.8h3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+      Sign-ins today
+    </div>
+    <div class="stat-value"><span id="stat-signins">{{ signins_today }}</span></div>
+    <div class="stat-note">last sign-in {{ last_login_display }}</div>
+  </div>
+</section>
+
+<div class="dash-grid">
+  <section aria-labelledby="services-title">
+    <div class="section-head">
+      <h2 class="section-title" id="services-title">Services <span class="count">{{ services|length }}</span></h2>
+      <span class="section-aside"><span class="status-dot"></span> live health</span>
+    </div>
+
+    <div class="service-grid" id="service-grid">
+      {% for service in services %}
+      <article class="service-card{% if service.status == 'offline' %} is-offline{% endif %}" data-service='{{ service.json|tojson }}' data-host="{{ service.host }}">
+        <div class="service-top">
+          <span class="service-icon tone-{{ service.tone }}" aria-hidden="true">{{ service.initials }}</span>
+          <div class="service-title">
+            <h3>{{ service.name }}</h3>
+            <span class="service-host">{{ service.host }}</span>
+          </div>
+          <span class="status-pill {{ service.status }}" data-status-pill>
+            <span class="dot"></span><span data-status-label>{{ service.status_label }}</span>
+          </span>
+        </div>
+
+        <div class="service-meta">
+          <span class="meta-item" title="Upstream">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.1"/><path d="M2.2 8h11.6M8 2c1.8 1.8 2.7 3.8 2.7 6S9.8 12.2 8 14C6.2 12.2 5.3 10.2 5.3 8S6.2 3.8 8 2Z" fill="none" stroke="currentColor" stroke-width="1.1"/></svg>
+            {{ service.upstream }}
+          </span>
+          {% if service.route.auth %}
+          <span class="meta-item protected" title="Passkey required">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.6 7V5.5a3.4 3.4 0 0 1 6.8 0V7M3.5 7h9v6.2h-9V7Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+            passkey
+          </span>
+          {% else %}
+          <span class="meta-item" title="No sign-in required">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.6 7V5.5a3.4 3.4 0 0 1 6.4-1.3M3.5 7h9v6.2h-9V7Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+            public
+          </span>
+          {% endif %}
+          {% if service.route.websocket %}
+          <span class="meta-item" title="WebSockets proxied">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m8.8 1.8-5 7h3.4l-.8 5.4 5-7H8L8.8 1.8Z" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/></svg>
+            ws
+          </span>
+          {% endif %}
+        </div>
+
+        <div class="service-foot">
+          <span class="latency" data-latency>{{ service.latency ~ ' ms' if service.latency else '—' }}</span>
+          <span class="req-count" data-requests>{{ service.requests }} req</span>
+          <span class="card-actions">
+            <a class="card-link" href="{{ service.url }}" target="_blank" rel="noopener" title="Open {{ service.name }}">
+              Open
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5h6.5V10M12.3 3.7 4 12M9 12.5H3.5V7" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
+            <button class="card-link" type="button" data-edit-service title="Edit {{ service.name }}">Edit</button>
+            <button class="icon-button danger" type="button" data-delete-service title="Remove {{ service.name }}">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 4.8h9M6.4 4.8V3.3h3.2v1.5M4.6 4.8l.6 8h5.6l.6-8M6.7 7.2v3.2M9.3 7.2v3.2" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span class="visually-hidden">Remove</span>
+            </button>
+          </span>
+        </div>
+      </article>
+      {% else %}
+      <div class="empty-services">
+        <span class="empty-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="22" height="22"><path d="M12 3 20 7v10l-8 4-8-4V7l8-4Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M12 12v9M4 7l8 5 8-5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+        </span>
+        <h3>The door is open.</h3>
+        <p>Nothing is behind it yet. Add a hostname and an upstream, and Warden handles the rest.</p>
+        <button class="btn btn-primary" type="button" data-open-service>Add your first service</button>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <aside class="dash-side" aria-label="Details">
+    <section class="panel">
+      <div class="panel-head">
+        <h2 class="panel-title">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8h3l2-4.5 3 9 2-4.5h3" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Traffic
+        </h2>
+        <a class="panel-link" href="/activity">All activity →</a>
+      </div>
+      <div class="traffic-feed" id="traffic-feed">
+        {% for event in traffic %}
+        <div class="feed-row">
+          <span class="feed-method">{{ event.method[:6] }}</span>
+          <span class="feed-main">
+            <span class="feed-host">{{ event.host }}</span>
+            <span class="feed-path">{{ event.path }}</span>
+          </span>
+          <span class="feed-status{% if event.status >= 500 %} error{% endif %}">{{ event.status }}</span>
+          <time class="feed-time" data-ts="{{ event.timestamp }}">{{ event.timestamp|relative_time }}</time>
+        </div>
+        {% else %}
+        <div class="feed-empty" data-feed-empty>Requests will appear here as they pass through.</div>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2 class="panel-title">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.6 7V5.5a3.4 3.4 0 0 1 6.8 0V7M3.5 7h9v6.2h-9V7Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+          Access
+        </h2>
+        <a class="panel-link" href="/passkeys">Manage →</a>
+      </div>
+      <div class="panel-body access-summary">
+        <div class="access-row">
+          <span class="access-label">Passkeys</span>
+          <span class="access-value access-passkeys">
+            <strong>{{ passkey_count }}</strong>
+            <span class="key-dots" aria-hidden="true">
+              {% for index in range(5) %}
+              <span class="key-dot{% if index >= passkey_count %} empty{% endif %}"></span>
+              {% endfor %}
+            </span>
+          </span>
+        </div>
+        <div class="access-row">
+          <span class="access-label">Active sessions</span>
+          <span class="access-value"><strong>{{ session_count }}</strong></span>
+        </div>
+        <div class="access-row">
+          <span class="access-label">Last sign-in</span>
+          <span class="access-value">{% if last_login %}<time data-ts="{{ last_login.created_at }}">{{ last_login_display }}</time>{% else %}never{% endif %}</span>
+        </div>
+        <div class="access-row">
+          <span class="access-label">Signed in today</span>
+          <span class="access-value"><strong>{{ signins_today }}</strong></span>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2 class="panel-title">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8 13 3.6v3.9c0 3.2-2 5.7-5 6.8-3-1.1-5-3.6-5-6.8V3.6L8 1.8Z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="m5.8 8 1.5 1.5 3-3.1" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          TLS certificate
+        </h2>
+        <a class="panel-link" href="/config">Config →</a>
+      </div>
+      <div class="panel-body">
+        {% if tls.enabled and tls.certificate %}
+        <div class="access-summary">
+          <div class="access-row">
+            <span class="access-label">Status</span>
+            <span class="access-value">{% if tls.certificate.expired %}<span class="tls-warn">expired</span>{% else %}<strong>valid</strong>{% endif %}</span>
+          </div>
+          <div class="access-row">
+            <span class="access-label">Expires</span>
+            <span class="access-value">{{ tls.certificate.not_after|absolute_time }} <span class="dim">({{ tls.certificate.days_left|round|int }}d)</span></span>
+          </div>
+          <div class="access-row">
+            <span class="access-label">Issuer</span>
+            <span class="access-value" title="{{ tls.certificate.issuer }}">{{ tls.certificate.issuer|truncate_middle(34) }}</span>
+          </div>
+        </div>
+        <div class="tls-meter">
+          <div class="tls-bar"><span style="width: {{ tls.progress }}%"></span></div>
+          <div class="tls-meta">
+            <span>{{ tls.certificate.days_left|round|int }} days left</span>
+            <span>{% if tls.renew_command %}auto-renew hook{% else %}manual renewal{% endif %}</span>
+          </div>
+        </div>
+        {% if tls.renewal %}
+        <p class="card-note" style="margin-top: 12px;">
+          Last renewal {{ tls.renewal.timestamp|relative_time }}:
+          {% if tls.renewal.ok %}<span class="up">succeeded</span>. Restart Warden to load the new certificate.{% else %}<span class="tls-warn">failed</span>. Check the service log.{% endif %}
+        </p>
+        {% endif %}
+        {% elif tls.enabled %}
+        <div class="alert alert-error" style="margin: 0;">{{ tls.error or 'The certificate could not be read.' }}</div>
+        {% else %}
+        <p class="card-note">TLS is not configured. Warden is serving plain HTTP — passkeys require a secure context, so use this dashboard from localhost or put a TLS terminator in front.</p>
+        <p class="card-note" style="margin-top: 8px;"><a class="text-link" href="/config">Edit configuration →</a></p>
+        {% endif %}
+      </div>
+    </section>
+  </aside>
+</div>
+{% endblock %}
+
+{% block modals %}
+<dialog class="modal" id="service-modal" aria-labelledby="service-modal-title">
+  <form id="service-form" novalidate>
+    <div class="modal-head">
+      <div>
+        <h2 id="service-modal-title">Add a service</h2>
+        <p id="service-modal-copy">Point a hostname at something running on your network.</p>
+      </div>
+      <button class="modal-close" type="button" data-close-modal aria-label="Close">
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+
+    <div class="modal-body">
+      <div class="alert alert-error" id="service-error" role="alert" hidden></div>
+      <div class="form-row">
+        <label class="field">
+          <span class="field-label">Hostname</span>
+          <input class="input" id="service-host" name="host" type="text" placeholder="app.home.lan" autocomplete="off" autocapitalize="none" spellcheck="false" required>
+          <span class="field-hint">The address you'll open. It must resolve to this server.</span>
+        </label>
+        <label class="field">
+          <span class="field-label">Upstream</span>
+          <input class="input" id="service-upstream" name="upstream" type="text" placeholder="http://192.168.1.20:3000" autocomplete="off" autocapitalize="none" spellcheck="false" required>
+          <span class="field-hint">Where Warden forwards requests.</span>
+        </label>
+      </div>
+
+      <div class="form-row">
+        <label class="field">
+          <span class="field-label">Display name <span class="optional">optional</span></span>
+          <input class="input" id="service-name" name="name" type="text" placeholder="Media server" maxlength="60" autocomplete="off">
+        </label>
+        <label class="field">
+          <span class="field-label">Icon <span class="optional">optional</span></span>
+          <input class="input" id="service-icon" name="icon" type="text" placeholder="🎬 or MS" maxlength="4" autocomplete="off">
+        </label>
+      </div>
+
+      <div class="switch-grid">
+        <label class="switch">
+          <input type="checkbox" id="service-auth" name="auth" checked>
+          <span class="switch-track"></span>
+          <span class="switch-copy"><strong>Require a passkey</strong><span>Protect this route</span></span>
+        </label>
+        <label class="switch">
+          <input type="checkbox" id="service-enabled" name="enabled" checked>
+          <span class="switch-track"></span>
+          <span class="switch-copy"><strong>Service enabled</strong><span>Pause without deleting</span></span>
+        </label>
+      </div>
+
+      <details class="advanced">
+        <summary>Advanced routing</summary>
+        <div class="form-stack">
+          <div class="form-row">
+            <label class="field">
+              <span class="field-label">Health path</span>
+              <input class="input" id="service-health-path" name="health_path" type="text" placeholder="/" autocomplete="off">
+            </label>
+            <label class="field">
+              <span class="field-label">Public paths <span class="optional">comma separated</span></span>
+              <input class="input" id="service-public-paths" name="public_paths" type="text" placeholder="/assets/*, /health" autocomplete="off">
+            </label>
+          </div>
+          <div class="switch-grid">
+            <label class="switch">
+              <input type="checkbox" id="service-websocket" name="websocket" checked>
+              <span class="switch-track"></span>
+              <span class="switch-copy"><strong>WebSockets</strong><span>Relay upgrade traffic</span></span>
+            </label>
+            <label class="switch">
+              <input type="checkbox" id="service-preserve-host" name="preserve_host">
+              <span class="switch-track"></span>
+              <span class="switch-copy"><strong>Preserve Host</strong><span>Send the public hostname</span></span>
+            </label>
+            <label class="switch">
+              <input type="checkbox" id="service-verify-tls" name="verify_tls" checked>
+              <span class="switch-track"></span>
+              <span class="switch-copy"><strong>Verify upstream TLS</strong><span>Turn off for self-signed</span></span>
+            </label>
+          </div>
+        </div>
+      </details>
+      <p class="modal-note">Changes are written to <code>warden.yaml</code> and take effect immediately.</p>
+    </div>
+
+    <div class="modal-foot">
+      <button class="btn btn-ghost" type="button" data-close-modal>Cancel</button>
+      <button class="btn btn-primary" id="service-submit" type="submit">
+        <span>Save service</span>
+        <span class="btn-spinner" aria-hidden="true"></span>
+      </button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>{{ page_title }} · Warden</title>
+  <link rel="icon" href="{{ static_prefix }}/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="{{ static_prefix }}/warden.css">
+</head>
+<body>
+  <main class="center-page">
+    <div class="error-card">
+      <a class="brand" href="/">
+        <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
+          <path d="M16 2.7 26.8 6.6v8.2c0 6.9-4.4 12.1-10.8 14.5C9.6 26.9 5.2 21.7 5.2 14.8V6.6L16 2.7Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+          <circle cx="16" cy="13.1" r="2.7" fill="none" stroke="currentColor" stroke-width="1.8"/>
+          <path d="M16 15.8v5.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
+        <span class="brand-word">warden</span>
+      </a>
+      <p class="error-code">{{ code }}{% if host %} · {{ host }}{% endif %}</p>
+      <h1>{{ title }}</h1>
+      <p>{{ message }}</p>
+      <div class="error-actions">
+        <a class="btn btn-primary" href="{{ retry_url or '/' }}">Try again</a>
+        {% if admin_url %}
+        <a class="btn btn-secondary" href="{{ admin_url }}">Open Warden</a>
+        {% endif %}
+      </div>
+      {% if detail %}
+      <p class="error-detail">{{ detail }}</p>
+      {% endif %}
+    </div>
+  </main>
+</body>
+</html>

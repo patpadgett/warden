@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">Access Control</p>
+    <h1>Who holds the keys.</h1>
+    <p class="subhead">Manage administrators and users. Every user must register at least one passkey to gain access to the door.</p>
+  </div>
+  <div class="page-actions">
+    <button class="btn btn-primary" id="add-user" type="button">
+      <svg viewBox="0 0 20 0" aria-hidden="true"><path d="M10 4v12M4 10h12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      <span>Add user</span>
+    </button>
+  </div>
+</section>
+
+<div class="card">
+  <table class="user-table">
+    <thead>
+      <tr>
+        <th>User</th>
+        <th>Role</th>
+        <th>Joined</th>
+        <th class="text-right">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for user in users %}
+      <tr data-user-id="{{ user.id }}">
+        <td>
+          <div class="user-info">
+            <span class="user-name">{{ user.display_name }}</span>
+            <span class="user-handle">@{{ user.username }}</span>
+          </div>
+        </td>
+        <td>
+          <span class="badge {{ 'badge-admin' if user.is_admin else 'badge-user' }}">
+            {{ 'Administrator' if user.is_admin else 'User' }}
+          </span>
+        </td>
+        <td>{{ user.created_at | relative_time }}</td>
+        <td class="text-right">
+          <button class="btn btn-ghost btn-sm toggle-admin" type="button">
+            {{ 'Demote' if user.is_admin else 'Promote' }}
+          </button>
+          <button class="btn btn-ghost btn-sm btn-danger delete-user" type="button">
+            Delete
+          </button>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="modal" id="user-modal">
+  <div class="modal-shell">
+    <div class="modal-head">
+      <h2>Add new user</h2>
+      <button class="btn-close" type="button">&times;</button>
+    </div>
+    <form id="user-form" class="form-stack">
+      <label class="field">
+        <span class="field-label">Username</span>
+        <input class="input" name="username" type="text" required placeholder="e.g. jane">
+      </label>
+      <label class="field">
+        <span class="field-label">Display Name</span>
+        <input class="input" name="display_name" type="text" required placeholder="e.g. Jane Doe">
+      </label>
+      <label class="field checkbox">
+        <input type="checkbox" name="is_admin">
+        <span class="label-text">Grant administrator privileges</span>
+      </label>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" type="button" id="cancel-user">Cancel</button>
+        <button class="btn btn-primary" type="submit">Create user</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<style>
+.user-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+.user-table th, .user-table td {
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.user-info {
+  display: flex;
+  flex-direction: column;
+}
+.user-name {
+  font-weight: 600;
+  color: var(--text);
+}
+.user-handle {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.badge {
+  font-size: 0.75rem;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+.badge-admin {
+  background: var(--lime-soft);
+  color: var(--lime);
+}
+.badge-user {
+  background: var(--panel-3);
+  color: var(--muted);
+}
+.text-right {
+  text-align: right;
+}
+</style>
+{% endblock %}

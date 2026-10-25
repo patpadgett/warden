@@ -1,0 +1,411 @@
+"""TLS certificate inspection and optional certbot renewal hook.
+
+This module defines utilities for reading X.509 certificates, checking their
+validity, and automatically renewing them via an ACME client (Let's Encrypt or
+compatible). It also provides the :class:`ACMEManager` class for handling ACME
+challenges and the :func:`renewal_loop` coroutine for periodic renewal.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import time
+from pathlib import Path
+import logging
+try:
+    from acme import client as acme_client
+    from acme import messages
+    from acme import challenges
+    from acme import jose
+    from acme import errors
+except ImportError:
+    acme_client = None
+    messages = None
+    challenges = None
+    jose = None
+    errors = None
+
+from cryptography import x509
+from dataclasses import dataclass
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.x509.oid import NameOID
+from datetime import datetime, timezone
+
+from typing import Any
+from warden.config import ConfigManager
+
+logger = logging.getLogger("warden.tls")
+
+def generate_self_signed_cert(cert_path: Path, key_path: Path, common_name: str) -> None:
+    """Generate a self‑signed TLS certificate for development use.
+
+    The certificate is valid for one year and includes the *common_name* as a
+    Subject Alternative Name. The private key is an unencrypted RSA 2048‑bit
+    key written in PEM format.
+    """
+    from datetime import datetime, timedelta
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography import x509
+    from cryptography.x509.oid import NameOID
+
+    # Private key
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    # Subject and issuer are the same for a self‑signed cert
+    subject = issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])
+    now = datetime.utcnow()
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(private_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(days=1))
+        .not_valid_after(now + timedelta(days=365))
+        .add_extension(
+            x509.SubjectAlternativeName([x509.DNSName(common_name)]), critical=False
+        )
+        .sign(private_key, hashes.SHA256())
+    )
+    cert_path.parent.mkdir(parents=True, exist_ok=True)
+    cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    key_path.parent.mkdir(parents=True, exist_ok=True)
+    key_path.write_bytes(
+        private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.TraditionalOpenSSL,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+    )
+
+
+class TLSError(Exception):
+    """Error raised for TLS‑related operations, such as missing files or validation failures."""
+
+
+class ACMEToken:
+    """Short-lived token for an ACME challenge."""
+    def __init__(self, token: str, validity: float):
+        self.token = token
+        self.validity = validity
+        self.created_at = time.time()
+
+    @property
+    def expired(self) -> bool:
+        return time.time() > self.created_at + self.validity
+
+
+class ACMEManager:
+    """Handles automated certificate issuance via ACME (Let's Encrypt/ZeroSSL)."""
+    """Handles automated certificate issuance via ACME (Let's Encrypt/ZeroSSL)."""
+    def __init__(self, manager: ConfigManager) -> None:
+        self.manager = manager
+        self._tokens: dict[str, ACMEToken] = {}
+        self._account_key: Path | None = None
+
+    def get_challenge_response(self, token: str) -> str | None:
+        t = self._tokens.get(token)
+        if t and not t.expired:
+            return t.token
+        return None
+
+    def set_challenge_token(self, token: str, validity: float = 3600) -> None:
+        self._tokens[token] = ACMEToken(token, validity)
+
+    def _get_account_key(self) -> Path:
+        config = self.manager.config
+        path = config.base_dir() / ".warden" / "acme_account.key"
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+            with open(path, "wb") as f:
+                f.write(key.private_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PrivateFormat.TraditionalOpenSSL,
+                    encryption_algorithm=serialization.NoEncryption(),
+                ))
+        return path
+
+    async def request_certificate(self, domain: str, acme_url: str) -> tuple[Path, Path]:
+        """Obtain a certificate for *domain* using the ACME provider at *acme_url*.
+
+        The flow is:
+        1️⃣ Load or create an account key (stored under ``.warden/acme_account.key``).
+        2️⃣ Register a new ACME account (or reuse an existing one).
+        3️⃣ Create a new order for the domain.
+        4️⃣ For each authorization, fulfill the HTTP‑01 challenge by storing the
+           token via :meth:`set_challenge_token`. The ``ProxyEngine`` will serve the
+           ``/.well-known/acme-challenge/<token>`` response.
+        5️⃣ Wait until the challenge is marked *valid* by the CA.
+        6️⃣ Generate a CSR for the domain, finalize the order and download the
+           certificate chain.
+        7️⃣ Write the certificate and the private key to the paths defined in the
+           configuration (``server.tls.certfile`` / ``server.tls.keyfile``).
+        """
+        if acme_client is None:
+            raise TLSError("acme library not installed")
+        # The ACME library is synchronous; we run it in a thread so the FastAPI
+        # event loop stays responsive.
+        return await asyncio.to_thread(self._run_acme_flow, domain, acme_url)
+
+    def _run_acme_flow(self, domain: str, acme_url: str) -> tuple[Path, Path]:
+        # Load/create the account private key.
+        account_key_path = self._get_account_key()
+        with open(account_key_path, "rb") as f:
+            account_key = jose.JWKRSA.load(f.read())
+
+        # Initialise ACME client.
+        net = acme_client.ClientV2(directory=acme_url, key=account_key)
+
+        # Register a new account (terms‑of‑service must be agreed to).
+        try:
+            net.new_account(messages.NewRegistration.from_data(email=None, terms_of_service_agreed=True))
+        except errors.Error as exc:
+            # If the account already exists, ``new_account`` raises a conflict.
+            # The library stores the registration on the client object, so we can
+            # continue using ``net``.
+            logger.debug("ACME account already exists: %s", exc)
+
+        # Create a new order for the domain.
+        order = net.new_order(messages.NewOrder(identifiers=[messages.Identifier(typ=messages.IDENTIFIER_DNS, value=domain)]))
+
+        # Fulfil each HTTP‑01 challenge.
+        for authz in order.authorizations:
+            # Find the HTTP‑01 challenge.
+            http_challenge = None
+            for chall in authz.body.challenges:
+                if isinstance(chall.chall, challenges.HTTP01):
+                    http_challenge = chall
+                    break
+            if http_challenge is None:
+                raise TLSError(f"No HTTP‑01 challenge found for {domain}")
+
+            token = http_challenge.chall.token
+            # Store token so the proxy can serve it.
+            self.set_challenge_token(token)
+
+            # Build the response (key authorization) and tell the CA we are ready.
+            response = http_challenge.chall.response(account_key)
+            net.answer_challenge(http_challenge, response)
+
+            # Poll the authorization until it is ``valid``.
+            while True:
+                authz_updated = net.poll(authz)
+                status = authz_updated.body.status
+                if status == "valid":
+                    break
+                if status == "invalid":
+                    raise TLSError(f"HTTP‑01 challenge validation failed for {domain}")
+                time.sleep(2)
+
+        # Generate a CSR for the domain.
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        csr = x509.CertificateSigningRequestBuilder().subject_name(
+            x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, domain)])
+        ).add_extension(
+            x509.SubjectAlternativeName([x509.DNSName(domain)]), critical=False,
+        ).sign(private_key, hashes.SHA256())
+
+        # Finalise the order.
+        finalized = net.finalize_order(order, csr.public_bytes(serialization.Encoding.DER))
+
+        # The certificate chain is returned as PEM.
+        cert_pem = finalized.fullchain_pem
+
+        # Write cert and key to the configured locations.
+        config = self.manager.config
+        cert_path = config.certfile_path
+        key_path = config.keyfile_path
+        if not cert_path or not key_path:
+            raise TLSError("TLS certfile/keyfile not configured in warden.yaml")
+        cert_path.parent.mkdir(parents=True, exist_ok=True)
+        key_path.parent.mkdir(parents=True, exist_ok=True)
+        cert_path.write_text(cert_pem)
+        key_path.write_text(
+            private_key.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.TraditionalOpenSSL,
+                encryption_algorithm=serialization.NoEncryption(),
+            ).decode("utf-8")
+        )
+        logger.info("Obtained ACME certificate for %s", domain)
+        return cert_path, key_path
+
+@dataclass(slots=True)
+class CertificateInfo:
+    path: Path
+    subject: str
+    issuer: str
+    not_before: datetime
+    not_after: datetime
+    days_left: float
+    sans: list[str]
+
+    @property
+    def expired(self) -> bool:
+        return self.days_left <= 0
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "path": str(self.path),
+            "subject": self.subject,
+            "issuer": self.issuer,
+            "not_before": self.not_before.timestamp(),
+            "not_after": self.not_after.timestamp(),
+            "days_left": round(self.days_left, 1),
+            "sans": self.sans,
+            "expired": self.expired,
+        }
+
+
+def read_certificate(path: str | Path) -> CertificateInfo:
+    cert_path = Path(path)
+    try:
+        raw = cert_path.read_bytes()
+    except OSError as exc:
+        raise TLSError(f"Could not read certificate {cert_path}: {exc}") from exc
+    try:
+        certificate = x509.load_pem_x509_certificate(raw)
+    except ValueError as exc:
+        raise TLSError(f"Could not parse PEM certificate {cert_path}.") from exc
+    try:
+        not_after = certificate.not_valid_after_utc
+        not_before = certificate.not_valid_before_utc
+    except AttributeError:
+        not_after = certificate.not_valid_after.replace(tzinfo=timezone.utc)
+        not_before = certificate.not_valid_before.replace(tzinfo=timezone.utc)
+    sans: list[str] = []
+    try:
+        extension = certificate.extensions.get_extension_for_class(x509.SubjectAlternativeName)
+        sans = extension.value.get_values_for_type(x509.DNSName)
+    except x509.ExtensionNotFound:
+        # No SubjectAlternativeName extension, continue without SANs
+        pass
+    now = datetime.now(timezone.utc)
+    days_left = (not_after - now).total_seconds() / 86400
+    return CertificateInfo(
+        path=cert_path,
+        subject=certificate.subject.rfc4514_string(),
+        issuer=certificate.issuer.rfc4514_string(),
+        not_before=not_before,
+        not_after=not_after,
+        days_left=days_left,
+        sans=sans,
+    )
+
+
+def certificate_status(config: WardenConfig) -> dict[str, Any]:
+    tls = config.server.tls
+    status: dict[str, Any] = {
+        "enabled": tls.enabled,
+        "configured": bool(tls.certfile and tls.keyfile),
+        "ok": False,
+        "error": None,
+        "path": str(config.certfile_path) if config.certfile_path else None,
+        "renew_command": bool(tls.renew_command),
+        "certificate": None,
+    }
+    if not tls.enabled:
+        return status
+    if not config.certfile_path:
+        status["error"] = "No certificate file configured."
+        return status
+    try:
+        info = read_certificate(config.certfile_path)
+    except TLSError as exc:
+        status["error"] = str(exc)
+        return status
+    status["ok"] = not info.expired
+    status["certificate"] = info.as_dict()
+    return status
+
+
+def validate_runtime_files(config: WardenConfig) -> None:
+    """Fail fast when TLS files are missing or unreadable at startup."""
+    if not config.server.tls.enabled:
+        return
+    certfile = config.certfile_path
+    keyfile = config.keyfile_path
+    if not certfile or not keyfile:
+        raise TLSError("TLS is enabled but certfile/keyfile are not configured.")
+    if not certfile.exists():
+        raise TLSError(f"TLS certificate not found: {certfile}")
+    if not keyfile.exists():
+        raise TLSError(f"TLS private key not found: {keyfile}")
+    read_certificate(certfile)
+    try:
+        keyfile.read_bytes()
+    except OSError as exc:
+        raise TLSError(f"Could not read TLS private key {keyfile}: {exc}") from exc
+
+
+async def renewal_loop(app: Any) -> None:
+    """Periodically inspect the cert and run the configured renewal command."""
+    manager: ConfigManager = app.state.manager
+    app.state.cert_renewal = None
+    await asyncio.sleep(15)
+    while True:
+        config = manager.config
+        tls = config.server.tls
+        if not (tls.enabled and tls.renew_command):
+            return
+        try:
+            status = certificate_status(config)
+            info = status.get("certificate")
+            due = info is None or float(info.get("days_left", 999)) <= tls.renew_days_before
+            if due:
+                await _run_renewal(app, config)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Certificate renewal check failed")
+        interval = max(1, tls.check_interval_hours) * 3600
+        try:
+            await asyncio.sleep(interval)
+        except asyncio.CancelledError:
+            raise
+
+
+async def _run_renewal(app: Any, config: WardenConfig) -> None:
+    tls = config.server.tls
+    command = tls.renew_command
+    if not command:
+        return
+    logger.info("Certificate renewal due; running configured renewal command")
+    started = time.time()
+    try:
+        process = await asyncio.create_subprocess_shell(
+            command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            cwd=str(config.base_dir()),
+        )
+        try:
+            output, _ = await asyncio.wait_for(process.communicate(), timeout=600)
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+            raise TLSError("Renewal command timed out after 10 minutes.")
+        text = output.decode("utf-8", "replace").strip()
+        result = {
+            "ok": process.returncode == 0,
+            "command": command,
+            "output": text[-4000:],
+            "timestamp": started,
+            "restart_required": process.returncode == 0,
+        }
+        app.state.cert_renewal = result
+        if process.returncode == 0:
+            logger.info("Certificate renewal command succeeded. Restart Warden to serve the new certificate.")
+        else:
+            logger.warning("Certificate renewal command failed with exit code %s", process.returncode)
+    except Exception as exc:
+        app.state.cert_renewal = {
+            "ok": False,
+            "command": command,
+            "output": str(exc),
+            "timestamp": started,
+            "restart_required": False,
+        }
+        logger.warning("Certificate renewal failed: %s", exc)

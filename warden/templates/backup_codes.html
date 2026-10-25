@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Backup Codes</h2>
+{% if codes %}
+<table>
+  <thead><tr><th>ID</th><th>Created At</th><th>Used At</th></tr></thead>
+  <tbody>
+    {% for c in codes %}
+    <tr>
+      <td>{{ c.id }}</td>
+      <td>{{ c.created_at }}</td>
+      <td>{{ c.used_at or "" }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>No backup codes.</p>
+{% endif %}
+<form method="post" action="/backup_codes/generate">
+  <button type="submit">Generate New Backup Code</button>
+</form>
+{% endblock %}

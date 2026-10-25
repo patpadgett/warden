@@ -1,0 +1,120 @@
+# Warden configuration — copy to warden.yaml and edit.
+#
+# Host names must resolve to this machine. The admin host and every protected
+# route must live under the WebAuthn RP ID so passkeys can be used for sign-in.
+#
+# Run `warden check` after editing, then restart `warden serve`.
+
+version: 1
+
+server:
+  # The dashboard is served only on this hostname. It cannot also be a route.
+  admin_host: warden.home.lan
+  bind: 0.0.0.0
+  http_port: 8080
+  https_port: 8443
+
+  # How long a passkey sign-in stays valid.
+  session_ttl_hours: 168
+
+  # Send the signed-in username to protected upstreams in this header.
+  # Set to null to disable identity forwarding.
+  forward_user_header: X-Warden-User
+
+  # Optional parent domain for the session cookie, enabling single sign-on
+  # between the dashboard and protected services on sibling hostnames.
+  # cookie_domain: home.lan
+
+  # Cookie/scheme controls. Normally leave these commented out.
+  # secure_cookies: true
+  # external_scheme: https
+  # public_url: https://warden.home.lan
+
+  # Only enable when Warden is behind a reverse proxy you control. Otherwise a
+  # client can spoof X-Forwarded-* headers.
+  # trust_proxy_headers: false
+
+  # request_timeout_seconds: 60
+  # health_interval_seconds: 30
+  # log_level: info
+
+  # TLS is required for passkeys on anything other than localhost. Provide a
+  # PEM certificate and key. Warden serves HTTPS on https_port and runs a small
+  # HTTP companion on http_port for ACME challenges and HTTPS redirects.
+  # tls:
+  #   enabled: true
+  #   certfile: /etc/letsencrypt/live/warden.home.lan/fullchain.pem
+  #   keyfile: /etc/letsencrypt/live/warden.home.lan/privkey.pem
+  #   acme_webroot: /var/www/warden-acme
+  #   renew_command: certbot renew --quiet
+  #   renew_days_before: 30
+  #   check_interval_hours: 12
+
+database:
+  # Contains the admin account, passkeys, sessions, mesh keys, and audit log.
+  path: /var/lib/warden/warden.db
+
+webauthn:
+  # Passkeys are scoped to this domain. Changing it invalidates existing
+  # passkeys. Use the parent domain so services on subdomains share sign-in.
+  rp_id: home.lan
+  rp_name: Warden
+  # Require a PIN/biometric check even when the authenticator supports it as
+  # optional. Some platform passkeys only support user verification, so the
+  # default works everywhere.
+  require_user_verification: false
+  # Extra browser origins allowed to complete passkey ceremonies, e.g. when
+  # the dashboard is reached through another hostname or port.
+  # allowed_origins:
+  #   - https://warden.home.lan
+  #   - https://warden.home.lan:8443
+
+mesh:
+  # Optional WireGuard hub. Requires wireguard-tools (wg, wg-quick) and enough
+  # privilege to manage the interface; see README.md.
+  enabled: false
+  interface: wg0
+  address: 10.44.0.1/24
+  listen_port: 51820
+  # Public host:port clients dial. Without this, generated client configs are
+  # printed with a reminder instead of a working Endpoint line.
+  # endpoint: vpn.home.lan:51820
+  # dns: 10.44.0.1
+  client_allowed_ips: 10.44.0.0/24
+  # config_path: /etc/wireguard/wg0.conf
+
+routes:
+  - host: app.home.lan
+    upstream: http://192.168.1.20:3000
+    name: App
+    auth: true
+    websocket: true
+    health_path: /
+
+  - host: status.home.lan
+    upstream: http://192.168.1.21:3001
+    name: Status
+    auth: false
+
+  # Wildcards are supported; the longest matching suffix wins and exact hosts
+  # always take priority. A wildcard cannot capture the admin host.
+  # - host: "*.apps.home.lan"
+  #   upstream: http://192.168.1.30:8080
+  #   name: Apps
+  #   auth: true
+
+  # Every route supports these optional fields:
+  #   enabled: true              pause routing without deleting the route
+  #   websocket: true            allow WebSocket upgrades
+  #   preserve_host: false       forward the public Host instead of the upstream
+  #   verify_tls: true           verify an https upstream certificate
+  #   rewrite_redirects: true    rewrite upstream Locations to the public host
+  #   rewrite_cookies: true      drop upstream Domain attributes that don't match
+  #   timeout_seconds: 60        per-route upstream timeout
+  #   health_path: /             path polled by the dashboard health monitor
+  #   icon: "▣"                  emoji or short label shown on the dashboard
+  #   public_paths:              paths that skip auth (fnmatch syntax)
+  #     - /health
+  #     - /webhooks/*
+  #   headers:                   headers added to upstream requests
+  #     X-Route: app

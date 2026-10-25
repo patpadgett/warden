@@ -1,0 +1,30 @@
+# Default values for Warden Helm chart.
+# Adjust these according to your deployment environment.
+replicaCount: 1
+
+image:
+  repository: YOUR_DOCKER_REGISTRY/warden
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+service:
+  type: ClusterIP
+  port: 8080   # HTTP port
+  httpsPort: 8443   # HTTPS port
+
+# Optional resources configurationesources: {}
+
+# Node selector, tolerations and affinity (if needed)
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Provide a default Warden configuration. It can be overridden by supplying a custom config.
+config: |
+  server:
+    admin_host: warden.home.lan
+    bind: 0.0.0.0
+    http_port: 8080
+    https_port: 8443
+    tls:
+      enabled: false

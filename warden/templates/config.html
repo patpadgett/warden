@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">Configuration</p>
+    <h1>The whole door,<br>in one file.</h1>
+    <p class="subhead">Edit <code>warden.yaml</code> directly. Warden validates before writing, keeps a backup in memory, and applies route changes without a restart.</p>
+  </div>
+  <div class="page-actions">
+    <a class="btn btn-secondary" href="/">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 4 6.5 10l6 6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>Dashboard</span>
+    </a>
+  </div>
+</section>
+
+<div class="alert alert-warn" id="restart-note" role="status" hidden></div>
+
+<div class="config-grid">
+  <section class="editor-card" aria-label="YAML configuration editor">
+    <div class="editor-bar">
+      <span class="editor-file">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.8h5l3 3v9.4H4V1.8Z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M9 2v3.2h3" fill="none" stroke="currentColor" stroke-width="1.1"/></svg>
+        <span id="editor-filename">{{ config_path or 'in-memory configuration' }}</span>
+      </span>
+      <span class="editor-status" id="editor-status"><span class="dot"></span><span id="editor-status-text">unchanged</span></span>
+    </div>
+
+    <pre class="config-errors" id="config-errors">{% if config_error %}{{ config_error }}{% endif %}</pre>
+
+    <label class="visually-hidden" for="config-editor">warden.yaml</label>
+    <textarea class="editor-area" id="config-editor" spellcheck="false" autocapitalize="none" autocomplete="off" wrap="off">{{ raw_config }}</textarea>
+
+    <div class="editor-foot">
+      <span class="editor-hint" id="editor-hint">Ctrl / ⌘ + S saves · validation runs before every write</span>
+      <div class="editor-actions">
+        <button class="btn btn-ghost btn-sm" id="config-reload" type="button">Revert</button>
+        <button class="btn btn-secondary btn-sm" id="config-validate" type="button">
+          <span>Validate</span>
+          <span class="btn-spinner" aria-hidden="true"></span>
+        </button>
+        <button class="btn btn-primary btn-sm" id="config-save" type="button">
+          <span>Save changes</span>
+          <span class="btn-spinner" aria-hidden="true"></span>
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <aside class="stack">
+    <section class="card">
+      <div class="card-head">
+        <h2>Live instance</h2>
+        <span class="aside">running</span>
+      </div>
+      <div class="card-pad access-summary">
+        <div class="access-row">
+          <span class="access-label">Admin host</span>
+          <span class="access-value mono">{{ admin_host }}</span>
+        </div>
+        <div class="access-row">
+          <span class="access-label">WebAuthn RP ID</span>
+          <span class="access-value mono">{{ rp_id }}</span>
+        </div>
+        <div class="access-row">
+          <span class="access-label">Cookie scope</span>
+          <span class="access-value mono">{{ cookie_domain }}</span>
+        </div>
+        <div class="access-row">
+          <span class="access-label">Session lifetime</span>
+          <span class="access-value">{{ session_ttl_hours }} hours</span>
+        </div>
+        <div class="access-row">
+          <span class="access-label">Routes</span>
+          <span class="access-value"><strong>{{ route_count }}</strong></span>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>TLS</h2>
+        <span class="aside">{% if tls.enabled %}enabled{% else %}off{% endif %}</span>
+      </div>
+      <div class="card-pad access-summary">
+        {% if tls.enabled and tls.certificate %}
+        <div class="access-row">
+          <span class="access-label">Expires</span>
+          <span class="access-value">{{ tls.certificate.not_after|absolute_time }}</span>
+        </div>
+        <div class="access-row">
+          <span class="access-label">Days left</span>
+          <span class="access-value {% if tls.certificate.days_left < 15 %}tls-warn{% endif %}">{{ tls.certificate.days_left|round|int }}</span>
+        </div>
+        <div class="access-row">
+          <span class="access-label">Renewal hook</span>
+          <span class="access-value">{% if tls.renew_command %}configured{% else %}none{% endif %}</span>
+        </div>
+        {% elif tls.enabled %}
+        <p class="card-note">{{ tls.error or 'The certificate could not be read.' }}</p>
+        {% else %}
+        <p class="card-note">Plain HTTP. Add <code>server.tls</code> with a certificate and key, then restart Warden.</p>
+        {% endif %}
+      </div>
+    </section>
+
+    <div class="side-note">
+      <h3>How saving works</h3>
+      <p>Warden parses the whole file, validates every hostname, upstream, WebAuthn origin, and cookie scope, then writes atomically with mode <code>0600</code>.</p>
+      <p>If validation fails, the file on disk is untouched and the editor keeps your draft.</p>
+    </div>
+
+    <div class="side-note warn">
+      <h3>Restart-only changes</h3>
+      <p>Routes, protection, and headers apply immediately. Changes to <code>server</code>, <code>tls</code>, <code>webauthn.rp_id</code>, <code>database</code>, or <code>mesh</code> need a restart.</p>
+    </div>
+
+    <div class="side-note">
+      <h3>Before you edit</h3>
+      <p>Keep a copy: <code>cp warden.yaml warden.yaml.bak</code>. Every route host must be the admin host, its parent domain, or be marked <code>auth: false</code>.</p>
+    </div>
+  </aside>
+</div>
+{% endblock %}

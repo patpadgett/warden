@@ -1,0 +1,78 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Warden Metrics",
+    "uid": "warden-dashboard",
+    "schemaVersion": 30,
+    "timezone": "browser",
+    "refresh": "5s",
+    "version": 1,
+    "panels": [
+      {
+        "type": "stat",
+        "title": "Uptime (seconds)",
+        "datasource": "Prometheus",
+        "gridPos": {"x": 0, "y": 0, "w": 12, "h": 4},
+        "targets": [{"expr": "warden_uptime_seconds", "refId": "A"}]
+      },
+      {
+        "type": "stat",
+        "title": "Total Requests",
+        "datasource": "Prometheus",
+        "gridPos": {"x": 12, "y": 0, "w": 12, "h": 4},
+        "targets": [{"expr": "sum(warden_route_requests_total)", "refId": "A"}]
+      },
+      {
+        "type": "stat",
+        "title": "Auth Success",
+        "datasource": "Prometheus",
+        "gridPos": {"x": 0, "y": 4, "w": 12, "h": 4},
+        "targets": [{"expr": "warden_auth_success_total", "refId": "A"}]
+      },
+      {
+        "type": "stat",
+        "title": "Auth Failure",
+        "datasource": "Prometheus",
+        "gridPos": {"x": 12, "y": 4, "w": 12, "h": 4},
+        "targets": [{"expr": "warden_auth_failure_total", "refId": "A"}]
+      },
+      {
+        "type": "stat",
+        "title": "Roles Created",
+        "datasource": "Prometheus",
+        "gridPos": {"x": 0, "y": 8, "w": 12, "h": 4},
+        "targets": [{"expr": "warden_role_created_total", "refId": "A"}]
+      },
+      {
+        "type": "stat",
+        "title": "Roles Assigned",
+        "datasource": "Prometheus",
+        "gridPos": {"x": 12, "y": 8, "w": 12, "h": 4},
+        "targets": [{"expr": "warden_role_assigned_total", "refId": "A"}]
+      },
+      {
+        "type": "stat",
+        "title": "Backup Code Used",
+        "datasource": "Prometheus",
+        "gridPos": {"x": 0, "y": 12, "w": 12, "h": 4},
+        "targets": [{"expr": "warden_backup_code_used_total", "refId": "A"}]
+      },
+      {
+        "type": "stat",
+        "title": "OTP Success",
+        "datasource": "Prometheus",
+        "gridPos": {"x": 0, "y": 16, "w": 12, "h": 4},
+        "targets": [{"expr": "warden_otp_success_total", "refId": "A"}]
+      },
+      {
+        "type": "stat",
+        "title": "OTP Failure",
+        "datasource": "Prometheus",
+        "gridPos": {"x": 12, "y": 16, "w": 12, "h": 4},
+        "targets": [{"expr": "warden_otp_failure_total", "refId": "A"}]
+      }
+    ]
+
+  },
+  "overwrite": true
+}

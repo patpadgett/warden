@@ -1,0 +1,47 @@
+[Unit]
+Description=Warden passkey-protected reverse proxy
+Documentation=file:///opt/warden/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=warden
+Group=warden
+Environment=WARDEN_CONFIG=/etc/warden/warden.yaml
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/etc/warden/warden.env
+ExecStart=/opt/warden/bin/warden serve
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+
+# Allow binding ports below 1024 without running as root.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+
+# Sandboxing. Adjust ReadWritePaths if your config, database, certificate, or
+# ACME paths live elsewhere.
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+UMask=0077
+ReadWritePaths=/var/lib/warden /etc/warden /var/www/warden-acme
+
+# TLS certificates must be readable by the warden user. If your certificate
+# lives under /etc/letsencrypt (root-only by default), grant read access with a
+# group/ACL or deploy a readable copy to /etc/warden/certs.
+#
+# The WireGuard mesh is intentionally not enabled here: wg-quick needs broader
+# privileges than this sandbox grants. See README.md if you want to run the
+# mesh from this service.
+
+[Install]
+WantedBy=multi-user.target

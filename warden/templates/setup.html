@@ -1,0 +1,56 @@
+{% extends "auth_base.html" %}
+
+{% block content %}
+<div class="auth-card auth-card-setup">
+  <div class="setup-mark" aria-hidden="true">
+    <span class="setup-step">01</span>
+    <div class="setup-line"></div>
+    <span class="setup-step muted">02</span>
+  </div>
+
+  <div class="auth-heading">
+    <p class="eyebrow">First run</p>
+    <h2>Claim your Warden.</h2>
+    <p>Create the first passkey. It becomes the key to every service you put behind this door.</p>
+  </div>
+
+  {% if setup_expired %}
+  <div class="alert alert-warn" role="alert">
+    The setup code has expired. Restart Warden to generate a fresh one, then reload this page.
+  </div>
+  {% endif %}
+
+  <div class="alert alert-error" id="auth-error" role="alert" hidden></div>
+  <div class="alert alert-warn" id="auth-warning" role="alert" hidden></div>
+
+  <form id="setup-form" class="form-stack" novalidate>
+    <label class="field">
+      <span class="field-label">Username</span>
+      <input class="input" id="setup-username" name="username" type="text" autocomplete="username"
+             autocapitalize="none" spellcheck="false" placeholder="pat" required minlength="2" maxlength="32">
+    </label>
+    <label class="field">
+      <span class="field-label">Display name <span class="optional">optional</span></span>
+      <input class="input" id="setup-display-name" name="display_name" type="text" autocomplete="name"
+             placeholder="Pat" maxlength="80">
+    </label>
+    <label class="field">
+      <span class="field-label">Setup code</span>
+      <input class="input input-code" id="setup-code" name="setup_code" type="text"
+             autocomplete="one-time-code" autocapitalize="characters" spellcheck="false"
+             placeholder="XXXX-XXXX-XXXX" required>
+    </label>
+    <p class="field-hint">The one-time code is printed in the <code>warden serve</code> startup logs. Set <code>WARDEN_SETUP_TOKEN</code> to choose your own.</p>
+
+    <button class="btn btn-primary btn-block btn-passkey" id="setup-submit" type="submit">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.2a4.1 4.1 0 0 0-4.1 4.1v2h1.7v-2a2.4 2.4 0 0 1 4.8 0v2H9.3v8.9H7.6v-7h4.8v3.2h1.7v-3.2h1.7v-1.9h-7v-2A4.1 4.1 0 0 1 10 2.2Z" fill="currentColor"/></svg>
+      <span id="setup-submit-label">Create account &amp; register passkey</span>
+      <span class="btn-spinner" aria-hidden="true"></span>
+    </button>
+  </form>
+
+  <p class="auth-hint">
+    Warden stores a public key, never a secret. Your passkey stays in your device's secure enclave or security key.
+  </p>
+</div>
+{% endblock %}

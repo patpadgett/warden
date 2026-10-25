@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">TLS</p>
+    <h1>TLS Certificate</h1>
+    <p class="subhead">View the current TLS certificate status and renewal configuration.</p>
+  </div>
+</section>
+
+<div class="card">
+  {% if tls.certificate %}
+    <p><strong>Status:</strong> {% if tls.certificate.expired %}<span class="tls-warn">expired</span>{% else %}<strong>valid</strong>{% endif %}</p>
+    <p><strong>Expires:</strong> {{ tls.certificate.not_after|absolute_time }} ({{ tls.certificate.days_left|round|int }} days left)</p>
+    <p><strong>Issuer:</strong> {{ tls.certificate.issuer }}</p>
+    <p><strong>Renewal:</strong> {% if tls.renew_command %}auto ({{ tls.renew_command }}){% else %}manual{% endif %}</p>
+  {% elif tls.enabled %}
+    <p class="alert alert-error">{{ tls.error or 'The certificate could not be read.' }}</p>
+  {% else %}
+    <p>TLS is disabled. Enable it in the <a href="/config">configuration</a>.</p>
+  {% endif %}
+</div>
+{% endblock %}

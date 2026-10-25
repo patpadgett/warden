@@ -1,0 +1,67 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "warden"
+version = "0.1.0"
+description = "A zero-config, passkey-protected reverse proxy and homelab dashboard."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Warden contributors" }]
+keywords = ["reverse-proxy", "homelab", "webauthn", "passkeys", "wireguard", "self-hosted"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Web Environment",
+  "Framework :: FastAPI",
+  "Intended Audience :: System Administrators",
+
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Internet :: Proxy Servers",
+]
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "httpx>=0.27",
+  "webauthn>=2.0",
+  "jinja2>=3.1",
+  "aiosqlite>=0.20",
+  "ruamel.yaml>=0.18",
+  "websockets>=13",
+  "cryptography>=42",
+  "acme>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "pytest-asyncio>=0.24",
+  "asgi-lifespan>=2.1",
+]
+
+[project.scripts]
+warden = "warden.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["warden*"]
+
+[tool.setuptools.package-data]
+warden = [
+  "templates/*.html",
+  "templates/static/*",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+filterwarnings = [
+  "ignore::DeprecationWarning:webauthn.*",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
