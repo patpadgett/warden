@@ -70,7 +70,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/project/warden/
+      url: https://pypi.org/p/warden-mesh/
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -91,7 +91,7 @@ jobs:
           python -m build --sdist --wheel --outdir dist/
 
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@v1.14.3
+        uses: pypa/gh-action-pypi-publish@release/v1
 
 
 
