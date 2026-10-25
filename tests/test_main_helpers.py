@@ -89,4 +89,4 @@ def test_error_response_returns_json_when_client_accepts_json():
     assert payload["detail"] == "Missing resource"
     # Cache‑Control must be set to no‑store for error responses.
     assert response.headers["Cache-Control"] == "no-store"
-```
+
