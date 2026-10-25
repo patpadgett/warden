@@ -92,11 +92,10 @@ jobs:
       - name: Create and push tag
         env:
           NEW_TAG: ${{ steps.version.outputs.next }}
+          PAT: ${{ secrets.PAT }}
         run: |
-          # Force-create the tag (overwrites if it already exists)
+          # Create/overwrite tag locally
           git tag -f "$NEW_TAG"
-          echo "Attempting dry-run push..."
-          git push origin "$NEW_TAG" --dry-run
-          echo "Now pushing tag..."
-          git push origin "$NEW_TAG" --force
+          echo "Pushing tag $NEW_TAG..."
+          git push https://x-access-token:${PAT}@github.com/${GITHUB_REPOSITORY}.git "$NEW_TAG" --force
 
