@@ -1,5 +1,7 @@
 # Warden
 
+<!-- Auto‑tag workflow ready -->
+
 [![CI](https://github.com/patpadgett/warden/actions/workflows/ci.yml/badge.svg)](https://github.com/patpadgett/warden/actions/workflows/ci.yml)
 
 **One door to your homelab.**
