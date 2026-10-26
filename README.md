@@ -59,8 +59,6 @@ is active (for example after it expires), restart Warden to generate a fresh one
 - **OpenAPI documentation**: The admin API OpenAPI schema is available at `/_warden/openapi.json` and an interactive Swagger UI is served at `/_warden/docs`. Both endpoints are protected by admin‑host authentication.
 - **Prometheus metrics**: Request metrics, authentication counters, OTP counters, role changes, backup code usage, and service latency are exposed at `/_warden/metrics` and also at `/metrics`. These endpoints require an authenticated admin session and the correct host.
 
-
-
 1. **Give Warden a name.** `warden.home.lan` is the dashboard; `home.lan` is the
    WebAuthn RP ID. Create DNS records (or `/etc/hosts` entries) for the admin host
    and every route, all pointing at the Warden machine.
@@ -259,7 +257,6 @@ Warden exposes a rich set of Prometheus metrics at `GET /_warden/metrics`:
 A starter Grafana dashboard is provided in `grafana/warden-dashboard.json`. Import it into Grafana to visualize uptime, request volume, auth success/failure, and role activity.
 
 ---
-
 
 - **Services** — add, edit, pause, and remove routes; open services; see latency,
   status, and traffic.
@@ -489,7 +486,6 @@ Warden supports optional TOTP‑based two‑factor authentication.
 
 The admin dashboard now includes a **Backup Codes** page at ``/backup_codes``. It lists all backup codes belonging to the current admin user, showing when each code was created and whether it has been used. A **Generate New Backup Code** button creates a fresh code via the ``POST /backup_codes/generate`` endpoint and redirects back to the list.
 
-
 Warden supports one‑time backup codes for account recovery. An admin can generate a code via the API and a user can log in with it.
 
 - `POST /_warden/api/backup_codes` – creates a new backup code (requires an authenticated admin session).
@@ -497,14 +493,9 @@ Warden supports one‑time backup codes for account recovery. An admin can gener
 
 The metric `warden_backup_code_used_total` records each successful backup‑code login.
 
-
-
 ## Backup and recovery
 
 Back up your configuration, database, and TLS certificates.
-
-
-
 
 - the YAML config (contains secrets such as mesh settings and renewal hooks),
 - the SQLite database (use `sqlite3 warden.db ".backup backup.db"` or stop Warden
