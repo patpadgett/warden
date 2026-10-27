@@ -26,7 +26,7 @@ from warden.config import (
     WardenConfig,
     restart_required,
 )
-from warden.db import AlreadyExistsError, Credential, Session, User, Role, DatabaseError
+from warden.db import AlreadyExistsError, Credential, Session, User, DatabaseError
 from warden.mesh import MeshError
 from warden.templating import templates
 from warden.tls import certificate_status
@@ -92,10 +92,6 @@ class UserUpdatePayload(BaseModel):
     is_admin: bool | None = None
 
 
-class RolePayload(BaseModel):
-    name: str
-    description: str | None = None
-
 class MeshPeerPayload(BaseModel):
     name: str
     address: str | None = None
@@ -129,12 +125,11 @@ def _user(request: Request) -> User:
     return _session(request).user
 
 
-async def _require_role(request: Request, role_name: str) -> None:
+# ---------------------------------------------------------------------- Admin access guard (binary is_admin)
+async def _require_admin(request: Request) -> None:
     user = _user(request)
-    db = _db(request)
-    if await db.user_has_role(user.id, role_name):
-        return
-    raise HTTPException(403, f"User lacks required role: {role_name}")
+    if not user.is_admin:
+        raise HTTPException(403, "Admin access required")
 
 
 
@@ -492,16 +487,6 @@ async def tls_page(request: Request) -> Response:
     context.update({"tls": tls_info})
     return _render(request, "tls.html", context)
 
-@router.get("/roles")
-async def roles_page(request: Request) -> Response:
-    """Render RBAC roles management page."""
-    _guard_host(request)
-    db = _db(request)
-    roles = await db.list_roles()
-    context = _base_context(request, page="roles", title="Roles")
-    context.update({"roles": roles})
-    return _render(request, "roles.html", context)
-
 @router.get("/config")
 async def config_page(request: Request) -> Response:
     """Render the configuration page."""
@@ -649,51 +634,7 @@ async def create_backup_code(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True, "code": code})
 
 
-# ---------------------------------------------------------------------- RBAC
-@router.get("/_warden/api/roles")
-async def list_roles(request: Request) -> JSONResponse:
-    _guard_host(request)
-    await _require_role(request, "admin")
-    db = _db(request)
-    roles = await db.list_roles()
-    return JSONResponse({"ok": True, "roles": [{"id": r.id, "name": r.name, "description": r.description} for r in roles]})
-
-@router.post("/_warden/api/roles")
-async def create_role(request: Request, payload: RolePayload) -> JSONResponse:
-    _guard_host(request)
-    await _require_role(request, "admin")
-    db = _db(request)
-    role = await db.create_role(payload.name, payload.description)
-    # Record metric
-    request.app.state.stats.inc_role_created()
-    return JSONResponse({"ok": True, "role": {"id": role.id, "name": role.name, "description": role.description}})
-
-@router.delete("/_warden/api/roles/{role_id}")
-async def delete_role(request: Request, role_id: int) -> JSONResponse:
-    _guard_host(request)
-    await _require_role(request, "admin")
-    changed = await _db(request).delete_role(role_id)
-    if not changed:
-        return JSONResponse({"detail": "Role not found."}, status_code=404)
-    request.app.state.stats.inc_role_deleted()
-    return JSONResponse({"ok": True})
-
-@router.post("/_warden/api/users/{user_id}/roles/{role_id}")
-async def assign_user_role(request: Request, user_id: int, role_id: int) -> JSONResponse:
-    _guard_host(request)
-    await _require_role(request, "admin")
-    await _db(request).assign_role(user_id, role_id)
-    request.app.state.stats.inc_role_assigned()
-    return JSONResponse({"ok": True})
-
-@router.delete("/_warden/api/users/{user_id}/roles/{role_id}")
-async def remove_user_role(request: Request, user_id: int, role_id: int) -> JSONResponse:
-    _guard_host(request)
-    await _require_role(request, "admin")
-    await _db(request).remove_role(user_id, role_id)
-    request.app.state.stats.inc_role_removed()
-    return JSONResponse({"ok": True})
-
+# ---------------------------------------------------------------------- Status
 @router.get("/_warden/api/status")
 async def status_api(request: Request) -> JSONResponse:
     config = _guard_host(request)
@@ -975,14 +916,14 @@ async def mesh_status(request: Request) -> JSONResponse:
 @router.post("/_warden/api/proxy/reset-clients")
 async def reset_proxy_clients(request: Request) -> JSONResponse:
     _guard_host(request)
-    await _require_role(request, "admin")
+    await _require_admin(request)
     request.app.state.proxy.reset_clients()
     return JSONResponse({"ok": True})
 
 @router.post("/_warden/api/mesh/rotate-hub-key")
 async def rotate_mesh_hub_key(request: Request) -> JSONResponse:
     _guard_host(request)
-    await _require_role(request, "admin")
+    await _require_admin(request)
     mesh = _mesh(request)
     try:
         new_key = await mesh.rotate_hub_key()

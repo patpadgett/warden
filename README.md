@@ -231,18 +231,11 @@ See the fully commented example in
 
 ## Role‑Based Access Control (RBAC)
 
-Warden now supports fine‑grained role‑based access control.
+Access is binary: an account is either admin (`is_admin: 1`) or not. Only admin accounts can access the dashboard and manage users, routes, TLS, mesh, or audit logs. The `admin` role is no longer used — admin status is a user-level boolean.
 
-* **Roles** – defined via the admin API (`/_warden/api/roles`). Each role has a name and optional description.
-* **User‑role assignments** – assign roles to users with `POST /_warden/api/users/{user_id}/roles/{role_id}` and remove them with the corresponding `DELETE` endpoint.
-* **Permission checks** – the admin UI and API enforce that only users with the `admin` role can manage roles, users, and other privileged actions. Use the helper `_require_role(request, "admin")` in custom endpoints if needed.
-* **Built‑in role** – the `admin` role is created automatically on first use and should be granted to the initial administrator account.
+The UI includes a **Users** page where administrators view users and toggle the `is_admin` flag.
 
-The UI now includes a **Users** page where you can view users and manage their role assignments.
-
-The **Roles** page (`/roles`) lets administrators view, create, and delete roles directly from the dashboard.
-
-**What roles control:** RBAC governs access to the Warden admin dashboard and API (`/_warden/api/*`) — for example, only users with the `admin` role can create/delete roles, manage users, edit routes, or view audit logs. Roles do **not** restrict upstream services directly (those use `auth: true/false` and session cookies); roles protect the management layer.
+**Access is binary.** Each user is either administrator (`is_admin`) or standard. Only administrators can access the dashboard. The `Users` page lets admins view users and toggle the `is_admin` flag.
 
 ---
 
@@ -254,7 +247,7 @@ Warden exposes a rich set of Prometheus metrics at `GET /_warden/metrics`:
 * Per‑host request, error, latency, and authenticated request counters (`warden_route_*`).
 * Authentication counters: `warden_auth_success_total` and `warden_auth_failure_total`.
 * OTP counters: `warden_otp_success_total` and `warden_otp_failure_total`.
-* RBAC counters: `warden_role_created_total`, `warden_role_deleted_total`, `warden_role_assigned_total`, `warden_role_removed_total`.
+* Admin and authentication counters: `warden_auth_success_total`, `warden_auth_failure_total`, `warden_otp_success_total`, `warden_otp_failure_total`.
 * Backup‑code counters: `warden_backup_code_used_total` – total times a backup code was used for login.
 
 A starter Grafana dashboard is provided in `grafana/warden-dashboard.json`. Import it into Grafana to visualize uptime, request volume, auth success/failure, and role activity.

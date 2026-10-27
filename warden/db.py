@@ -118,19 +118,7 @@ CREATE TABLE IF NOT EXISTS mesh_peers (
     last_handshake REAL
 );
 
--- RBAC tables
-CREATE TABLE IF NOT EXISTS roles (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE,
-    description TEXT
-);
-
-CREATE TABLE IF NOT EXISTS user_roles (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
-    UNIQUE(user_id, role_id)
-);
+-- users table carries is_admin flag
 """
 
 
@@ -192,12 +180,6 @@ class Challenge:
     created_at: float
     expires_at: float
 
-
-@dataclass(slots=True)
-class Role:
-    id: int
-    name: str
-    description: str | None = None
 
 @dataclass(slots=True)
 class AuditEvent:
@@ -1080,82 +1062,4 @@ class Database:
         )
         return [Role(id=row["id"], name=row["name"], description=row["description"]) for row in rows]
 
-    async def user_has_role(self, user_id: int, role_name: str) -> bool:
-        row = await self._fetchone(
-            "SELECT 1 FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = ? AND r.name = ?",
-            (user_id, role_name),
-        )
-        return bool(row)
-
-    async def create_role(self, name: str, description: str | None = None) -> Role:
-        role_id = await self._write("INSERT INTO roles (name, description) VALUES (?, ?)", (name, description))
-        return await self.get_role(role_id)
-
-    async def get_role(self, role_id: int) -> Role | None:
-        row = await self._fetchone("SELECT * FROM roles WHERE id = ?", (role_id,))
-        if row:
-            return Role(id=row["id"], name=row["name"], description=row["description"])
-        return None
-
-    async def list_roles(self) -> list[Role]:
-        rows = await self._fetchall("SELECT * FROM roles ORDER BY name")
-        return [Role(id=row["id"], name=row["name"], description=row["description"]) for row in rows]
-
-    async def delete_role(self, role_id: int) -> bool:
-        conn = self._require_conn()
-        async with self._lock:
-            cursor = await conn.execute("DELETE FROM roles WHERE id = ?", (role_id,))
-            await conn.commit()
-            changed = cursor.rowcount
-            await cursor.close()
-        return bool(changed)
-
-    async def assign_role(self, user_id: int, role_id: int) -> bool:
-        # Use INSERT OR IGNORE to avoid duplicate
-        await self._write("INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)", (user_id, role_id))
-        return True
-
-    async def remove_role(self, user_id: int, role_id: int) -> bool:
-        await self._write("DELETE FROM user_roles WHERE user_id = ? AND role_id = ?", (user_id, role_id))
-        return True
-
-    async def set_mesh_handshake(self, peer_id: int, timestamp: float | None) -> None:
-        await self._write(
-            "UPDATE mesh_peers SET last_handshake = ? WHERE id = ?", (timestamp, peer_id)
-        )
-
-    # ------------------------------------------------------------------- reset
-    async def reset_auth(self) -> None:
-        if self._conn is None:
-            await self.init()
-        conn = self._require_conn()
-        async with self._lock:
-            await conn.execute("DELETE FROM sessions")
-            await conn.execute("DELETE FROM challenges")
-            await conn.execute("DELETE FROM credentials")
-            await conn.execute("DELETE FROM users")
-            await conn.execute(
-                "DELETE FROM settings WHERE key IN "
-                "('setup_code_hash', 'setup_code_expires_at')"
-            )
-            await conn.commit()
-
-    async def vacuum(self) -> None:
-        if self.is_memory:
-            return
-        conn = self._require_conn()
-        await conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-
-@dataclass(slots=True)
-class BackupCode:
-    id: int
-    user_id: int
-    code_hash: str
-    created_at: float
-    used_at: float | None
-
-@dataclass(slots=True)
-class OTPSecret:
-    user_id: int
-    secret: str
-    created_at: float
+    

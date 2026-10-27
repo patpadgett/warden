@@ -87,10 +87,6 @@ class Stats:
         self.auth_failure = 0
         self.otp_success = 0
         self.otp_failure = 0
-        self.role_created = 0
-        self.role_deleted = 0
-        self.role_assigned = 0
-        self.role_removed = 0
         self.backup_code_used = 0
         self.rate_limit_allowed = 0
         self.rate_limit_blocked = 0
@@ -152,18 +148,6 @@ class Stats:
 
     def inc_otp_failure(self) -> None:
         self.otp_failure += 1
-
-    def inc_role_created(self) -> None:
-        self.role_created += 1
-
-    def inc_role_deleted(self) -> None:
-        self.role_deleted += 1
-
-    def inc_role_assigned(self) -> None:
-        self.role_assigned += 1
-
-    def inc_role_removed(self) -> None:
-        self.role_removed += 1
 
     def inc_backup_code_used(self) -> None:
         self.backup_code_used += 1
@@ -249,18 +233,6 @@ class Stats:
         lines.append(f'# HELP {OTP_FAILURE_METRIC} Total failed OTP verifications')
         lines.append(f'# TYPE {OTP_FAILURE_METRIC} counter')
         lines.append(f'{OTP_FAILURE_METRIC} {self.otp_failure}')
-        lines.append('# HELP warden_role_created_total Total roles created')
-        lines.append('# TYPE warden_role_created_total counter')
-        lines.append(f'warden_role_created_total {self.role_created}')
-        lines.append('# HELP warden_role_deleted_total Total roles deleted')
-        lines.append('# TYPE warden_role_deleted_total counter')
-        lines.append(f'warden_role_deleted_total {self.role_deleted}')
-        lines.append('# HELP warden_role_assigned_total Total role assignments')
-        lines.append('# TYPE warden_role_assigned_total counter')
-        lines.append(f'warden_role_assigned_total {self.role_assigned}')
-        lines.append('# HELP warden_role_removed_total Total role removals')
-        lines.append('# TYPE warden_role_removed_total counter')
-        lines.append(f'warden_role_removed_total {self.role_removed}')
         lines.append(f'# HELP {BACKUP_CODE_USED_METRIC} Total backup code usage')
         lines.append(f'# TYPE {BACKUP_CODE_USED_METRIC} counter')
         lines.append(f'{BACKUP_CODE_USED_METRIC} {self.backup_code_used}')

@@ -49,14 +49,6 @@ def test_stats_init_and_inc() -> None:
     assert s.rate_limit_allowed == 1
     s.inc_rate_limit_blocked()
     assert s.rate_limit_blocked == 1
-    s.inc_role_created()
-    assert s.role_created == 1
-    s.inc_role_deleted()
-    assert s.role_deleted == 1
-    s.inc_role_assigned()
-    assert s.role_assigned == 1
-    s.inc_role_removed()
-    assert s.role_removed == 1
     s.inc_backup_code_used()
     assert s.backup_code_used == 1
 
