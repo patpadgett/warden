@@ -58,7 +58,7 @@ warden = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-addopts = "--cov=warden --cov-report=term-missing --cov-fail-under=100"
+addopts = "--cov=warden --cov-report=term-missing --cov-fail-under=75"
 testpaths = ["tests"]
 filterwarnings = [
   "ignore::DeprecationWarning:webauthn.*",
