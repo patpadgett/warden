@@ -242,6 +242,8 @@ The UI now includes a **Users** page where you can view users and manage their r
 
 The **Roles** page (`/roles`) lets administrators view, create, and delete roles directly from the dashboard.
 
+**What roles control:** RBAC governs access to the Warden admin dashboard and API (`/_warden/api/*`) — for example, only users with the `admin` role can create/delete roles, manage users, edit routes, or view audit logs. Roles do **not** restrict upstream services directly (those use `auth: true/false` and session cookies); roles protect the management layer.
+
 ---
 
 ## Monitoring & Metrics
@@ -450,8 +452,8 @@ WireGuard interface needs broader privileges than the sandbox allows.
 
 ## Security notes
 
-- Warden is **single-admin**. Additional passkeys attach to the same account.
-  There is no password fallback and no user self-registration.
+- Warden is **single-admin by default** (one admin account, multiple passkeys allowed). The admin account can manage additional users and assign RBAC roles (`admin`, custom roles) through the dashboard. There is no password fallback and no open user self-registration.
+- Multi-user access is through the **RBAC layer**: additional users are created by the admin (`Users` page), may be granted roles (`Roles` page), and must register at least one passkey. Only users holding the `admin` role can manage roles, users, or other privileged actions. The built-in `admin` role is created automatically and should be granted to the initial administrator.
 - Sessions are opaque 256-bit tokens stored as SHA-256 hashes in SQLite. Cookies
   are `HttpOnly`, `SameSite=Lax`, and `Secure` when the request is HTTPS. The
   session cookie never reaches upstream services.
@@ -495,6 +497,8 @@ Warden supports one‑time backup codes for account recovery. An admin can gener
 - `POST /_warden/auth/login/backup` – logs in using a backup code.
 
 The metric `warden_backup_code_used_total` records each successful backup‑code login.
+
+- `GET /_warden/api/audit/export` — export the audit trail as JSON (authenticated admin session).
 
 ## Backup and recovery
 

@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <h2>Backup Codes</h2>
+<p class="help">One-time recovery codes for lost passkeys. Each code can be used once to log in via <code>/auth/login/backup</code>. Only admin users can generate new codes.</p>
 {% if codes %}
 <table>
   <thead><tr><th>ID</th><th>Created At</th><th>Used At</th></tr></thead>
