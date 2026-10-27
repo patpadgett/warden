@@ -25,8 +25,8 @@ We welcome contributions! This guide will help you get started.
    - Add type hints where appropriate.
    - Update or add unit tests under `tests/`.
    - Ensure `pytest` passes (`pytest -q`).
-   - Verify coverage stays at 100%.
-   - Note: `ConfigManager` uses duplicate docstrings; keep docstrings single and concise.
+   - Verify coverage is tracked (`pytest --cov=warden`); 100% is the goal, current baseline 75.75%.
+   - Note: docstrings are kept concise and single; `ConfigManager` duplicate was cleaned.
 
 5. **Run the test suite**:
 
