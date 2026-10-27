@@ -590,6 +590,25 @@ class Database:
             await cursor.close()
         return bool(changed)
 
+    async def reset_auth(self) -> None:
+        """Delete all users, passkeys, sessions, and settings (auth reset)."""
+        conn = self._require_conn()
+        async with self._lock:
+            await conn.execute("DELETE FROM settings")
+            await conn.execute("DELETE FROM audit")
+            await conn.execute("DELETE FROM users")
+            await conn.execute("DELETE FROM mesh_peers")
+            await conn.commit()
+
+    async def vacuum(self) -> None:
+        conn = self._require_conn()
+        async with self._lock:
+            await conn.execute("VACUUM")
+
+    async def user_count(self) -> int:
+        row = await self._fetchone("SELECT COUNT(*) AS c FROM users")
+        return row["c"] if row else 0
+
     # ------------------------------------------------------------- credentials
     async def add_credential(
         self,
@@ -927,6 +946,17 @@ class Database:
     async def list_mesh_peers(self) -> list[MeshPeer]:
         rows = await self._fetchall("SELECT * FROM mesh_peers ORDER BY created_at")
         return [_peer(row) for row in rows]
+
+    async def set_mesh_handshake(self, peer_id: int, timestamp: float | None) -> bool:
+        conn = self._require_conn()
+        async with self._lock:
+            cursor = await conn.execute(
+                "UPDATE mesh_peers SET last_handshake = ? WHERE id = ?",
+                (timestamp, peer_id),
+            )
+            await conn.commit()
+            await cursor.close()
+            return bool(cursor.rowcount)
 
     async def get_mesh_peer(self, peer_id: int) -> MeshPeer | None:
         row = await self._fetchone("SELECT * FROM mesh_peers WHERE id = ?", (peer_id,))

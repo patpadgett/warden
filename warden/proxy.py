@@ -175,19 +175,6 @@ class ProxyEngine:
         host_header = get_host_header(scope)
         scheme = public_scheme(scope, self.manager.config)
         
-        # Mesh Routing: If the request comes from a known mesh IP or the WireGuard interface,
-        # we might want to treat it as "internal" traffic.
-        # In a production environment, we'd check if ip is within the WireGuard subnet.
-        is_mesh = False
-        try:
-            ip_obj = ipaddress.ip_address(ip)
-            # Assuming common WG subnets or checking against config if available
-            # For now, we mark it if it's not a public IP or matches mesh patterns
-            if not ip_obj.is_global:
-                is_mesh = True
-        except ValueError:
-            pass
-
         output.extend(
             [
                 ("x-forwarded-for", ip),
@@ -196,9 +183,6 @@ class ProxyEngine:
                 ("x-real-ip", ip),
             ]
         )
-        if is_mesh:
-            output.append(("x-warden-mesh", "true"))
-            
         port = get_port(scope)
         if port:
             output.append(("x-forwarded-port", str(port)))
