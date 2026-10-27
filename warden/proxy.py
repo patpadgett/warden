@@ -85,7 +85,7 @@ class ProxyEngine:
         """
         self.manager = manager
         self.stats = stats
-        # ACME challenge token store: token -> response token (legacy support)
+        # ACME challenge token store: token -> response token (clear after successful renewal)
         self.acme_tokens: dict[str, str] = {}
 
         self._clients: dict[bool, httpx.AsyncClient] = {}
@@ -643,6 +643,13 @@ class ProxyEngine:
             for item in headers.get("sec-websocket-protocol", "").split(",")
             if item.strip()
         ]
+        if route.websocket_subprotocols:
+            allowed = set(route.websocket_subprotocols)
+            if offered and not any(p in allowed for p in offered):
+                websocket = WebSocket(scope, receive, send)
+                await websocket.accept(subprotocol="")
+                await websocket.close(code=1008, reason="Subprotocol not allowed")
+                return
         url = upstream_url(
             route, scope.get("raw_path"), scope.get("query_string", b""), websocket=True
         )

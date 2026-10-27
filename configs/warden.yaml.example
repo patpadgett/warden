@@ -34,6 +34,11 @@ server:
   # client can spoof X-Forwarded-* headers.
   # trust_proxy_headers: false
 
+  # rate_limiter:
+  #   backend: memory      # or redis
+  #   redis_url: redis://localhost
+  #   ttl: 86400
+
   # request_timeout_seconds: 60
   # health_interval_seconds: 30
   # log_level: info
@@ -106,6 +111,7 @@ routes:
   # Every route supports these optional fields:
   #   enabled: true              pause routing without deleting the route
   #   websocket: true            allow WebSocket upgrades
+  #   websocket_subprotocols:    allowed subprotocols (e.g., graphql-ws, wss)
   #   preserve_host: false       forward the public Host instead of the upstream
   #   verify_tls: true           verify an https upstream certificate
   #   rewrite_redirects: true    rewrite upstream Locations to the public host

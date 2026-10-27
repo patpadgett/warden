@@ -1,4 +1,6 @@
-# Database Upgrade Guide: Scaling Warden
+# Database Upgrade Guide: Scaling Warden (PROPOSED — NOT IMPLEMENTED)
+
+> **Status:** This guide describes a *future* architecture. Warden currently uses SQLite (`aiosqlite`) exclusively; there is no `database.type` setting or `PostgresDatabase` class in the codebase.
 
 Warden comes pre-configured with SQLite for "Zero-Config" ease of use. While highly performant for most homelab scenarios, you may wish to migrate to a more robust database for higher concurrency, better reliability, or cluster deployment.
 

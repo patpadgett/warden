@@ -19,6 +19,7 @@ logger = logging.getLogger("warden.health")
 
 @dataclass(slots=True)
 class RouteMetrics:
+    """Route metrics per host."""
     requests: int = 0
     errors: int = 0
     last_status: int | None = None
@@ -36,6 +37,7 @@ class RouteMetrics:
 
 @dataclass(slots=True)
 class Health:
+    """Health check result for a route."""
     online: bool | None = None
     status_code: int | None = None
     latency_ms: float | None = None
@@ -45,6 +47,7 @@ class Health:
 
 @dataclass(slots=True)
 class TrafficEvent:
+    """Recent traffic event for dashboard."""
     timestamp: float
     host: str
     method: str
@@ -73,6 +76,7 @@ OTP_FAILURE_METRIC = "warden_otp_failure_total"
 BACKUP_CODE_USED_METRIC = "warden_backup_code_used_total"
 
 class Stats:
+    """In-memory metrics, health checks, and Prometheus export."""
     def __init__(self) -> None:
         self.started_at = time.time()
         self.metrics: dict[str, RouteMetrics] = {}
@@ -292,6 +296,7 @@ class Stats:
 
 
 class HealthMonitor:
+    """Periodic upstream health monitor."""
     def __init__(self, stats: Stats, manager: ConfigManager) -> None:
         self.stats = stats
         self.manager = manager

@@ -40,6 +40,7 @@ dependencies = [
 dev = [
   "pytest>=8",
   "pytest-asyncio>=0.24",
+  "pytest-cov>=6",
   "asgi-lifespan>=2.1",
 ]
 
@@ -57,6 +58,7 @@ warden = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+addopts = "--cov=warden --cov-report=term-missing --cov-fail-under=100"
 testpaths = ["tests"]
 filterwarnings = [
   "ignore::DeprecationWarning:webauthn.*",

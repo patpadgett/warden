@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import base64
 import logging
+import os
 import time
 from typing import Any
 from functools import wraps
@@ -67,12 +69,7 @@ class BackupCodeBody(BaseModel):
     code: str
 
 class OTPSetupPayload(BaseModel):
-    """Placeholder model for OTP setup payload.
-
-    Currently not used – the OTP setup endpoint does not require additional
-    request data beyond the CSRF protection and authentication handled by the
-    surrounding view. This class exists to keep the OpenAPI schema stable.
-    """
+    """Payload for OTP setup endpoint (OpenAPI schema stability)."""
 
 # ---------------------------------------------------------------------------
 # CSRF protection decorator (used for state‑changing admin endpoints)
@@ -81,7 +78,9 @@ class OTPSetupPayload(BaseModel):
 def csrf_protected(func):
     """Enforce same‑origin and ``X-Warden-Request: 1`` header.
 
-    Returns a ``JSONResponse`` with a 403 status if the request fails.
+    Checks request origin and the state‑changing header; actual authentication
+    is handled by each view's own helpers (e.g. ``_user``). Returns a ``JSONResponse``
+    with a 403 status if either check fails.
     """
 
     @wraps(func)
@@ -155,14 +154,17 @@ async def _body(request: Request, model: type[BaseModel]) -> BaseModel:
 def _origin_ok(request: Request) -> bool:
     return check_origin(request.scope, _config(request))
 
-def _limited(request: Request, action: str, limit: int, window: float = 60.0) -> bool:
+def _limited(request: Request, action: str, limit: int, window: float = 60.0) -> tuple[bool, dict[str, str]]:
     limiter = request.app.state.rate_limiter
     allowed = limiter.allow(f"{client_ip(request.scope)}:{action}", limit, window)
     if allowed:
         request.app.state.stats.inc_rate_limit_allowed()
     else:
         request.app.state.stats.inc_rate_limit_blocked()
-    return allowed
+    headers = {"X-RateLimit-Limit": str(limit), "X-RateLimit-Window": str(int(window))}
+    # Note: remaining count requires additional query; approximate here
+    headers["X-RateLimit-Remaining"] = "0" if not allowed else str(max(0, limit - 1))
+    return allowed, headers
 
 async def _audit_failure(
     request: Request,
@@ -197,18 +199,12 @@ async def _handle_auth_error(request: Request, exc: AuthError, *, audit: str | N
 async def otp_setup(request: Request) -> JSONResponse:
     """Generate a new TOTP secret for the authenticated user.
 
-    * Requires an authenticated session (enforced by ``@csrf_protected`` which checks
-      same‑origin and the ``X‑Warden‑Request: 1`` header).
-    * Returns a 16‑character Base32 secret and an ``otpauth://`` URL which can be
-      scanned by any standard TOTP app (Google Authenticator, Authy, etc.).
+    * Requires an authenticated session (enforced by ``_user`` and ``@csrf_protected``).
+    * Returns a 32-character Base32 secret (160-bit entropy) and an ``otpauth://`` URL.
     * The secret is stored in the database via ``set_otp_secret``.
-    * Increments the ``warden_otp_success_total`` metric on successful setup.
     """
-    # Requires an authenticated session (enforced by csrf_protected -> _origin_ok + header)
     user = _user(request)
-    # Generate a random base32 secret (16 chars ≈ 80‑bit entropy)
-    import os, base64
-    raw = os.urandom(10)
+    raw = os.urandom(20)  # 160 bits
     secret = base64.b32encode(raw).decode("utf-8").replace("=", "")
     await _db(request).set_otp_secret(user.id, secret)
     otpauth = f"otpauth://totp/Warden:{user.username}?secret={secret}&issuer=Warden"
@@ -228,8 +224,11 @@ async def otp_verify(request: Request, payload: OTPVerifyPayload) -> JSONRespons
     * Returns ``{"ok": True}`` on success, otherwise a 401 response with
       ``{"ok": False, "detail": "Invalid OTP"}``.
     """
-    if not _limited(request, "otp-verify", 30):
-        return _error("Too many OTP attempts. Wait a minute and try again.", 429)
+    allowed, rate_headers = _limited(request, "otp-verify", 30)
+    if not allowed:
+        response = _error("Too many OTP attempts. Wait a minute and try again.", 429)
+        response.headers.update(rate_headers)
+        return response
     if not _origin_ok(request):
         return _error("Cross-origin request blocked.", 403)
     user = _user(request)
@@ -327,8 +326,12 @@ async def setup_begin(request: Request) -> JSONResponse:
     * Enforces same‑origin request.
     * Returns a JSON payload with the publicKey ceremony options.
     """
-    if not _limited(request, "setup-begin", 8, 600):
-        return _error("Too many setup attempts. Wait a few minutes and try again.", 429)
+    allowed, rate_headers = _limited(request, "setup-begin", 8, 600)
+    if not allowed:
+        response = _error("Too many setup attempts. Wait a few minutes and try again.", 429)
+
+        response.headers.update(rate_headers)
+        return response
     if not _origin_ok(request):
         await _audit_failure(request, "setup_blocked", "cross-origin request")
         return _error("Cross-origin request blocked.", 403)
@@ -359,8 +362,12 @@ async def setup_complete(request: Request) -> JSONResponse:
     * Consumes the challenge, creates user and session, audits the event.
     * Returns JSON with redirect target for post‑setup navigation.
     """
-    if not _limited(request, "setup-complete", 12, 600):
-        return _error("Too many setup attempts. Wait a minute and try again.", 429)
+    allowed, rate_headers = _limited(request, "setup-complete", 12, 600)
+    if not allowed:
+        response = _error("Too many setup attempts. Wait a minute and try again.", 429)
+
+        response.headers.update(rate_headers)
+        return response
     if not _origin_ok(request):
         return _error("Cross-origin request blocked.", 403)
     config = _config(request)
@@ -407,8 +414,12 @@ async def login_begin(request: Request) -> JSONResponse:
     * Enforces same‑origin request.
     * Returns a JSON payload with the publicKey ceremony options.
     """
-    if not _limited(request, "login-begin", 30):
-        return _error("Too many sign-in attempts. Wait a minute and try again.", 429)
+    allowed, rate_headers = _limited(request, "login-begin", 30)
+    if not allowed:
+        response = _error("Too many sign-in attempts. Wait a minute and try again.", 429)
+
+        response.headers.update(rate_headers)
+        return response
     if not _origin_ok(request):
         await _audit_failure(request, "login_blocked", "cross-origin request")
         return _error("Cross-origin request blocked.", 403)
@@ -438,8 +449,12 @@ async def login_backup(request: Request) -> JSONResponse:
     * Validates the provided backup code and establishes a session.
     * Returns a JSON response with redirect target on success.
     """
-    if not _limited(request, "login-backup", 15):
-        return _error("Too many recovery attempts. Wait a minute and try again.", 429)
+    allowed, rate_headers = _limited(request, "login-backup", 15)
+    if not allowed:
+        response = _error("Too many recovery attempts. Wait a minute and try again.", 429)
+
+        response.headers.update(rate_headers)
+        return response
     if not _origin_ok(request):
         return _error("Cross-origin request blocked.", 403)
     config = _config(request)
@@ -463,6 +478,7 @@ async def login_backup(request: Request) -> JSONResponse:
         user_agent=user_agent(request.scope),
         detail="Recovery code sign‑in",
     )
+    # Redirect is fixed to root after backup-code recovery; add `next` to BackupCodeBody if needed.
     response = _json_response({"ok": True, "redirect": safe_next("/", "/")})
     request.app.state.stats.inc_backup_code_used()
     set_session_cookie(response, token, request.scope, config)
@@ -476,8 +492,12 @@ async def login_complete(request: Request) -> JSONResponse:
     * Validates the credential, creates a session, and audits success.
     * Returns JSON with redirect target.
     """
-    if not _limited(request, "login-complete", 30):
-        return _error("Too many sign-in attempts. Wait a minute and try again.", 429)
+    allowed, rate_headers = _limited(request, "login-complete", 30)
+    if not allowed:
+        response = _error("Too many sign-in attempts. Wait a minute and try again.", 429)
+
+        response.headers.update(rate_headers)
+        return response
     if not _origin_ok(request):
         await _audit_failure(request, "login_blocked", "cross-origin request")
         return _error("Cross-origin request blocked.", 403)
@@ -523,8 +543,12 @@ async def register_begin(request: Request) -> JSONResponse:
     * Requires the user to be signed in (session required).
     * Returns a JSON payload with the publicKey ceremony options.
     """
-    if not _limited(request, "register-begin", 12):
-        return _error("Too many registration attempts. Wait a minute and try again.", 429)
+    allowed, rate_headers = _limited(request, "register-begin", 12)
+    if not allowed:
+        response = _error("Too many registration attempts. Wait a minute and try again.", 429)
+
+        response.headers.update(rate_headers)
+        return response
     if not _origin_ok(request):
         return _error("Cross-origin request blocked.", 403)
     config = _config(request)
@@ -555,8 +579,12 @@ async def register_complete(request: Request) -> JSONResponse:
     * Validates the credential and creates a new passkey entry for the user.
     * Audits the registration event and redirects to the passkeys page.
     """
-    if not _limited(request, "register-complete", 12):
-        return _error("Too many registration attempts. Wait a minute and try again.", 429)
+    allowed, rate_headers = _limited(request, "register-complete", 12)
+    if not allowed:
+        response = _error("Too many registration attempts. Wait a minute and try again.", 429)
+
+        response.headers.update(rate_headers)
+        return response
     if not _origin_ok(request):
         return _error("Cross-origin request blocked.", 403)
     config = _config(request)

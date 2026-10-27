@@ -6,6 +6,7 @@ from fastapi import APIRouter
 import logging
 import time
 
+import random
 import os
 from uuid import uuid4
 from fastapi.openapi.docs import get_swagger_ui_html
@@ -989,3 +990,35 @@ async def rotate_mesh_hub_key(request: Request) -> JSONResponse:
         return JSONResponse({"detail": str(exc)}, status_code=400)
     await _audit(request, "mesh_hub_key_rotated", "Hub key rotated")
     return JSONResponse({"ok": True, "new_private_key": new_key})
+
+@router.get("/api/audit/export")
+async def audit_export(request: Request, limit: int = 500, event: str | None = None) -> JSONResponse:
+    """Export audit events as JSON (admin only; protected by host guard)."""
+    _guard_host(request)
+    db = _db(request)
+    events = await db.list_audit(limit)
+    if event:
+        events = [e for e in events if e.event == event]
+    result = [{"id": e.id, "created_at": e.created_at, "event": e.event,
+               "username": e.username, "ip": e.ip, "detail": e.detail} for e in events]
+    return JSONResponse({"count": len(result), "events": result})
+
+@router.post("/api/backup_codes/bulk")
+async def backup_codes_bulk(request: Request, count: int = 5) -> JSONResponse:
+    """Generate multiple backup codes at once (admin)."""
+    _guard_host(request)
+    user = _user(request)
+    db = _db(request)
+    codes = []
+    for _ in range(min(count, 20)):
+        for attempt in range(10):
+            code = uuid4().hex[:10]
+            try:
+                await db.add_backup_code(user.id, code)
+                codes.append(code)
+                break
+            except AlreadyExistsError:
+                continue
+        else:
+            return JSONResponse({"ok": False, "detail": "Could not generate unique code"}, status_code=500)
+    return JSONResponse({"created": len(codes), "codes": codes})

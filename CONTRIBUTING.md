@@ -26,6 +26,7 @@ We welcome contributions! This guide will help you get started.
    - Update or add unit tests under `tests/`.
    - Ensure `pytest` passes (`pytest -q`).
    - Verify coverage stays at 100%.
+   - Note: `ConfigManager` uses duplicate docstrings; keep docstrings single and concise.
 
 5. **Run the test suite**:
 

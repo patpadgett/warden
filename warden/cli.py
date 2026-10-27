@@ -331,6 +331,7 @@ async def _run_dual(app: Any, config: WardenConfig, host: str, access_log: bool)
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
+    """Run the proxy server."""
     try:
         manager = _load_manager(args)
     except ConfigError as exc:
@@ -393,6 +394,7 @@ def _serve_manager(manager: ConfigManager):
 
 # ------------------------------------------------------------------------ init
 def cmd_init(args: argparse.Namespace) -> int:
+    """Write starter warden.yaml."""
     output = Path(args.output).expanduser().resolve()
     if output.exists() and not args.force:
         _print_error(f"{output} already exists (use --force to overwrite)")
@@ -440,6 +442,7 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 # ----------------------------------------------------------------------- check
 def cmd_check(args: argparse.Namespace) -> int:
+    """Validate config and paths."""
     try:
         manager = _load_manager(args)
     except ConfigError as exc:
@@ -508,6 +511,7 @@ def cmd_check(args: argparse.Namespace) -> int:
 
 # ----------------------------------------------------------------------- certs
 def cmd_certs(args: argparse.Namespace) -> int:
+    """Inspect or renew TLS."""
     try:
         manager = _load_manager(args)
     except ConfigError as exc:
@@ -589,6 +593,7 @@ async def _renew_now(manager: ConfigManager, command: str) -> int:
 
 # ------------------------------------------------------------------------ auth
 def cmd_auth_reset(args: argparse.Namespace) -> int:
+    """Reset admin account."""
     try:
         manager = _load_manager(args)
     except ConfigError as exc:
@@ -635,6 +640,7 @@ def _mesh_manager(args: argparse.Namespace) -> tuple[ConfigManager, Database, Me
 
 
 def cmd_mesh(args: argparse.Namespace) -> int:
+    """Run mesh commands."""
     try:
         manager, db, mesh = _mesh_manager(args)
     except (ConfigError, MeshError) as exc:
@@ -752,6 +758,7 @@ async def _run_mesh(
 
 # ---------------------------------------------------------------------- parser
 def build_parser() -> argparse.ArgumentParser:
+    """Build argument parser."""
     parser = argparse.ArgumentParser(
         prog="warden",
         description="A quiet door for a loud homelab: passkey-protected reverse proxy.",
@@ -787,6 +794,10 @@ def build_parser() -> argparse.ArgumentParser:
     check = sub.add_parser("check", help="validate config and runtime files")
     check.add_argument("--json", action="store_true", help="machine-readable output")
     check.set_defaults(func=cmd_check)
+
+    config_cmd = sub.add_parser("config", help="show effective configuration")
+    config_cmd.add_argument("show", nargs="?", default="show", choices=["show"], help="print config (default)")
+    config_cmd.set_defaults(func=cmd_config_show)
 
     certs = sub.add_parser("certs", help="inspect or renew the TLS certificate")
     certs.add_argument("action", choices=["status", "renew"])
@@ -833,6 +844,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry point."""
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
@@ -849,3 +861,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+def cmd_config_show(args):
+    """Print effective configuration."""
+    manager = ConfigManager.from_file(_config_path(args))
+    text = manager.read_text()
+    print(text)

@@ -40,6 +40,7 @@ class MeshError(Exception):
 
 @dataclass(slots=True)
 class PeerStatus:
+    """Peer status summary."""
     endpoint: str | None
     last_handshake: float | None
     rx_bytes: int
@@ -103,13 +104,16 @@ class MeshManager:
 
     @property
     def config(self):
+        """Print hub WireGuard config."""
         return self.manager.config
 
     def _require_enabled(self) -> None:
+        """Require mesh to be enabled."""
         if not self.config.mesh.enabled:
             raise MeshError("WireGuard mesh is disabled in warden.yaml.")
 
     async def ensure_hub_key(self) -> str:
+        """Generate or refresh hub key."""
         key = await self.db.get_setting(HUB_KEY_SETTING)
         if not key:
             key, _ = generate_keypair()
@@ -278,6 +282,7 @@ class MeshManager:
         return "\n".join(lines).rstrip() + "\n"
 
     def _config_file(self) -> Path:
+        """Load mesh config file."""
         path = self.config.mesh_config_path
         if path is None:
             raise MeshError("Set mesh.config_path to the WireGuard config file, e.g. /etc/wireguard/wg0.conf.")

@@ -140,8 +140,7 @@ class TLSConfig(BaseModel):
             if not self.certfile or not self.keyfile:
                 raise ValueError("tls.certfile and tls.keyfile are required when TLS is enabled")
         if self.renew_command and not self.acme_webroot:
-            # A renewal hook is allowed without webroot (DNS-01), so no error.
-            # No action needed
+            # A renewal hook without webroot is allowed for DNS-01 challenges.
             pass
         return self
 
@@ -190,11 +189,9 @@ class DatabaseConfig(BaseModel):
 
 class ServerConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    
+
     # Rate limiter configuration – optional; if omitted, in‑process limiter is used.
     rate_limiter: RateLimiterConfig | None = None
-    model_config = ConfigDict(extra="forbid")
-
     admin_host: str = "localhost"
     bind: str = "0.0.0.0"
     http_port: int = Field(default=8080, ge=1, le=65535)
@@ -283,6 +280,7 @@ class RouteConfig(BaseModel):
     auth: bool = True
     enabled: bool = True
     websocket: bool = True
+    websocket_subprotocols: list[str] = Field(default_factory=list)
     preserve_host: bool = False
     verify_tls: bool = True
     rewrite_redirects: bool = True
@@ -445,8 +443,6 @@ class MeshConfig(BaseModel):
             interface = ipaddress.ip_interface(value)
         except ValueError as exc:
             raise ValueError("address must be a CIDR like 10.44.0.1/24") from exc
-        if interface.version != 4:
-            raise ValueError("only IPv4 mesh networks are supported")
         return str(interface)
 
     @field_validator("client_allowed_ips")
@@ -709,7 +705,6 @@ class ConfigManager:
     * ``validate_text`` validates a configuration string without persisting it.
     * Provides helper methods for reading and writing the raw YAML file.
     """
-    """Owns the live configuration and serializes UI edits to the YAML file."""
 
     def __init__(self, config: WardenConfig, path: Path | None = None) -> None:
         self._config = config
