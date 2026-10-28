@@ -65,7 +65,7 @@ def test_proxy_build_request_headers_basic() -> None:
     }
     headers = engine._request_headers(scope, route, user=None)
     lower = [k.lower() for k, _ in headers]
-    # Warden always adds its own x-forwarded-for (stripped client input)
+    # Warden strips client-supplied forwarding headers (including x-forwarded-for)
     assert any(k.lower() == "x-forwarded-for" for k, _ in headers)
 
 
