@@ -3,7 +3,6 @@
 {% block content %}
 <section class="page-heading">
   <div>
-    <p class="eyebrow">Access Control</p>
     <h1>Who holds the keys.</h1>
     <p class="subhead">Manage users. Each user must register at least one passkey. The <strong>is_admin</strong> toggle grants or removes dashboard access. Only admins can create users or change settings.</p>
   </div>
@@ -63,11 +62,11 @@
     <form id="user-form" class="form-stack">
       <label class="field">
         <span class="field-label">Username</span>
-        <input class="input" name="username" type="text" required placeholder="e.g. jane">
+        <input class="input" name="username" type="text" required placeholder="username">
       </label>
       <label class="field">
         <span class="field-label">Display Name</span>
-        <input class="input" name="display_name" type="text" required placeholder="e.g. Jane Doe">
+        <input class="input" name="display_name" type="text" required placeholder="Display name">
       </label>
       <label class="field checkbox">
         <input type="checkbox" name="is_admin">
@@ -122,3 +121,8 @@
 }
 </style>
 {% endblock %}
+<style>
+.form-stack .field { margin-bottom: 1.25rem; }
+.form-stack .input { padding: 0.55rem 0.7rem; }
+.modal-foot { margin-top: 1.5rem; }
+</style>

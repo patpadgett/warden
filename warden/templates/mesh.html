@@ -3,7 +3,6 @@
 {% block content %}
 <section class="page-heading">
   <div>
-    <p class="eyebrow">WireGuard mesh</p>
     <h1>A private road<br>home.</h1>
     <p class="subhead">Give a laptop or phone its own address inside your network. Warden generates the keys, writes the hub config, and hands you a client file.</p>
   </div>
@@ -24,7 +23,6 @@
 {% if not mesh_enabled %}
 <div class="card">
   <div class="card-pad" style="padding: 42px;">
-    <p class="eyebrow">Not enabled</p>
     <h2 class="serif" style="margin: 0 0 10px; font-size: 30px; font-weight: 400; letter-spacing: -0.03em;">The mesh is waiting.</h2>
     <p class="muted" style="max-width: 560px; margin: 0 0 22px;">Enable WireGuard in <code>warden.yaml</code> to generate a hub, enroll peers, and download ready-to-import client configurations.</p>
     <div class="config-snippet">
@@ -243,3 +241,8 @@
 </dialog>
 {% endif %}
 {% endblock %}
+<style>
+.form-stack .field { margin-bottom: 1.25rem; }
+.form-stack .input, .form-stack input[type="text"], .form-stack input[type="password"] { padding: 0.55rem 0.7rem; }
+.modal-footer { margin-top: 1.5rem; }
+</style>
