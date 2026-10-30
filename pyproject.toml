@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=69"]
+requires = ["setuptools>=69", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "warden-mesh"
-version = "0.1.14"
+dynamic = ["version"]
 description = "A zero-config, passkey-protected reverse proxy and homelab dashboard."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -68,3 +68,6 @@ filterwarnings = [
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.setuptools_scm]
+write_to = "warden/_version.py"
