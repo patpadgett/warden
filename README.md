@@ -1,6 +1,6 @@
 # Warden
 
-[![release](https://github.com/patpadgett/warden/actions/workflows/release.yml/badge.svg)](https://github.com/patpadgett/warden/actions/workflows/release.yml)
+[![build](https://github.com/patpadgett/warden/actions/workflows/build.yml/badge.svg)](https://github.com/patpadgett/warden/actions/workflows/build.yml)
 
 **One door to your homelab.**
 
