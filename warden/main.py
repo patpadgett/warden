@@ -212,7 +212,14 @@ def create_app(
     """
     manager = _manager_for(config_path, config)
     active_config = manager.config
-    database = db or Database(active_config.database_path)
+    if db is not None:
+        database = db
+    elif active_config.database.type == "postgres":
+        from warden.db_postgres import PostgresDatabase
+        url = active_config.database.url or "postgresql+asyncpg://localhost/warden"
+        database = PostgresDatabase(url)
+    else:
+        database = Database(active_config.database_path)
     metrics = stats or MetricsModule()
     engine = proxy or ProxyEngine(manager, metrics)
     passkeys = PasskeyService(database)

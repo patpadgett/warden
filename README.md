@@ -199,7 +199,11 @@ during renewal so webroot challenges keep working.
 
 | Key | Default | Purpose |
 | --- | --- | --- |
-| `path` | `warden.db` | SQLite database file. |
+| `path` | `warden.db` | SQLite file path (when `type: sqlite`). |
+| `type` | `sqlite` | `sqlite` or `postgres`. PostgreSQL adapter uses SQLAlchemy `asyncpg`; compatible with CockroachDB wire. |
+| `url` | `postgresql+asyncpg://localhost/warden` | PostgreSQL URL (used when `type: postgres`). |
+
+PostgreSQL / CockroachDB adapter (`warden.db_postgres.PostgresDatabase`) is provided for production or distributed deployments. SQLite remains the default (zero-config).
 
 The database stores the admin account, passkey public keys, hashed sessions,
 mesh private keys, challenges, settings, and the audit log. Back it up and keep

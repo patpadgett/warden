@@ -185,6 +185,8 @@ class DatabaseConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     path: str = "warden.db"
+    type: str = "sqlite"
+    url: str | None = None
 
 
 class ServerConfig(BaseModel):
