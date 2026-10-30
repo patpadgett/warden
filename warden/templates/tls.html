@@ -10,8 +10,8 @@
 
 <div class="card tls-card">
   <style>
-  .tls-card p { margin-bottom: 0.6rem; line-height: 1.4; }
-  .tls-card strong { display: inline-block; min-width: 7rem; }
+  .tls-card p { margin-bottom: 0.6rem; line-height: 1.4; font-family: var(--sans); }
+  .tls-card strong { display: inline-block; min-width: 7rem; font-family: var(--mono); font-weight: 600; color: var(--text); }
   </style>
   {% if tls.certificate %}
     <p><strong>State:</strong> {% if tls.certificate.expired %}<span class="tls-warn">expired</span>{% else %}<strong>valid</strong>{% endif %}</p>

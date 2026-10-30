@@ -867,6 +867,7 @@ code, .code {
   max-width: 560px;
   margin: 13px 0 0;
   color: var(--muted);
+  font-family: var(--sans);
   font-size: 14px;
   line-height: 1.65;
 }

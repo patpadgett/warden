@@ -253,6 +253,13 @@ async def swagger_ui(request: Request) -> Response:
     """Serve Swagger UI for the admin OpenAPI schema (admin‑host protected)."""
     _guard_host(request)
     return get_swagger_ui_html(openapi_url="/_warden/openapi.json", title="Warden Admin API")
+@router.get("/metrics/view")
+async def metrics_view(request: Request) -> Response:
+    _guard_host(request)
+    stats = request.app.state.stats
+    snapshot = stats.snapshot(_config(request))
+    return _render(request, "metrics.html", {"stats": snapshot})
+
 @router.get("/metrics")
 @router.get("/_warden/metrics")
 async def metrics_api(request: Request) -> Response:
