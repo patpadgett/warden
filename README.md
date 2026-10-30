@@ -53,6 +53,71 @@ WARDEN_SETUP_TOKEN='my-long-one-time-code' warden serve
 The code must be at least 12 characters after removing punctuation. If no code
 is active (for example after it expires), restart Warden to generate a fresh one.
 
+## Deployment
+
+Three methods: **host** (systemd / bare metal), **docker**, **helm** (Kubernetes). Pick one.
+
+### Host (systemd / bare metal)
+
+Best for a single server or VM. Uses `deploy/host/warden.service`.
+
+```bash
+# 1. Create user and directories
+sudo useradd --system --home /var/lib/warden --shell /usr/sbin/nologin warden
+sudo install -d -o warden -g warden -m 750 /var/lib/warden /etc/warden
+sudo install -d -o warden -g warden -m 755 /var/www/warden-acme
+
+# 2. Install Warden
+python3 -m venv /opt/warden
+sudo /opt/warden/bin/pip install .
+
+# 3. Create config from example
+cp warden.yaml.example /etc/warden/warden.yaml
+# edit /etc/warden/warden.yaml: admin_host, rp_id, routes, TLS
+
+# 4. Install service and start
+sudo install -m 644 deploy/host/warden.service /etc/systemd/system/warden.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now warden
+sudo journalctl -u warden -f
+```
+
+If you want WireGuard mesh, install `wireguard-tools`, set `mesh.enabled: true`, and make `mesh.config_path` writable.
+
+### Docker
+
+Best for quick trials or container hosts. Uses `deploy/docker/docker-compose.yml`.
+
+```bash
+mkdir -p config
+cp warden.yaml.example config/warden.yaml
+# edit config/warden.yaml
+
+docker compose up -d --build
+docker compose logs -f warden
+```
+
+The compose file builds from source, maps ports `8080`/`8443`, and keeps the DB in a named volume. Mesh is disabled by default; enable only with host-network privileges.
+
+### Helm (Kubernetes)
+
+Best for clusters. Uses `deploy/helm/` chart.
+
+```bash
+# From repo root
+helm install warden deploy/helm/ \
+  --set image.tag=latest \
+  --set database.type=sqlite
+```
+
+For mesh in Kubernetes, apply the DaemonSet (privileged, `hostNetwork`, `/etc/wireguard` hostPath):
+
+```bash
+kubectl apply -f deploy/helm/warden-mesh-daemonset.yaml
+```
+
+Then expose via a standard Kubernetes Service for ports 8080/8443.
+
 ## Observability
 
 - **OpenAPI documentation**: The admin API OpenAPI schema is available at `/_warden/openapi.json` and an interactive Swagger UI is served at `/_warden/docs`. Both endpoints are protected by admin‑host authentication.
