@@ -533,6 +533,19 @@ To run against a development config:
 WARDEN_CONFIG=./warden.dev.yaml warden serve --host 127.0.0.1
 ```
 
+### Glossary (architecture references)
+
+Terms naming seams and modules in this codebase:
+
+- **Route** (`RouteConfig`) — a configured upstream service; the unit of proxy routing, metrics, and health checks.
+- **Order** — not used here; the domain term for a routed proxy request is `RouteConfig` + `TrafficEvent`.
+- **Mesh** (`MeshManager`) — WireGuard peer network managed by Warden; includes hub key, peer config, and apply lifecycle.
+- **MeshPeerIntake** — deepened intake module (DB validation, address assignment, name regex, config render); backed by `MeshApplyAdapter` for apply/status.
+- **MeshApplyAdapter** — apply adapter for WireGuard (`apply`, `status`, `refresh_handshakes`) backed by `wg`/`wg-quick`; routed through `MeshManager` facade.
+- **Peer intake** — the sub-module of mesh responsible for peer validation and DB storage; deepened form is `MeshPeerIntake`.
+- **Metrics module** (`MetricsModule`) — in-memory traffic recording, health monitoring, and Prometheus export; deepened into `MetricsModule` (stats) + `HealthMonitor` adapter (health adapter).
+- **Health adapter** — the adapter that takes health checks from `Stats` and exposes them to external consumers (dashboard / Prometheus).
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

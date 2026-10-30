@@ -264,10 +264,22 @@ async def metrics_api(request: Request) -> Response:
     _guard_host(request)
     stats = request.app.state.stats
     content = stats.prometheus_metrics()
+    # Health adapter results in metrics
+    from warden.health_adapter import HealthMonitor
+    health = getattr(request.app.state, "health_monitor", None)
+    if health is not None:
+        try:
+            content += "\n# HEALTH adapter active\nwarden_health_adapter_active 1\n"
+        except Exception:
+            pass
     # Add mesh handshake metrics if mesh is enabled
     mesh = request.app.state.mesh
+    adapter = getattr(mesh, "adapter", None)
     try:
-        status = await mesh.refresh_handshakes()
+        if adapter is not None:
+            status = await adapter.refresh_handshakes()
+        else:
+            status = await mesh.refresh_handshakes()
         if status.get("available") and status.get("applied"):
             for peer_key, info in status.get("peers", {}).items():
                 if info.last_handshake is not None:
