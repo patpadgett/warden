@@ -70,7 +70,7 @@ is active (for example after it expires), restart Warden to generate a fresh one
      --rp-id home.lan
    ```
 
-   Then edit it. See [`configs/warden.yaml.example`](configs/warden.yaml.example)
+   Then edit it. See [`warden.yaml.example`](warden.yaml.example)
    for every option.
 
 3. **Enable TLS.** Passkeys only work over HTTPS on a real hostname. Point
@@ -211,7 +211,7 @@ it private.
 ### `mesh` and `routes`
 
 See the fully commented example in
-[`configs/warden.yaml.example`](configs/warden.yaml.example). Route fields:
+[`warden.yaml.example`](warden.yaml.example). Route fields:
 
 | Key | Default | Purpose |
 | --- | --- | --- |
@@ -457,7 +457,7 @@ source tree.
 
 ```bash
 mkdir -p config
-cp configs/warden.yaml.example config/warden.yaml
+cp warden.yaml.example config/warden.yaml
 # edit config/warden.yaml: admin_host, rp_id, routes, TLS paths
 docker compose up -d --build
 docker compose logs -f warden
