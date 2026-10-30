@@ -158,7 +158,7 @@ async def test_disabled_mesh(tmp_path: Path) -> None:
 
 
 async def test_apply_requires_wireguard(mesh: MeshManager, monkeypatch) -> None:
-    monkeypatch.setattr("warden.mesh.shutil.which", lambda name: None)
+    monkeypatch.setattr("warden.mesh_apply.shutil.which", lambda name: None)
     with pytest.raises(MeshError, match="isn't installed"):
         await mesh.apply()
 
@@ -166,7 +166,7 @@ async def test_apply_requires_wireguard(mesh: MeshManager, monkeypatch) -> None:
 async def test_apply_brings_interface_up(mesh: MeshManager, monkeypatch) -> None:
     calls: list[tuple[list[str], bytes | None]] = []
     monkeypatch.setattr(
-        "warden.mesh.shutil.which",
+        "warden.mesh_apply.shutil.which",
         lambda name: {"wg": "/usr/bin/wg", "wg-quick": "/usr/bin/wg-quick"}[name],
     )
 
@@ -178,7 +178,7 @@ async def test_apply_brings_interface_up(mesh: MeshManager, monkeypatch) -> None
             return 0, ""
         raise AssertionError(args)
 
-    monkeypatch.setattr(mesh, "_run", fake_run)
+    monkeypatch.setattr(mesh.adapter, "_run", fake_run)
     peer = await mesh.add_peer(name="Phone")
     result = await mesh.apply()
     assert result["ok"] is True
@@ -191,7 +191,7 @@ async def test_apply_brings_interface_up(mesh: MeshManager, monkeypatch) -> None
 async def test_apply_syncs_running_interface(mesh: MeshManager, monkeypatch) -> None:
     calls: list[tuple[list[str], bytes | None]] = []
     monkeypatch.setattr(
-        "warden.mesh.shutil.which",
+        "warden.mesh_apply.shutil.which",
         lambda name: {"wg": "/usr/bin/wg", "wg-quick": "/usr/bin/wg-quick"}[name],
     )
 
@@ -207,7 +207,7 @@ async def test_apply_syncs_running_interface(mesh: MeshManager, monkeypatch) -> 
             return 0, ""
         raise AssertionError(args)
 
-    monkeypatch.setattr(mesh, "_run", fake_run)
+    monkeypatch.setattr(mesh.adapter, "_run", fake_run)
     await mesh.add_peer(name="Phone")
     result = await mesh.apply()
     assert result["ok"] is True
@@ -217,7 +217,7 @@ async def test_apply_syncs_running_interface(mesh: MeshManager, monkeypatch) -> 
 
 async def test_apply_reports_failure(mesh: MeshManager, monkeypatch) -> None:
     monkeypatch.setattr(
-        "warden.mesh.shutil.which",
+        "warden.mesh_apply.shutil.which",
         lambda name: {"wg": "/usr/bin/wg", "wg-quick": "/usr/bin/wg-quick"}[name],
     )
 
@@ -226,7 +226,7 @@ async def test_apply_reports_failure(mesh: MeshManager, monkeypatch) -> None:
             return 1, ""
         return 2, "boom"
 
-    monkeypatch.setattr(mesh, "_run", fake_run)
+    monkeypatch.setattr(mesh.adapter, "_run", fake_run)
     await mesh.add_peer(name="Phone")
     with pytest.raises(MeshError, match="boom"):
         await mesh.apply()
@@ -236,7 +236,7 @@ async def test_apply_reports_failure(mesh: MeshManager, monkeypatch) -> None:
 
 async def test_status_and_handshake_refresh(mesh: MeshManager, monkeypatch) -> None:
     peer = await mesh.add_peer(name="Phone")
-    monkeypatch.setattr("warden.mesh.shutil.which", lambda name: "/usr/bin/wg")
+    monkeypatch.setattr("warden.mesh_apply.shutil.which", lambda name: "/usr/bin/wg")
 
     dump = (
         "priv\tpub\t51820\toff\n"
@@ -249,7 +249,7 @@ async def test_status_and_handshake_refresh(mesh: MeshManager, monkeypatch) -> N
         assert args[1:] == ["show", "wg0", "dump"]
         return 0, dump
 
-    monkeypatch.setattr(mesh, "_run", fake_run)
+    monkeypatch.setattr(mesh.adapter, "_run", fake_run)
     status = await mesh.status()
     assert status["available"] is True
     assert status["applied"] is True
@@ -264,7 +264,7 @@ async def test_status_and_handshake_refresh(mesh: MeshManager, monkeypatch) -> N
     assert (await mesh.db.get_mesh_peer(peer.id)).last_handshake == 1700000000.0
 
     # When the interface is live but the peer disappears, clear the stale value.
-    monkeypatch.setattr(mesh, "_run", lambda *a, **k: _return((0, "priv\tpub\t51820\toff\n")))
+    monkeypatch.setattr(mesh.adapter, "_run", lambda *a, **k: _return((0, "priv\tpub\t51820\toff\n")))
     await mesh.refresh_handshakes()
     assert (await mesh.db.get_mesh_peer(peer.id)).last_handshake is None
 

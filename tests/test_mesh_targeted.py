@@ -96,7 +96,7 @@ def test_mesh_add_peer_invalid_endpoint() -> None:
 
 def test_mesh_render_server_config() -> None:
     db = AsyncMock()
-    db.get_setting = AsyncMock(return_value="hub_key")
+    db.get_setting = AsyncMock(return_value="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
     db.list_mesh_peers = AsyncMock(return_value=[])
     manager = MagicMock()
     manager.config.mesh.enabled = True
@@ -106,7 +106,7 @@ def test_mesh_render_server_config() -> None:
 
 def test_mesh_render_peer_config() -> None:
     db = AsyncMock()
-    db.get_setting = AsyncMock(return_value="hub_key")
+    db.get_setting = AsyncMock(return_value="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
     db.list_mesh_peers = AsyncMock(return_value=[])
     manager = MagicMock()
     manager.config.mesh.enabled = True
@@ -147,7 +147,7 @@ def test_mesh_write_config_success() -> None:
     manager.config.mesh.listen_port = 51820
     manager.config.mesh.interface = "wg0"
     manager.config.mesh.client_allowed_ips = "10.44.0.0/24"
-    db.get_setting = AsyncMock(return_value="hub_key")
+    db.get_setting = AsyncMock(return_value="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
     db.list_mesh_peers = AsyncMock(return_value=[])
     mesh_mgr = MeshManager(db, manager)
     with patch("pathlib.Path.mkdir") as mock_mkdir, patch("os.chmod"), patch("pathlib.Path.write_text"), patch("os.replace"), patch("os.chmod"):

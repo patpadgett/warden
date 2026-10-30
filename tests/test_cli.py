@@ -423,7 +423,7 @@ def test_mesh_apply_fails_without_wireguard(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = mesh_config(tmp_path)
-    monkeypatch.setattr("warden.mesh.shutil.which", lambda _name: None)
+    monkeypatch.setattr("warden.mesh_apply.shutil.which", lambda _name: None)
     code, _out, err = run(capsys, "-c", path, "mesh", "apply")
     assert code == 1
     assert "WireGuard isn't installed" in err
@@ -434,7 +434,7 @@ def test_mesh_status_when_unavailable(
 ) -> None:
     path = mesh_config(tmp_path)
     run(capsys, "-c", path, "mesh", "peer", "add", "laptop")
-    monkeypatch.setattr("warden.mesh.shutil.which", lambda _name: None)
+    monkeypatch.setattr("warden.mesh_apply.shutil.which", lambda _name: None)
     code, out, _err = run(capsys, "-c", path, "mesh", "status")
     assert code == 0
     assert "interface   wg0" in out

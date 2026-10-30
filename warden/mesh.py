@@ -78,9 +78,15 @@ class MeshManager:
         return result
 
     async def apply(self) -> dict[str, Any]:
-        result = await self.adapter.apply()
-        self.last_apply = result
-        return result
+        try:
+            result = await self.adapter.apply()
+            self.last_apply = result
+            return result
+        except Exception:
+            # Capture failure result set by adapter on intake
+            if self.intake.last_apply is not None:
+                self.last_apply = self.intake.last_apply
+            raise
 
     async def status(self) -> dict[str, Any]:
         return await self.adapter.status()
