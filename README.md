@@ -1,7 +1,6 @@
 # Warden
 
-[![auto-tag](https://github.com/patpadgett/warden/actions/workflows/auto-tag.yml/badge.svg)](https://github.com/patpadgett/warden/actions/workflows/auto-tag.yml)
-[![CI](https://github.com/patpadgett/warden/actions/workflows/ci.yml/badge.svg)](https://github.com/patpadgett/warden/actions/workflows/ci.yml)
+[![release](https://github.com/patpadgett/warden/actions/workflows/release.yml/badge.svg)](https://github.com/patpadgett/warden/actions/workflows/release.yml)
 
 **One door to your homelab.**
 
