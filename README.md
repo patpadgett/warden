@@ -254,7 +254,40 @@ Warden exposes a rich set of Prometheus metrics at `GET /_warden/metrics`:
 * Admin and authentication counters: `warden_auth_success_total`, `warden_auth_failure_total`, `warden_otp_success_total`, `warden_otp_failure_total`.
 * Backup‑code counters: `warden_backup_code_used_total` – total times a backup code was used for login.
 
-A starter Grafana dashboard is provided in `grafana/warden-dashboard.json`. Import it into Grafana (Config → Dashboards → Import) with a `Prometheus` datasource pointing at the Warden host (`http://warden-host:8443/_warden/metrics`). The endpoint requires an admin session and correct `Host` header. For scraping without cookies, expose `/metrics` through a reverse proxy with basic auth or use Prometheus `job_name: warden_scrape` with the `metrics` endpoint protected by network policy.
+A starter Grafana dashboard is provided in `grafana/warden-dashboard.json`. Import it into Grafana (Config → Dashboards → Import) with a `Prometheus` datasource.
+
+### Scraping with Prometheus
+
+`/_warden/metrics` is admin-host protected and requires a valid session / `Host` header. For machine scraping, either expose it behind an internal reverse proxy or configure Prometheus with a bearer token / basic auth. Example `prometheus.yml` scrape config (`job_name: warden_scrape`):
+
+```yaml
+scrape_configs:
+  - job_name: 'warden_scrape'
+    scrape_interval: 15s
+    metrics_path: /_warden/metrics
+    scheme: https
+    tls_config:
+      insecure_skip_verify: true  # only if using self-signed TLS
+    static_configs:
+      - targets: ['warden-host:8443']
+        labels:
+          instance: 'warden-homelab'
+    # If scraping without cookies, put a basic-auth or bearer token here,
+    # or expose /metrics through a proxy with auth (see README proxy notes).
+```
+
+For cookie/session scraping (not recommended for Prometheus): use `scrape_interval` with `relabel_configs` that inject the session header via the `proxy_url` or a sidecar. The simpler path: run a small nginx/traefik sidecar on the cluster that proxies `/metrics` to the Warden admin port with basic auth, and point Prometheus at the proxy.
+
+### In-app metrics
+
+The live snapshot is viewable inside the app at `/metrics/view` (admin-host protected). It shows per-host state, request counts, errors, latency, and recent traffic events — useful before opening Grafana.
+
+### Grafana wiring
+
+1. Add a `Prometheus` datasource in Grafana → `http://prometheus:9090`.
+2. Import `grafana/warden-dashboard.json` (uid `warden-dashboard`).
+3. The dashboard queries `warden_uptime_seconds`, `sum(warden_route_requests_total)`, `warden_auth_success_total`, etc., from the Prometheus server.
+4. No additional Grafana plugin is needed (plain Prometheus expressions).
 
 ---
 
