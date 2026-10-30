@@ -21,7 +21,7 @@ from warden.auth.sessions import authenticate_scope
 from warden.config import ConfigManager, WardenConfig
 from warden.db import Database
 from warden.proxy import ProxyEngine
-from warden.stats import Stats
+from warden.stats import MetricsModule
 from warden.templating import templates
 from warden.utils import (
     INTERNAL_PREFIX,
@@ -62,7 +62,7 @@ class WardenMiddleware:
         manager: ConfigManager,
         db: Database,
         proxy: ProxyEngine,
-        stats: Stats,
+        stats: MetricsModule,
     ) -> None:
         """Create the middleware instance.
 

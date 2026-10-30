@@ -4,13 +4,13 @@ from unittest.mock import MagicMock, AsyncMock, patch
 import pytest
 from warden.config import RouteConfig, WardenConfig, ConfigManager
 from warden.proxy import ProxyEngine
-from warden.stats import Stats
+from warden.stats import MetricsModule
 
 
 def test_proxy_engine_init() -> None:
     manager = MagicMock(spec=ConfigManager)
     manager.config = WardenConfig()
-    stats = Stats()
+    stats = MetricsModule()
     engine = ProxyEngine(manager, stats)
     assert engine is not None
     assert engine.manager is manager
@@ -20,7 +20,7 @@ def test_proxy_engine_init() -> None:
 def test_proxy_engine_close_resets_clients() -> None:
     manager = MagicMock(spec=ConfigManager)
     manager.config = WardenConfig()
-    engine = ProxyEngine(manager, Stats())
+    engine = ProxyEngine(manager, MetricsModule())
     # Access _clients to trigger lazy creation
     _ = engine._client(False)
     engine._clients[True] = AsyncMock()
@@ -31,7 +31,7 @@ def test_proxy_engine_close_resets_clients() -> None:
 def test_proxy_engine_reset_clients() -> None:
     manager = MagicMock(spec=ConfigManager)
     manager.config = WardenConfig()
-    engine = ProxyEngine(manager, Stats())
+    engine = ProxyEngine(manager, MetricsModule())
     _ = engine._client(False)
     asyncio.run(engine.reset_clients())
     assert len(engine._clients) == 0
@@ -50,7 +50,7 @@ def test_proxy_connection_tokens() -> None:
 def test_proxy_build_request_headers_basic() -> None:
     manager = MagicMock(spec=ConfigManager)
     manager.config = WardenConfig()
-    engine = ProxyEngine(manager, Stats())
+    engine = ProxyEngine(manager, MetricsModule())
     route = RouteConfig(host="test.local", upstream="http://localhost:8000", preserve_host=False)
     scope = {
         "headers": [
@@ -72,7 +72,7 @@ def test_proxy_build_request_headers_basic() -> None:
 def test_proxy_rewrite_location() -> None:
     manager = MagicMock(spec=ConfigManager)
     manager.config = WardenConfig()
-    engine = ProxyEngine(manager, Stats())
+    engine = ProxyEngine(manager, MetricsModule())
     route = RouteConfig(host="app.local", upstream="http://192.168.1.5:3000/api", rewrite_redirects=True)
     scope = {"scheme": "https", "headers": [(b"host", b"app.local")]}
     # Location pointing to upstream -> should rewrite to public
@@ -85,7 +85,7 @@ def test_proxy_rewrite_location() -> None:
 def test_proxy_rewrite_set_cookie_drops_secure_on_http() -> None:
     manager = MagicMock(spec=ConfigManager)
     manager.config = WardenConfig()
-    engine = ProxyEngine(manager, Stats())
+    engine = ProxyEngine(manager, MetricsModule())
     route = RouteConfig(host="app.local", upstream="http://192.168.1.5:3000", rewrite_cookies=True)
     scope = {"scheme": "http", "headers": [(b"host", b"app.local")]}
     cookie = "session=abc; Secure; HttpOnly; Path=/"
@@ -97,7 +97,7 @@ def test_proxy_rewrite_set_cookie_drops_secure_on_http() -> None:
 def test_proxy_rewrite_set_cookie_drops_unreachable_domain() -> None:
     manager = MagicMock(spec=ConfigManager)
     manager.config = WardenConfig()
-    engine = ProxyEngine(manager, Stats())
+    engine = ProxyEngine(manager, MetricsModule())
     route = RouteConfig(host="app.local", upstream="http://192.168.1.5:3000", rewrite_cookies=True)
     scope = {"scheme": "https", "headers": [(b"host", b"app.local")]}
     cookie = "session=abc; Domain=internal.service; Path=/"
@@ -109,7 +109,7 @@ def test_proxy_rewrite_set_cookie_drops_unreachable_domain() -> None:
 def test_proxy_response_headers_strip_hop_by_hop() -> None:
     manager = MagicMock(spec=ConfigManager)
     manager.config = WardenConfig()
-    engine = ProxyEngine(manager, Stats())
+    engine = ProxyEngine(manager, MetricsModule())
     route = RouteConfig(host="app.local", upstream="http://192.168.1.5:3000")
     scope = {"scheme": "https", "headers": [(b"host", b"app.local")]}
     upstream_resp = MagicMock()
@@ -142,7 +142,7 @@ def test_proxy_websocket_subprotocol_filter() -> None:
 def test_proxy_error_response_json() -> None:
     manager = MagicMock(spec=ConfigManager)
     manager.config = WardenConfig()
-    engine = ProxyEngine(manager, Stats())
+    engine = ProxyEngine(manager, MetricsModule())
     scope = {"path": "/api/test", "headers": [(b"accept", b"application/json")]}
     resp = engine._error_response(scope, status=502, title="Bad", message="Upstream down")
     assert resp.status_code == 502
@@ -154,7 +154,7 @@ def test_proxy_error_response_json() -> None:
 def test_proxy_error_response_html() -> None:
     manager = MagicMock(spec=ConfigManager)
     manager.config = WardenConfig()
-    engine = ProxyEngine(manager, Stats())
+    engine = ProxyEngine(manager, MetricsModule())
     scope = {"path": "/", "headers": [(b"accept", b"text/html")]}
     resp = engine._error_response(scope, status=404, title="Not Found", message="Missing")
     assert resp.status_code == 404

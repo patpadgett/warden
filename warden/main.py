@@ -34,7 +34,7 @@ from warden.db import Database, DatabaseError
 from warden.mesh import MeshManager
 from warden.middleware import WardenMiddleware
 from warden.proxy import ProxyEngine
-from warden.stats import HealthMonitor, Stats
+from warden.stats import HealthMonitor, MetricsModule
 from warden.templating import TEMPLATES_DIR, templates
 from warden.tls import TLSError, renewal_loop, validate_runtime_files, ACMEManager
 from warden.utils import (
@@ -202,7 +202,7 @@ def create_app(
     config: WardenConfig | None = None,
     db: Database | None = None,
     proxy: ProxyEngine | None = None,
-    stats: Stats | None = None,
+    stats: MetricsModule | None = None,
 ) -> FastAPI:
     """Build the Warden ASGI application.
 
@@ -213,7 +213,7 @@ def create_app(
     manager = _manager_for(config_path, config)
     active_config = manager.config
     database = db or Database(active_config.database_path)
-    metrics = stats or Stats()
+    metrics = stats or MetricsModule()
     engine = proxy or ProxyEngine(manager, metrics)
     passkeys = PasskeyService(database)
     acme_manager = ACMEManager(manager)

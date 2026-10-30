@@ -28,7 +28,7 @@ from websockets.asyncio.client import connect as ws_connect
 from websockets.exceptions import ConnectionClosed, InvalidHandshake, InvalidStatus
 
 from warden.config import HOP_BY_HOP, ConfigManager, RouteConfig
-from warden.stats import Stats
+from warden.stats import MetricsModule
 from warden.templating import templates
 from warden.utils import (
     RESERVED_COOKIES,
@@ -77,7 +77,7 @@ class ProxyEngine:
       rewrites redirect locations, and sanitises ``Set‑Cookie`` values.
     * Enforces per‑route IP allow/deny lists and request‑size limits.
     """
-    def __init__(self, manager: ConfigManager, stats: Stats) -> None:
+    def __init__(self, manager: ConfigManager, stats: MetricsModule) -> None:
         """Create a new ``ProxyEngine``.
 
         * ``manager`` – provides configuration and the mesh manager.

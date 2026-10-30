@@ -1,7 +1,7 @@
 from __future__ import annotations
 import time
 import pytest
-from warden.stats import Stats, HealthMonitor, RouteMetrics, Health, TrafficEvent
+from warden.stats import MetricsModule, HealthMonitor, RouteMetrics, Health, TrafficEvent
 from warden.config import RouteConfig
 
 
@@ -36,7 +36,7 @@ def test_traffic_event_as_dict() -> None:
 
 
 def test_stats_init_and_inc() -> None:
-    s = Stats()
+    s = MetricsModule()
     s.inc_auth_success()
     assert s.auth_success == 1
     s.inc_auth_failure()
@@ -54,7 +54,7 @@ def test_stats_init_and_inc() -> None:
 
 
 def test_stats_record_request() -> None:
-    s = Stats()
+    s = MetricsModule()
     route = RouteConfig(host="test.home", upstream="http://localhost:8000", auth=True)
     s.record_request(route, method="GET", path="/", status=200, latency_ms=5.0, user="alice")
     assert s.metrics["test.home"].requests == 1
@@ -65,7 +65,7 @@ def test_stats_route_snapshot() -> None:
     from warden.config import WardenConfig, RouteConfig
     cfg = WardenConfig()
     cfg.routes = [RouteConfig(host="snap.home", upstream="http://localhost:8000", auth=False)]
-    s = Stats()
+    s = MetricsModule()
     s.record_request(cfg.routes[0], method="GET", path="/", status=200, latency_ms=1.0, user=None)
     snap = s.route_snapshot(cfg)
     assert snap["snap.home"]["requests"] == 1
@@ -79,6 +79,6 @@ def test_health_monitor_start_stop() -> None:
         cfg_path = pathlib.Path(td) / "w.yaml"
         cfg_path.write_text("version: 1\nserver:\n  admin_host: localhost\nroutes: []\n")
         manager = ConfigManager.from_file(cfg_path)
-        stats = Stats()
+        stats = MetricsModule()
         monitor = HealthMonitor(stats, manager)
         assert monitor is not None
