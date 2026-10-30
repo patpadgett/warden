@@ -8,7 +8,7 @@ We welcome contributions! This guide will help you get started.
 2. **Clone your fork** locally:
 
    ```bash
-   git clone https://github.com/<your-username>/warden.git
+   git clone https://github.com/patpadgett/warden.git
    cd warden
    ```
 
