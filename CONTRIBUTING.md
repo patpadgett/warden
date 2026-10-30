@@ -58,7 +58,3 @@ If you encounter a bug or have a feature request, please open an issue on GitHub
 - A clear description.
 - Steps to reproduce (if applicable).
 - Expected vs. actual behavior.
-
----
-
-*This CONTRIBUTING guide is a template; feel free to adjust sections to reflect your workflow.*
