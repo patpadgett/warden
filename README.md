@@ -353,6 +353,24 @@ Requirements:
   the public `host:port` clients should dial.
 - `mesh.config_path` writable by the Warden process.
 
+### Running the mesh in Kubernetes / Docker Swarm
+
+WireGuard is container-unfriendly: `wg0` is a host-level interface and
+`wg-quick up` needs `NET_ADMIN`, `/dev/net/tun`, and (for `iptables`/`sysctl`)
+root, all of which containers lack. For in-cluster deployments:
+
+**Kubernetes** — run Warden as a privileged **DaemonSet** with `hostNetwork: true`:
+
+```bash
+kubectl apply -f deploy/warden-mesh-daemonset.yaml
+```
+
+The manifest mounts the config volume into the host `/etc/wireguard`, binds `NET_ADMIN` capability, exposes port 51820 (UDP+TCP) for peers dialing the node IP via `mesh.endpoint`, and runs one pod per node so each peer can reach every other node. The Warden proxy stays exposed via a standard Service on ports 8080/8443.
+
+**Docker Swarm** — same approach with `docker network connect host` / `--restart unless-stopped` and a `deploy.placement: constraints=[node.platform==linux]` rule. Peer `mesh.endpoint` must point at the worker's IP address, not a service DNS name.
+
+In both cases `mesh.enabled: true` must stay off by default; enable it only when you've provisioned the privileged DaemonSet or host-managed interface yourself.
+
 `mesh apply` is manual by design. Peer changes are saved immediately, but the
 interface is only updated when you apply from the dashboard or CLI.
 

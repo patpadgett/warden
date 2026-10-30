@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: warden-mesh
+  labels:
+    app: warden
+spec:
+  selector:
+    matchLabels:
+      app: warden
+  template:
+    metadata:
+      labels:
+        app: warden
+    spec:
+      hostNetwork: true
+      hostPID: true
+      containers:
+      - name: warden
+        image: warden:latest
+        securityContext:
+          privileged: true
+          capabilities:
+            add:
+              - NET_ADMIN
+        ports:
+        - containerPort: 8080
+          name: admin
+        - containerPort: 8443
+          name: https
+        - containerPort: 51820
+          name: mesh-udp
+          protocol: UDP
+        env:
+        - name: WARDEN_CONFIG
+          value: /etc/warden/warden.yaml
+        volumeMounts:
+        - name: warden-config
+          mountPath: /etc/warden
+        - name: warden-data
+          mountPath: /var/lib/warden
+        - name: wireguard-config
+          mountPath: /etc/wireguard
+      volumes:
+      - name: warden-config
+        configMap:
+          name: warden-config
+      - name: warden-data
+        emptyDir: {}
+      - name: wireguard-config
+        hostPath:
+          path: /etc/wireguard
+          type: DirectoryOrCreate
