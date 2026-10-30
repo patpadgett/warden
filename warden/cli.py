@@ -840,31 +840,7 @@ def build_parser() -> argparse.ArgumentParser:
     peer_remove.add_argument("name")
     peer_remove.add_argument("--yes", action="store_true")
     peer_remove.set_defaults(func=cmd_mesh, mesh_action="peer-remove")
-
-    bump = sub.add_parser("bump_version", help="increment patch version in pyproject.toml")
-    bump.set_defaults(func=cmd_bump_version)
     return parser
-
-
-def cmd_bump_version(args) -> int:
-    """Increment the patch version in pyproject.toml (used by CI auto-tag)."""
-    pyproject = Path("pyproject.toml")
-    if not pyproject.exists():
-        print("pyproject.toml not found")
-        return 1
-    text = pyproject.read_text()
-    m = re.search(r'version\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"', text)
-    if not m:
-        print("Could not parse version in pyproject.toml")
-        return 1
-    current = m.group(1)
-    parts = current.split(".")
-    parts[-1] = str(int(parts[-1]) + 1)
-    new_version = ".".join(parts)
-    updated = re.sub(r'version\s*=\s*"[0-9]+\.[0-9]+\.[0-9]+"', f'version = "{new_version}"', text)
-    pyproject.write_text(updated)
-    print(f"Bumped version: {current} -> {new_version}")
-    return 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
