@@ -2,12 +2,16 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ include "warden.fullname" . }}-config
-  labels:
-    app.kubernetes.io/name: {{ include "warden.name" . }}
-    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
-    app.kubernetes.io/instance: {{ .Release.Name }}
-    app.kubernetes.io/managed-by: Helm
-
 data:
   warden.yaml: |
-{{ .Values.config | indent 4 }}
+    server:
+      admin_host: {{ .Values.config.adminHost }}
+      tls:
+        enabled: {{ .Values.config.tlsEnabled }}
+    mesh:
+      enabled: {{ .Values.config.meshEnabled }}
+      interface: {{ .Values.config.meshInterface }}
+    database:
+      path: /var/lib/warden/warden.db
+      type: {{ .Values.database.type }}
+      url: {{ .Values.database.url | quote }}

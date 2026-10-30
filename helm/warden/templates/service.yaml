@@ -3,21 +3,18 @@ kind: Service
 metadata:
   name: {{ include "warden.fullname" . }}
   labels:
-    app.kubernetes.io/name: {{ include "warden.name" . }}
-    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
-    app.kubernetes.io/instance: {{ .Release.Name }}
-    app.kubernetes.io/managed-by: Helm
+    app: warden
 spec:
-  type: {{ .Values.service.type }}
-  ports:
-    - port: {{ .Values.service.port }}
-      targetPort: {{ .Values.service.port }}
-      protocol: TCP
-      name: http
-    - port: {{ .Values.service.httpsPort }}
-      targetPort: {{ .Values.service.httpsPort }}
-      protocol: TCP
-      name: https
   selector:
-    app.kubernetes.io/name: {{ include "warden.name" . }}
-    app.kubernetes.io/instance: {{ .Release.Name }}
+    app: warden
+  ports:
+    - name: admin
+      port: {{ .Values.service.adminPort }}
+      targetPort: 8080
+    - name: https
+      port: {{ .Values.service.httpsPort }}
+      targetPort: 8443
+    - name: mesh-udp
+      port: {{ .Values.service.meshPort }}
+      targetPort: 51820
+      protocol: UDP

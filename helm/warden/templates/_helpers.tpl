@@ -1,7 +1,12 @@
 {{- define "warden.fullname" -}}
-{{- printf "%s-%s" .Release.Name "warden" -}}
+{{- if .Values.fullnameOverride -}}
+{{- .Values.fullnameOverride -}}
+{{- else -}}
+{{- $name := default .Chart.Name .Values.nameOverride -}}
+{{- if contains $name .Release.Name -}}
+{{- .Release.Name -}}
+{{- else -}}
+{{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
-
-{{- define "warden.name" -}}
-warden
+{{- end -}}
 {{- end -}}

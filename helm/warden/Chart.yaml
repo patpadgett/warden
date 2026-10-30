@@ -1,6 +1,15 @@
 apiVersion: v2
 name: warden
-description: A zero‑config, passkey‑protected reverse proxy and homelab dashboard.
+description: Self-hosted reverse proxy and home dashboard (passkey-protected)
 type: application
 version: 0.1.0
-appVersion: "0.1.0"
+appVersion: "0.1.14"
+keywords:
+  - reverse-proxy
+  - dashboard
+  - passkeys
+sources:
+  - https://github.com/patpadgett/warden
+maintainers:
+  - name: pat
+    email: pat@example.com
