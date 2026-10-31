@@ -112,5 +112,5 @@ class HealthMonitor:
                 online=False,
                 status_code=None,
                 latency_ms=elapsed,
-                error=exc.__class__.__name,
+                error=exc.__class__.__name__,
             )

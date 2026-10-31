@@ -136,9 +136,6 @@ class TLSConfig(BaseModel):
 
     @model_validator(mode="after")
     def _check_tls(self) -> "TLSConfig":
-        if self.enabled:
-            if not self.certfile or not self.keyfile:
-                raise ValueError("tls.certfile and tls.keyfile are required when TLS is enabled")
         if self.renew_command and not self.acme_webroot:
             # A renewal hook without webroot is allowed for DNS-01 challenges.
             pass
@@ -562,10 +559,11 @@ class WardenConfig(BaseModel):
             if origin.hostname and origin.hostname != admin_host:
                 errors.append("server.public_url host must match server.admin_host")
 
-        if self.server.tls.enabled and not self.server.tls.certfile:
-            errors.append("tls.certfile is required when TLS is enabled")
-        if self.server.tls.enabled and not self.server.tls.keyfile:
-            errors.append("tls.keyfile is required when TLS is enabled")
+        if self.server.tls.enabled:
+            # certfile/keyfile presence is validated at runtime by
+            # validate_runtime_files(); allow TLS to be enabled pre-provisioning
+            # (e.g. ACME) so certificate_status can report it gracefully.
+            pass
 
         if errors:
             raise ValueError("; ".join(errors))

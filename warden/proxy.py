@@ -404,18 +404,13 @@ class ProxyEngine:
                 await self._send(response, scope, receive, send)
                 return
 
-        if "content-length" in headers and "transfer-encoding" in headers:
-            response = self._error_response(
-                scope,
-                status=400,
-                title="Bad request",
-                message="Warden rejected an ambiguous request body.",
-            )
-            await self._send(response, scope, receive, send)
-            return
         # Enforce max request body size.
+        # Per RFC 7230, Transfer-Encoding (e.g. chunked) takes precedence over
+        # Content-Length; when it is present, ignore Content-Length for the size
+        # check instead of rejecting the request.
         content_length = headers.get("content-length")
-        if content_length:
+        transfer_encoding = headers.get("transfer-encoding")
+        if content_length and not transfer_encoding:
             try:
                 length_bytes = int(content_length)
                 max_bytes = config.server.max_body_size_mb * 1024 * 1024

@@ -168,7 +168,7 @@ class ACMEManager:
             logger.debug("ACME account already exists: %s", exc)
 
         # Create a new order for the domain.
-        order = net.new_order(messages.NewOrder(identifiers=[messages.Identifier(typ=messages.IDENTIFIER_DNS, value=domain)]))
+        order = net.new_order(messages.NewOrder(identifiers=[messages.Identifier(typ=messages.IDENTIFIER_FQDN, value=domain)]))
 
         # Fulfil each HTTP‑01 challenge.
         for authz in order.authorizations:

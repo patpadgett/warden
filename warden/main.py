@@ -280,7 +280,6 @@ def create_app(
     app.state.stats = metrics
     app.state.proxy = engine
     app.state.passkeys = passkeys
-    mesh = MeshManager(database, manager)
     app.state.mesh = mesh
     app.state.cert_renewal = None
     app.state.started_at = time.time()

@@ -231,6 +231,13 @@ async def test_mesh_peer_persistence(db: Database) -> None:
     assert await db.delete_mesh_peer(peer.id) is False
 
 
+async def test_vacuum(db: Database) -> None:
+    # Insert data then vacuum; operation should not raise.
+    await db.set_setting("theme", "dark")
+    await db.vacuum()
+    assert await db.get_setting("theme") == "dark"
+
+
 async def test_database_init_is_idempotent(tmp_path: Path) -> None:
     database = Database(tmp_path / "nested" / "warden.db")
     await database.init()

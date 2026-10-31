@@ -576,10 +576,3 @@ def safe_redirect(value: Any, fallback: str) -> str:
     if any(part == ".." for part in value.split("/")):
         return fallback
     return value
-    if not isinstance(value, str):
-        return fallback
-    if not value.startswith("/") or value.startswith("//"):
-        return fallback
-    if "\\" in value or "\x00" in value or len(value) > 2048:
-        return fallback
-    return value

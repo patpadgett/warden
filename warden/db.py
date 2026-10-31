@@ -1,7 +1,7 @@
 """Async SQLite persistence layer for Warden.
 
 The module defines data classes representing the main entities (User, Credential,
-Session, Role, etc.) and a :class:`Database` class exposing async CRUD methods.
+Session, and :class:`Database` class) exposing async CRUD methods.
 All interactions use ``aiosqlite`` with a connection lock to ensure safe
 concurrent access.
 """
@@ -127,7 +127,7 @@ class DatabaseError(Exception):
 
 
 class AlreadyExistsError(DatabaseError):
-    """Raised when attempting to create an entity that already exists (e.g., duplicate username, mesh peer, or role)."""
+    """Raised when attempting to create an entity that already exists (e.g., duplicate username or mesh peer)."""
 
 
 @dataclass(slots=True)
@@ -196,8 +196,29 @@ class AuditEvent:
 
 
 @dataclass(slots=True)
+class BackupCode:
+    id: int
+    user_id: int
+    code_hash: str
+    created_at: float
+    used_at: float | None
+
+
+@dataclass(slots=True)
 class MeshPeer:
     id: int
+    name: str
+    public_key: str
+    private_key: str | None
+    preshared_key: str
+    address: str
+    endpoint: str | None
+    keepalive: int
+    enabled: bool
+    created_at: float
+    last_handshake: float | None
+
+
     name: str
     public_key: str
     private_key: str | None
@@ -312,7 +333,7 @@ class Database:
     """Async SQLite database wrapper for Warden.
 
     Provides CRUD operations for users, credentials, sessions, backup codes,
-    OTP secrets, RBAC roles, and Mesh peers. All methods acquire a lock to ensure
+    OTP secrets, and Mesh peers. All methods acquire a lock to ensure
     safe concurrent access in the async environment.
     """
     def __init__(self, path: str | Path) -> None:
@@ -351,6 +372,16 @@ class Database:
                 await conn.execute("PRAGMA synchronous = NORMAL")
             self._conn = conn
             try:
+                # Create the schema_migrations tracking table (backend-agnostic;
+                # used by all database backends to track applied schema versions).
+                await conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS schema_migrations (
+                        version INTEGER PRIMARY KEY,
+                        applied_on REAL NOT NULL
+                    )
+                    """
+                )
                 await self._migrate()
             except Exception:
                 await conn.close()
@@ -367,19 +398,143 @@ class Database:
             except OSError:
                 pass
 
+    #: Schema version number. Incremented whenever the schema changes.
+    SCHEMA_VERSION = 3
+
+    #: Per-step migration scripts. Keys are the target schema version.
+    #: Each script runs inside a transaction; RAISE(IGNORE) suppresses
+    #: "duplicate table" errors when re-running an older migration.
+    _MIGRATIONS: dict[int, str] = {
+        1: """
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+            display_name TEXT NOT NULL,
+            webauthn_user_id BLOB NOT NULL UNIQUE,
+            is_admin INTEGER NOT NULL DEFAULT 1,
+            created_at REAL NOT NULL,
+            recovery_token TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at REAL NOT NULL,
+            event TEXT NOT NULL,
+            user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            username TEXT,
+            ip TEXT,
+            user_agent TEXT,
+            detail TEXT
+        );
+        """,
+        2: """
+        -- Add mesh_peers table for WireGuard peer configuration.
+        CREATE TABLE IF NOT EXISTS mesh_peers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+            public_key TEXT NOT NULL UNIQUE,
+            private_key TEXT,
+            preshared_key TEXT NOT NULL,
+            address TEXT NOT NULL UNIQUE,
+            endpoint TEXT,
+            keepalive INTEGER NOT NULL DEFAULT 25,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            created_at REAL NOT NULL,
+            last_handshake REAL
+        );
+        """,
+        3: """
+        -- Add credentials, sessions, challenges, backup_codes, otp_secrets tables
+        -- to support passkeys and multi-factor authentication.
+        CREATE TABLE IF NOT EXISTS credentials (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            credential_id BLOB NOT NULL UNIQUE,
+            public_key BLOB NOT NULL,
+            sign_count INTEGER NOT NULL DEFAULT 0,
+            transports TEXT NOT NULL DEFAULT '[]',
+            name TEXT NOT NULL,
+            aaguid TEXT,
+            fmt TEXT,
+            user_verified INTEGER NOT NULL DEFAULT 0,
+            backup_eligible INTEGER NOT NULL DEFAULT 0,
+            backup_state INTEGER NOT NULL DEFAULT 0,
+            created_at REAL NOT NULL,
+            last_used_at REAL
+        );
+        CREATE INDEX IF NOT EXISTS idx_credentials_user ON credentials(user_id);
+
+        CREATE TABLE IF NOT EXISTS sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            token_hash TEXT NOT NULL UNIQUE,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            created_at REAL NOT NULL,
+            expires_at REAL NOT NULL,
+            last_seen_at REAL NOT NULL,
+            ip TEXT,
+            user_agent TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+        CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at);
+
+        CREATE TABLE IF NOT EXISTS challenges (
+            id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            expires_at REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_challenges_expiry ON challenges(expires_at);
+
+        CREATE TABLE IF NOT EXISTS backup_codes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            code_hash TEXT NOT NULL UNIQUE,
+            created_at REAL NOT NULL,
+            used_at REAL
+        );
+        CREATE INDEX IF NOT EXISTS idx_backup_codes_user ON backup_codes(user_id);
+
+        CREATE TABLE IF NOT EXISTS otp_secrets (
+            user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+            secret TEXT NOT NULL,
+            created_at REAL NOT NULL
+        );
+        """,
+    }  # type: ignore[assignment]
+
     async def _migrate(self) -> None:
         conn = self._require_conn()
-        async with conn.execute("PRAGMA user_version") as cursor:
+        # Read the current schema version from the tracking table (backend-agnostic).
+        async with conn.execute(
+            "SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations"
+        ) as cursor:
             row = await cursor.fetchone()
-        version = int(row[0]) if row else 0
-        if version > SCHEMA_VERSION:
+        current_version = int(row["version"]) if row else 0
+        if current_version > self.SCHEMA_VERSION:
             raise DatabaseError(
-                f"Database schema version {version} is newer than this Warden build "
-                f"supports ({SCHEMA_VERSION})."
+                f"Database schema version {current_version} is newer than this Warden build "
+                f"supports ({self.SCHEMA_VERSION})."
             )
-        if version < SCHEMA_VERSION:
-            await conn.executescript(_SCHEMA)
-            await conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        # Run per-step migrations up to the current SCHEMA_VERSION.
+        for target_version in range(current_version + 1, self.SCHEMA_VERSION + 1):
+            migration = self._MIGRATIONS.get(target_version)
+            if migration is None:
+                raise DatabaseError(
+                    f"No migration script defined for schema version {target_version}."
+                )
+            async with conn.execute("BEGIN IMMEDIATE") as _:
+                await conn.executescript(migration)
+                # Record the migration so future upgrades skip it.
+                await conn.execute(
+                    "INSERT INTO schema_migrations (version, applied_on) VALUES (?, ?)",
+                    (target_version, time.time()),
+                )
         self._secure_files()
 
     def _require_conn(self) -> aiosqlite.Connection:
@@ -591,7 +746,7 @@ class Database:
         return bool(changed)
 
     async def reset_auth(self) -> None:
-        """Delete all users, passkeys, sessions, and settings (auth reset)."""
+        """Delete all users, passkeys, sessions, settings, audit log, and mesh peers (auth reset)."""
         conn = self._require_conn()
         async with self._lock:
             await conn.execute("DELETE FROM settings")
@@ -605,11 +760,6 @@ class Database:
         async with self._lock:
             await conn.execute("VACUUM")
 
-    async def user_count(self) -> int:
-        row = await self._fetchone("SELECT COUNT(*) AS c FROM users")
-        return row["c"] if row else 0
-
-    # ------------------------------------------------------------- credentials
     async def add_credential(
         self,
         *,
@@ -1084,12 +1234,5 @@ class Database:
             return False
         return False
 
-    async def list_user_roles(self, user_id: int) -> list[Role]:
-        rows = await self._fetchall(
-            "SELECT r.id, r.name, r.description FROM roles r "
-            "JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = ?",
-            (user_id,)
-        )
-        return [Role(id=row["id"], name=row["name"], description=row["description"]) for row in rows]
 
     

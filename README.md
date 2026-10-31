@@ -297,13 +297,13 @@ See the fully commented example in
 | `icon` | unset | Emoji or short label for the dashboard. |
 | `websocket_subprotocols` | `[]` | Allowed WebSocket subprotocols (e.g., `graphql-ws`). Empty = allow all. |
 
-## Role‑Based Access Control (RBAC)
+## User Access Control
 
-Access is binary: an account is either admin (`is_admin: 1`) or not. Only admin accounts can access the dashboard and manage users, routes, TLS, mesh, or audit logs. The `admin` role is no longer used — admin status is a user-level boolean.
-
-The UI includes a **Users** page where administrators view users and toggle the `is_admin` flag.
-
-**Access is binary.** Each user is either administrator (`is_admin`) or standard. Only administrators can access the dashboard. The `Users` page lets admins view users and toggle the `is_admin` flag.
+Access is binary: an account is either admin (`is_admin: 1`) or not. Only admin
+accounts can access the dashboard and manage users, routes, TLS, mesh, or audit
+logs. The `Users` page lets administrators view users and toggle the `is_admin`
+flag. There is no second-tier "roles" system — every privileged action is gated
+on the `is_admin` flag.
 
 ---
 
@@ -499,7 +499,7 @@ config show            print effective warden.yaml
 certs status [--json]
 certs renew [--dry-run]
 
-auth reset [--yes]    delete the account, passkeys, and sessions
+auth reset [--yes]    delete the account, passkeys, sessions, settings, audit log, and mesh peers
                       (restart to generate a new setup code)
 
 mesh status
@@ -564,8 +564,8 @@ WireGuard interface needs broader privileges than the sandbox allows.
 
 ## Security notes
 
-- Warden is **single-admin by default** (one admin account, multiple passkeys allowed). The admin account can manage additional users and assign RBAC roles (`admin`, custom roles) through the dashboard. There is no password fallback and no open user self-registration.
-- Multi-user access is through the **RBAC layer**: additional users are created by the admin (`Users` page), may be granted roles (`Roles` page), and must register at least one passkey. Only users holding the `admin` role can manage roles, users, or other privileged actions. The built-in `admin` role is created automatically and should be granted to the initial administrator.
+- Warden is **single-admin by default** (one admin account, multiple passkeys allowed). The admin account can manage additional users and toggle their `is_admin` flag through the dashboard. There is no password fallback and no open user self-registration.
+- Multi-user access is through the `is_admin` flag: additional users are created by the admin (`Users` page), must register at least one passkey, and are granted or denied privileged actions by the `is_admin` flag. The built-in admin account created during first-run setup is automatically admin.
 - Sessions are opaque 256-bit tokens stored as SHA-256 hashes in SQLite. Cookies
   are `HttpOnly`, `SameSite=Lax`, and `Secure` when the request is HTTPS. The
   session cookie never reaches upstream services.
@@ -628,9 +628,9 @@ warden auth reset --yes
 # restart Warden and use the newly printed setup code
 ```
 
-This deletes the admin account, all passkeys, sessions, and first-run settings,
-but leaves the audit log and mesh peers. To start the whole instance over, remove
-the database as well.
+This deletes the admin account, all passkeys, sessions, settings, audit log, and
+mesh peers (complete system reset). To start the whole instance over, remove the
+database as well.
 
 ## Development
 

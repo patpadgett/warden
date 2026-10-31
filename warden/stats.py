@@ -83,7 +83,7 @@ class MetricsModule:
         self.metrics: dict[str, RouteMetrics] = {}
         self.health: dict[str, Health] = {}
         self.recent: deque[TrafficEvent] = deque(maxlen=60)
-        # New RBAC and auth metrics
+        # New auth and access metrics
         self.auth_success = 0
         self.auth_failure = 0
         self.otp_success = 0
@@ -221,7 +221,7 @@ class MetricsModule:
             lines.append(f'# HELP warden_route_authenticated_requests_total Total authenticated requests for {host}')
             lines.append('# TYPE warden_route_authenticated_requests_total counter')
             lines.append(f'warden_route_authenticated_requests_total{{host="{host}"}} {m.authenticated}')
-        # Role & auth metrics
+        # Auth and access metrics
         lines.append('# HELP warden_auth_success_total Total successful authentication attempts')
         lines.append('# TYPE warden_auth_success_total counter')
         lines.append(f'warden_auth_success_total {self.auth_success}')
