@@ -269,9 +269,19 @@ during renewal so webroot challenges keep working.
 
 PostgreSQL / CockroachDB adapter (`warden.db_postgres.PostgresDatabase`) is provided for production or distributed deployments. SQLite remains the default (zero-config).
 
-The database stores the admin account, passkey public keys, hashed sessions,
-mesh private keys, challenges, settings, and the audit log. Back it up and keep
-it private.
+The database stores the admin account, passkey public keys, hashed sessions, mesh private keys, challenges, settings, and the audit log. Back it up and keep it private.
+
+### Database schema and migrations
+
+Warden ships with an embedded, transactional schema-migration system so that upgrading between versions never leaves the database behind. The current schema version is defined by the `SCHEMA_VERSION` constant (currently `3`). Each upgrade step is a plain-SQL script stored in the `_MIGRATIONS` dictionary, keyed by the target version:
+
+- **v1** – Users, settings, and the audit log (initial schema).
+- **v2** – WireGuard `mesh_peers` table for peer configuration.
+- **v3** – Credentials, sessions, challenges, backup codes, and OTP secrets (passkeys and MFA).
+
+When `Database.init()` runs, it reads the highest `version` already recorded in `schema_migrations` and applies every script for versions greater than that, in order, inside a single `BEGIN IMMEDIATE` transaction. If the DB already contains a newer version than this build supports, initialization fails loudly instead of silently applying a stale schema. SQLite runs the migration inside `BEGIN IMMEDIATE`; PostgreSQL inlines the same logic with `async with self.engine.begin()` and uses PostgreSQL-native types (`BIGINT GENERATED ALWAYS AS IDENTITY`, `DOUBLE PRECISION`, `BYTEA`, `BOOLEAN`, etc.).
+
+The SQL scripts in `warden/db.py` and `warden/db_postgres.py` are the single source of truth for the schema. To add a new migration, bump `SCHEMA_VERSION`, append the DDL to `_MIGRATIONS`, and add the corresponding PG type mappings to `PostgresDatabase`'s script.
 
 ### `mesh` and `routes`
 
