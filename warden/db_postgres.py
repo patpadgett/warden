@@ -29,6 +29,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+import asyncpg
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -341,17 +342,18 @@ class PostgresDatabase(Database):
         if not database:
             return
         default_url = parsed.set(database="postgres")
-        engine = create_async_engine(default_url, echo=False, future=True)
+        dsn = default_url.render_as_string(hide_password=False).replace(
+            "postgresql+asyncpg://", "postgresql://"
+        )
+        conn = await asyncpg.connect(dsn)
         try:
-            async with engine.connect() as conn:
-                result = await conn.execute(
-                    text("SELECT 1 FROM pg_database WHERE datname = :name"),
-                    {"name": database},
-                )
-                if result.fetchone() is None:
-                    await conn.execute(text(f'CREATE DATABASE "{database}"'))
+            result = await conn.fetchval(
+                "SELECT 1 FROM pg_database WHERE datname = $1", database
+            )
+            if result is None:
+                await conn.execute(f'CREATE DATABASE "{database}"')
         finally:
-            await engine.dispose()
+            await conn.close()
 
     async def init(self) -> None:
         await self._ensure_database_exists()

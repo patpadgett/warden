@@ -129,16 +129,8 @@ class TestPostgresDatabaseInit:
         select_result.fetchone.return_value = (0,)
         # Results for the INSERT used to record the version.
         insert_result = MagicMock()
-        # Mock the conn.execute() calls: first the two from
-        # _ensure_database_exists (SELECT pg_database, CREATE DATABASE),
-        # then the SELECT for schema version, then the individual
-        # statements of each migration script, then the per-migration
-        # version inserts.
-        db_select = MagicMock()
-        db_select.fetchone.return_value = None
+        # Mock the conn.execute() calls for the schema migration part.
         mock_conn.execute.side_effect = [
-            db_select,  # SELECT pg_database check
-            MagicMock(),  # CREATE DATABASE
             select_result,  # SELECT schema version
             # v1: users, settings, audit
             MagicMock(), MagicMock(), MagicMock(),
@@ -160,12 +152,11 @@ class TestPostgresDatabaseInit:
         # mock_engine.begin is a plain callable that returns the context manager
         # directly (not a coroutine), matching how real async engines behave.
         mock_engine.begin = MagicMock(return_value=mock_cm)
-        # engine.connect() is also used by _ensure_database_exists.
-        mock_connect_cm = AsyncMock()
-        mock_connect_cm.__aenter__.return_value = mock_conn
-        mock_connect_cm.__aexit__.return_value = None
-        mock_engine.connect = MagicMock(return_value=mock_connect_cm)
-        with patch("warden.db_postgres.create_async_engine", return_value=mock_engine), \
+        # Mock asyncpg.connect for _ensure_database_exists.
+        mock_pg_conn = AsyncMock()
+        mock_pg_conn.fetchval.return_value = None  # DB doesn't exist yet
+        with patch("warden.db_postgres.asyncpg.connect", return_value=mock_pg_conn), \
+                patch("warden.db_postgres.create_async_engine", return_value=mock_engine), \
                 patch("warden.db_postgres.sessionmaker", return_value=AsyncMock()):
             db = PostgresDatabase("postgresql+asyncpg://localhost/warden")
             await db.init()
