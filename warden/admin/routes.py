@@ -247,7 +247,17 @@ async def openapi_json(request: Request) -> JSONResponse:
 async def swagger_ui(request: Request) -> Response:
     """Serve Swagger UI for the admin OpenAPI schema (admin‑host protected)."""
     _guard_host(request)
-    return get_swagger_ui_html(openapi_url="/_warden/openapi.json", title="Warden Admin API")
+    response = get_swagger_ui_html(openapi_url="/_warden/openapi.json", title="Warden Admin API")
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; "
+        "base-uri 'none'; form-action 'self'"
+    )
+    return response
+
+
 @router.get("/metrics/view")
 async def metrics_view(request: Request) -> Response:
     _guard_host(request)
