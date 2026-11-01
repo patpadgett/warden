@@ -874,18 +874,19 @@ class PostgresDatabase(Database):
         row = result.fetchone()
         if row is None:
             raise DatabaseError("Challenge disappeared after creation.")
-        raw_payload = row["payload"]  # stored as JSON text; always a str at runtime
+        row_data = dict(row._mapping)
+        raw_payload = row_data["payload"]  # stored as JSON text; always a str at runtime
         try:
             payload = json.loads(raw_payload) if raw_payload else {}  # type: ignore[arg-type]
         except (TypeError, ValueError):
             payload = {}
         return _challenge(
             {
-                "id": row["id"],
-                "kind": row["kind"],
+                "id": row_data["id"],
+                "kind": row_data["kind"],
                 "payload": payload,
-                "created_at": row["created_at"],
-                "expires_at": row["expires_at"],
+                "created_at": row_data["created_at"],
+                "expires_at": row_data["expires_at"],
             }
         )
 
@@ -900,7 +901,8 @@ class PostgresDatabase(Database):
             row = result.fetchone()
             if row is None:
                 return None
-            raw_payload = row["payload"]  # stored as JSON text; always a str at runtime
+            row_data = dict(row._mapping)
+            raw_payload = row_data["payload"]  # stored as JSON text; always a str at runtime
             await session.execute(delete(challenges).where(challenges.c.id == challenge_id))
             await session.commit()
             try:
@@ -909,11 +911,11 @@ class PostgresDatabase(Database):
                 payload = {}
             return _challenge(
                 {
-                    "id": row["id"],
-                    "kind": row["kind"],
+                    "id": row_data["id"],
+                    "kind": row_data["kind"],
                     "payload": payload,
-                    "created_at": row["created_at"],
-                    "expires_at": row["expires_at"],
+                    "created_at": row_data["created_at"],
+                    "expires_at": row_data["expires_at"],
                 }
             )
 
@@ -930,7 +932,7 @@ class PostgresDatabase(Database):
         async with self.session_factory() as session:
             result = await session.execute(select(settings.c.value).where(settings.c.key == key))
             row = result.fetchone()
-            return row["value"] if row else None
+            return row._mapping["value"] if row else None
 
     async def set_setting(self, key: str, value: str) -> None:
         async with self.session_factory() as session:
@@ -1062,7 +1064,7 @@ class PostgresDatabase(Database):
                 select(otp_secrets.c.secret).where(otp_secrets.c.user_id == user_id)
             )
             row = result.fetchone()
-            return row["secret"] if row else None
+            return row._mapping["secret"] if row else None
 
     async def verify_otp(self, user_id: int, code: str, *, window: int = 1) -> bool:
         secret = await self.get_otp_secret(user_id)
