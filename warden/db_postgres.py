@@ -45,6 +45,7 @@ from sqlalchemy import (
     delete,
     func,
     insert,
+    make_url,
     select,
     text,
     update,
@@ -334,7 +335,26 @@ class PostgresDatabase(Database):
             self.engine, class_=AsyncSession, expire_on_commit=False
         )
 
+    async def _ensure_database_exists(self) -> None:
+        parsed = make_url(self.url)
+        database = parsed.database
+        if not database:
+            return
+        default_url = parsed.set(database="postgres")
+        engine = create_async_engine(default_url, echo=False, future=True)
+        try:
+            async with engine.connect() as conn:
+                result = await conn.execute(
+                    text("SELECT 1 FROM pg_database WHERE datname = :name"),
+                    {"name": database},
+                )
+                if result.fetchone() is None:
+                    await conn.execute(text(f'CREATE DATABASE "{database}"'))
+        finally:
+            await engine.dispose()
+
     async def init(self) -> None:
+        await self._ensure_database_exists()
         async with self.engine.begin() as conn:
             # One-shot schema creation first: this guarantees the
             # ``schema_migrations`` tracking table exists before the version
