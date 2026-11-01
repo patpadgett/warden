@@ -953,6 +953,7 @@ def _preserve_restart_fields(previous: WardenConfig, incoming: WardenConfig) -> 
     this helper ensures those values are not unintentionally overwritten by a UI
     edit.
     """
+    """Build the live config, holding restart-only values at their old state."""
     old_data = previous.model_dump(mode="json")
     new_data = incoming.model_dump(mode="json")
     runtime = incoming.model_copy(deep=True)
