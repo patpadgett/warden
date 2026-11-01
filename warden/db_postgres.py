@@ -448,11 +448,11 @@ class PostgresDatabase(Database):
                 raise AlreadyExistsError(
                     "A peer with that name or address already exists."
                 )
-        result = await session.execute(select(mesh_peers).where(mesh_peers.c.name == name))
-        row = result.fetchone()
-        if row is None:
-            raise DatabaseError("Mesh peer disappeared after creation.")
-        return MeshPeer(**dict(row._mapping))
+            result = await session.execute(select(mesh_peers).where(mesh_peers.c.name == name))
+            row = result.fetchone()
+            if row is None:
+                raise DatabaseError("Mesh peer disappeared after creation.")
+            return MeshPeer(**dict(row._mapping))
 
     async def get_mesh_peer(self, peer_id: int) -> MeshPeer | None:
         async with self.session_factory() as session:
@@ -506,11 +506,11 @@ class PostgresDatabase(Database):
                     )
             except IntegrityError:
                 raise AlreadyExistsError("That username is already registered.")
-        result = await session.execute(select(users).where(users.c.username == username))
-        row = result.fetchone()
-        if row is None:
-            raise DatabaseError("User disappeared after creation.")
-        return _user(row._mapping)
+            result = await session.execute(select(users).where(users.c.username == username))
+            row = result.fetchone()
+            if row is None:
+                raise DatabaseError("User disappeared after creation.")
+            return _user(row._mapping)
 
     async def create_user_with_credential(
         self,
@@ -868,27 +868,27 @@ class PostgresDatabase(Database):
                 )
             )
             await session.commit()
-        result = await session.execute(
-            select(challenges).where(challenges.c.id == challenge_id)
-        )
-        row = result.fetchone()
-        if row is None:
-            raise DatabaseError("Challenge disappeared after creation.")
-        row_data = dict(row._mapping)
-        raw_payload = row_data["payload"]  # stored as JSON text; always a str at runtime
-        try:
-            payload = json.loads(raw_payload) if raw_payload else {}  # type: ignore[arg-type]
-        except (TypeError, ValueError):
-            payload = {}
-        return _challenge(
-            {
-                "id": row_data["id"],
-                "kind": row_data["kind"],
-                "payload": payload,
-                "created_at": row_data["created_at"],
-                "expires_at": row_data["expires_at"],
-            }
-        )
+            result = await session.execute(
+                select(challenges).where(challenges.c.id == challenge_id)
+            )
+            row = result.fetchone()
+            if row is None:
+                raise DatabaseError("Challenge disappeared after creation.")
+            row_data = dict(row._mapping)
+            raw_payload = row_data["payload"]  # stored as JSON text; always a str at runtime
+            try:
+                payload = json.loads(raw_payload) if raw_payload else {}  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                payload = {}
+            return _challenge(
+                {
+                    "id": row_data["id"],
+                    "kind": row_data["kind"],
+                    "payload": payload,
+                    "created_at": row_data["created_at"],
+                    "expires_at": row_data["expires_at"],
+                }
+            )
 
     async def consume_challenge(self, challenge_id: str, kind: str, *, now: float | None = None) -> Challenge | None:
         now if now is not None else time.time()
@@ -1004,10 +1004,10 @@ class PostgresDatabase(Database):
                     await session.commit()
             except IntegrityError:
                 raise AlreadyExistsError("A backup code was already issued for this user.")
-        result = await session.execute(
-            select(backup_codes.c.id).where(backup_codes.c.user_id == user_id).order_by(backup_codes.c.id.desc()).limit(1)
-        )
-        return int(result.scalar() or 0)
+            result = await session.execute(
+                select(backup_codes.c.id).where(backup_codes.c.user_id == user_id).order_by(backup_codes.c.id.desc()).limit(1)
+            )
+            return int(result.scalar() or 0)
 
     async def use_backup_code(self, code_hash: str) -> int | None:
         async with self.session_factory() as session, session.begin():
