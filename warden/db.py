@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import sqlite3
 import time
@@ -771,6 +772,17 @@ class Database:
 
     async def vacuum(self) -> None:
         conn = self._require_conn()
+        config = getattr(self, "config", None)
+        if config is not None:
+            path = conn.execute("PRAGMA database_path").fetchone()[0]
+            size = os.path.getsize(path) if path else 0
+            if size < config.server.max_vacuum_bytes:
+                logger.debug(
+                    "VACUUM skipped, database file %d bytes < threshold %d",
+                    size,
+                    config.server.max_vacuum_bytes,
+                )
+                return
         async with self._lock:
             await conn.execute("VACUUM")
 

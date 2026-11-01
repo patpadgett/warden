@@ -74,19 +74,26 @@ def _manager_for(
     return ConfigManager.from_file(path)
 
 
-async def _cleanup_loop(app: FastAPI) -> None:
+async def _cleanup_loop(
+    app: FastAPI, config: WardenConfig, database: Database
+) -> None:
     """Delete expired sessions/challenges and checkpoint SQLite once an hour."""
     await asyncio.sleep(45)
+    interval = config.server.cleanup_interval_seconds
     while True:
         try:
             await app.state.db.delete_expired_sessions()
             await app.state.db.delete_expired_challenges()
-            await app.state.db.vacuum()
+            if config.server.vacuum_enabled:
+                logger.debug("Running database vacuum")
+                await app.state.db.vacuum()
+            else:
+                logger.debug("VACUUM skipped (vacuum_enabled=false)")
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.exception("Background cleanup failed")
-        await asyncio.sleep(_CLEANUP_INTERVAL)
+        await asyncio.sleep(interval)
 
 
 def _public_base_url(config: WardenConfig) -> str:
@@ -220,6 +227,9 @@ def create_app(
         database = PostgresDatabase(url)
     else:
         database = Database(active_config.database_path)
+    # Store the config on the database instance so vacuum() can read the
+    # size threshold at runtime.
+    database.config = active_config.server
     metrics = stats or MetricsModule()
     engine = proxy or ProxyEngine(manager, metrics)
     passkeys = PasskeyService(database)
@@ -242,10 +252,15 @@ def create_app(
         )
         _print_banner(manager, setup_code, setup_expires)
 
+        app.state.config = manager.config
         monitor = HealthMonitor(metrics, manager)
         app.state.health_monitor = monitor
         await monitor.start()
-        tasks: list[asyncio.Task[Any]] = [asyncio.create_task(_cleanup_loop(app), name="warden-cleanup")]
+        tasks: list[asyncio.Task[Any]] = [
+            asyncio.create_task(
+                _cleanup_loop(app, manager.config, database), name="warden-cleanup"
+            )
+        ]
         renewal_task: asyncio.Task[Any] | None = None
         if manager.config.server.tls.enabled and manager.config.server.tls.renew_command:
             renewal_task = asyncio.create_task(renewal_loop(app), name="warden-tls-renewal")

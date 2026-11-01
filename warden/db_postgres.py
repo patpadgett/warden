@@ -23,6 +23,7 @@ objects regardless of backend.
 from __future__ import annotations
 
 import json
+import logging
 import time
 from typing import Any
 
@@ -732,8 +733,13 @@ class PostgresDatabase(Database):
             await session.commit()
 
     async def vacuum(self) -> None:
-        async with self.session_factory() as session:
-            await session.execute(text("VACUUM"))
+        # PostgreSQL relies on ``autovacuum`` (enabled by default) to reclaim
+        # dead tuples and keep bloat under control. Manual ``VACUUM`` holds a
+        # pooled connection for the duration of the checkpoint, which can
+        # starve other requests; rely on autovacuum instead.
+        logger.debug(
+            "Skipping manual VACUUM on Postgres (relying on autovacuum)"
+        )
 
     # ------------------------------------------------------------------ sessions
     async def create_session(

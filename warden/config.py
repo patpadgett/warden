@@ -210,6 +210,19 @@ class ServerConfig(BaseModel):
     public_url: str | None = None
     request_timeout_seconds: float = Field(default=60.0, ge=1, le=3600)
     health_interval_seconds: int = Field(default=30, ge=10, le=3600)
+    #: How often the cleanup loop runs (seconds). The loop runs once an hour by
+    #: default; set to 0 to disable the periodic cleanup task entirely.
+    cleanup_interval_seconds: float = Field(default=3600.0, ge=0)
+    #: If true, the cleanup loop also runs ``VACUUM`` on the database after the
+    #: per-table deletes. PostgreSQL relies on ``autovacuum`` for this and must
+    #: not be vacuumed manually on a pooled connection, so it defaults to
+    #: ``False`` on Postgres and ``True`` on SQLite.
+    vacuum_enabled: bool = True
+    #: Only runs regular (non-FULL) VACUUM on SQLite when the database file is
+    #: larger than this many megabytes, to avoid a long-running exclusive lock
+    #: on a small database.
+    max_vacuum_bytes: int = Field(default=100 * 1024 * 1024, ge=0)
+    #: Maximum request body size in MB (deprecated in favor of max_vacuum_bytes).
     max_body_size_mb: int = Field(default=10, ge=1, le=1024)
     log_level: str = "info"
 
