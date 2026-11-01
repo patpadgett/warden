@@ -533,13 +533,13 @@ class PostgresDatabase(Database):
     ) -> tuple[User, Credential]:
         created = now if now is not None else time.time()
         async with self.session_factory() as session:
-            if setup_mode:
-                count_result = await session.execute(
-                    select(func.count(users.c.id)).select_from(users)
-                )
-                if count_result.scalar() > 0:
-                    raise AlreadyExistsError("This Warden instance has already been claimed.")
             async with session.begin():
+                if setup_mode:
+                    count_result = await session.execute(
+                        select(func.count(users.c.id)).select_from(users)
+                    )
+                    if count_result.scalar() > 0:
+                        raise AlreadyExistsError("This Warden instance has already been claimed.")
                 user_result = await session.execute(
                     insert(users).values(
                         username=username,
