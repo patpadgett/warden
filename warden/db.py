@@ -769,7 +769,7 @@ class Database:
                 row = await cursor.fetchone()
                 path = row[0] if row else None
             size = os.path.getsize(path) if path else 0
-            if size < config.server.max_vacuum_bytes:
+            if size < config.max_vacuum_bytes:
                 logger.debug(
                     "VACUUM skipped, database file %d bytes < threshold %d",
                     size,

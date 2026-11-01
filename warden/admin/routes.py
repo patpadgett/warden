@@ -253,7 +253,9 @@ async def metrics_view(request: Request) -> Response:
     _guard_host(request)
     stats = request.app.state.stats
     snapshot = stats.snapshot(_config(request))
-    return _render(request, "metrics.html", {"stats": snapshot})
+    context = _base_context(request, page="metrics", title="Metrics")
+    context.update({"stats": snapshot})
+    return _render(request, "metrics.html", context)
 
 @router.get("/metrics")
 @router.get("/_warden/metrics")
