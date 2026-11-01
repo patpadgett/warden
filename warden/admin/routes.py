@@ -250,10 +250,12 @@ async def swagger_ui(request: Request) -> Response:
     response = get_swagger_ui_html(openapi_url="/_warden/openapi.json", title="Warden Admin API")
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
-        "script-src 'self' https://cdn.jsdelivr.net; "
+        "script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; "
         "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-        "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; "
-        "base-uri 'none'; form-action 'self'"
+        "img-src 'self' data: https://fastapi.tiangolo.com; "
+        "connect-src 'self' https://cdn.jsdelivr.net; "
+        "font-src 'self' https://cdn.jsdelivr.net; "
+        "frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
     )
     return response
 
