@@ -244,8 +244,6 @@ def create_app(
     # Attach to engine for token bridging (challenge responses)
     mesh = MeshManager(database, manager)
 
-
-
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await database.init()
