@@ -22,7 +22,11 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse
-from redis.exceptions import RedisError
+
+try:
+    from redis.exceptions import RedisError
+except ImportError:
+    RedisError = Exception  # type: ignore[misc,assignment]
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 from starlette.staticfiles import StaticFiles
