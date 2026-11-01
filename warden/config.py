@@ -967,10 +967,4 @@ def restart_required(old: WardenConfig, new: WardenConfig) -> list[str]:
     return changes
 
 
-def public_origin(config: WardenConfig, scheme: str, host_header: str) -> str:
-    """Best-effort public origin for links and WebAuthn origin checks."""
-    if config.server.public_url:
-        return config.server.public_url
-    if config.server.external_scheme:
-        scheme = config.server.external_scheme
-    return f"{scheme}://{host_header}"
+

@@ -334,7 +334,12 @@ class PostgresDatabase(Database):
 
     async def init(self) -> None:
         async with self.engine.begin() as conn:
-            # Run per-step schema migrations, tracking versions in
+            # One-shot schema creation first: this guarantees the
+            # ``schema_migrations`` tracking table exists before the version
+            # query below. The SQLite backend in warden/db.py creates that
+            # table immediately, so this matches that ordering.
+            await conn.run_sync(lambda sync_conn: metadata.create_all(sync_conn))
+            # Per-step schema migrations, tracking versions in
             # ``schema_migrations`` (mirrors the SQLite backend in db.py).
             result = await conn.execute(
                 text(
@@ -349,25 +354,35 @@ class PostgresDatabase(Database):
                     f"supports ({self.SCHEMA_VERSION})."
                 )
             # Run per-step migrations up to the current SCHEMA_VERSION.
+            # asyncpg cannot execute a multi-statement string in a single
+            # ``conn.execute()`` call, so split each migration into its
+            # individual statements and run them one at a time.
             for target_version in range(current_version + 1, self.SCHEMA_VERSION + 1):
                 migration = self._MIGRATIONS.get(target_version)
                 if migration is None:
                     raise DatabaseError(
                         f"No migration script defined for schema version {target_version}."
                     )
-                await conn.execute(text(migration))
+                for statement in migration.split(";"):
+                    statement = statement.strip()
+                    if statement:
+                        await conn.execute(text(statement))
                 await conn.execute(
                     text(
                         "INSERT INTO schema_migrations (version, applied_on) VALUES (:v, :t)"
                     ),
                     {"v": target_version, "t": time.time()},
                 )
-            # One-shot schema creation: ensures all tables exist (including any
-            # that may not be covered by the per-step migration scripts).
-            await conn.run_sync(lambda sync_conn: metadata.create_all(sync_conn))
 
     async def close(self) -> None:
         await self.engine.dispose()
+
+    #: PostgreSQL-native schema migrations. This mirrors the SQLite backend's
+    #: ``Database._MIGRATIONS`` but uses PostgreSQL DDL (identity columns,
+    #: ``BYTEA``, ``BOOLEAN``) so the same step definitions serve both
+    #: backends. ``init()`` reads it off the class so subclasses inherit a
+    #: working Postgres migration set.
+    _MIGRATIONS = _MIGRATIONS  # noqa: F811  (class attribute shadowing module)
 
     # ------------------------------------------------------------------ mesh
     async def list_mesh_peers(self) -> list[MeshPeer]:
@@ -580,6 +595,14 @@ class PostgresDatabase(Database):
         async with self.session_factory() as session:
             result = await session.execute(
                 update(users).where(users.c.id == user_id).values(is_admin=bool(is_admin))
+            )
+            await session.commit()
+            return result.rowcount > 0
+
+    async def update_user_display_name(self, user_id: int, display_name: str) -> bool:
+        async with self.session_factory() as session:
+            result = await session.execute(
+                update(users).where(users.c.id == user_id).values(display_name=display_name)
             )
             await session.commit()
             return result.rowcount > 0
@@ -822,7 +845,20 @@ class PostgresDatabase(Database):
         row = result.fetchone()
         if row is None:
             raise DatabaseError("Challenge disappeared after creation.")
-        return _challenge(dict(row._mapping))
+        raw_payload = row["payload"]  # stored as JSON text; always a str at runtime
+        try:
+            payload = json.loads(raw_payload) if raw_payload else {}  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            payload = {}
+        return _challenge(
+            {
+                "id": row["id"],
+                "kind": row["kind"],
+                "payload": payload,
+                "created_at": row["created_at"],
+                "expires_at": row["expires_at"],
+            }
+        )
 
     async def consume_challenge(self, challenge_id: str, kind: str, *, now: float | None = None) -> "Challenge | None":
         current = now if now is not None else time.time()
@@ -835,9 +871,13 @@ class PostgresDatabase(Database):
             row = result.fetchone()
             if row is None:
                 return None
-            payload = row["payload"]
+            raw_payload = row["payload"]  # stored as JSON text; always a str at runtime
             await session.execute(delete(challenges).where(challenges.c.id == challenge_id))
             await session.commit()
+            try:
+                payload = json.loads(raw_payload) if raw_payload else {}  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                payload = {}
             return _challenge(
                 {
                     "id": row["id"],

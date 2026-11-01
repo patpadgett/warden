@@ -344,16 +344,18 @@ async def create_user(request: Request, payload: UserPayload) -> JSONResponse:
 
 @router.patch("/_warden/api/users/{user_id}")
 async def update_user(request: Request, user_id: int, payload: UserUpdatePayload) -> JSONResponse:
-    """Update user attributes (admin‑only).
-    
-    * Currently supports toggling admin status via ``is_admin``.
+    """Update user attributes (admin-only).
+
+    * ``is_admin`` toggles the admin flag.
+    * ``display_name`` (if provided) updates the user's display name.
     * Returns a simple success JSON.
     """
     _guard_host(request)
     db = _db(request)
     if payload.is_admin is not None:
         await db.update_user_admin(user_id, payload.is_admin)
-    # Note: display_name update not yet in db.py, will add if needed.
+    if payload.display_name is not None:
+        await db.update_user_display_name(user_id, payload.display_name)
     return JSONResponse({"ok": True})
 
 @router.delete("/_warden/api/users/{user_id}")

@@ -129,15 +129,23 @@ class TestPostgresDatabaseInit:
         select_result.fetchone.return_value = (0,)
         # Results for the INSERT used to record the version.
         insert_result = MagicMock()
-        # Mock the conn.execute() calls: SELECT, then per-migration
-        # (migration, insert) pairs for versions 1..3.
+        # Mock the conn.execute() calls: SELECT, then the individual
+        # statements of each migration script (asyncpg cannot run a
+        # multi-statement SQL string in one execute() call), then the
+        # per-migration version inserts.
         mock_conn.execute.side_effect = [
-            select_result,
-            MagicMock(),  # v1 migration script
+            select_result,  # SELECT schema version
+            # v1: users, settings, audit
+            MagicMock(), MagicMock(), MagicMock(),
             insert_result,  # v1 insert version
-            MagicMock(),  # v2 migration script
+            MagicMock(),  # v2: mesh_peers
             insert_result,  # v2 insert version
-            MagicMock(),  # v3 migration script
+            # v3: 10 statements (credentials, idx_credentials_user, sessions,
+            # idx_sessions_user, idx_sessions_expiry, challenges,
+            # idx_challenges_expiry, backup_codes, idx_backup_codes_user,
+            # otp_secrets)
+            MagicMock(), MagicMock(), MagicMock(), MagicMock(), MagicMock(),
+            MagicMock(), MagicMock(), MagicMock(), MagicMock(), MagicMock(),
             insert_result,  # v3 insert version
         ]
         # Build a proper async context manager for the engine.begin() call.
@@ -354,6 +362,15 @@ class TestPostgresDatabaseUsers:
         db, _ = await self._make_db(session=session)
         updated = await db.update_user_admin(1, False)
         assert updated is True
+        session.commit.assert_called_once()
+
+    async def test_update_user_display_name(self) -> None:
+        session = _MockSession()
+        session.execute.return_value.rowcount = 1
+        db, _ = await self._make_db(session=session)
+        updated = await db.update_user_display_name(1, "New Nick")
+        assert updated is True
+        session.execute.assert_called_once()
         session.commit.assert_called_once()
 
 

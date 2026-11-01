@@ -745,6 +745,20 @@ class Database:
             await cursor.close()
         return bool(changed)
 
+    async def update_user_display_name(self, user_id: int, display_name: str) -> bool:
+        """Set the ``display_name`` for a user. Returns ``True`` on success."""
+        if self._conn is None:
+            await self.init()
+        conn = self._require_conn()
+        async with self._lock:
+            cursor = await conn.execute(
+                "UPDATE users SET display_name = ? WHERE id = ?", (display_name, user_id)
+            )
+            await conn.commit()
+            changed = cursor.rowcount
+            await cursor.close()
+        return bool(changed)
+
     async def reset_auth(self) -> None:
         """Delete all users, passkeys, sessions, settings, audit log, and mesh peers (auth reset)."""
         conn = self._require_conn()
