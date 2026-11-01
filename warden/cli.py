@@ -11,11 +11,11 @@ import os
 import re
 import signal
 import sys
-import time
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Sequence
-from urllib.parse import quote, urlsplit
+from typing import Any
+from urllib.parse import urlsplit
 
 import uvicorn
 from starlette.responses import PlainTextResponse, Response
@@ -23,10 +23,15 @@ from starlette.responses import PlainTextResponse, Response
 from warden import __version__
 from warden.config import ConfigError, ConfigManager, WardenConfig, parse_config_text
 from warden.db import Database, DatabaseError
-from warden.mesh import MeshError, MeshManager
 from warden.main import create_app
-from warden.tls import TLSError, certificate_status, validate_runtime_files, generate_self_signed_cert
-from warden.utils import INTERNAL_PREFIX, apply_security_headers, get_host
+from warden.mesh import MeshManager
+from warden.mesh_peer import MeshError
+from warden.tls import (
+    TLSError,
+    certificate_status,
+    validate_runtime_files,
+)
+from warden.utils import apply_security_headers, get_host
 
 logger = logging.getLogger("warden.cli")
 _ACME_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
@@ -137,7 +142,7 @@ def _human_time(timestamp: float | None) -> str:
     return datetime.fromtimestamp(float(timestamp)).strftime("%Y-%m-%d %H:%M")
 
 
-def _human_bytes(value: int | float) -> str:
+def _human_bytes(value: float) -> str:
     """Human‑readable byte size with appropriate unit (B, KB, …).
 
     Mirrors the implementation from ``warden.utils.humanize_bytes`` but used for CLI output.
@@ -317,7 +322,7 @@ async def _run_dual(app: Any, config: WardenConfig, host: str, access_log: bool)
         asyncio.create_task(http_server.serve(), name="warden-http"),
     ]
     try:
-        done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        _done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         https_server.should_exit = True
         http_server.should_exit = True
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -575,7 +580,7 @@ async def _renew_now(manager: ConfigManager, command: str) -> int:
         return 1
     try:
         output, _ = await asyncio.wait_for(process.communicate(), timeout=600)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         process.kill()
         await process.wait()
         _print_error("renewal command timed out after 10 minutes")

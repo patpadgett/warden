@@ -1,5 +1,6 @@
 """Mock adapter for mesh apply (test stub)."""
 from __future__ import annotations
+
 from typing import Any
 
 from warden.mesh_apply import MeshApplyAdapter

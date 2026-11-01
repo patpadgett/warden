@@ -11,9 +11,7 @@ import shutil
 import time
 from typing import Any
 
-from warden.config import ConfigManager
-from warden.db import Database
-from warden.mesh_peer import MeshPeerIntake, MeshError, PeerStatus
+from warden.mesh_peer import MeshError, MeshPeerIntake, PeerStatus
 
 
 class MeshApplyAdapter:
@@ -41,7 +39,7 @@ class MeshApplyAdapter:
 
         try:
             output, _ = await asyncio.wait_for(process.communicate(input_bytes), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             process.kill()
             await process.wait()
             raise MeshError(f"{args[0]} timed out after {timeout} seconds.")

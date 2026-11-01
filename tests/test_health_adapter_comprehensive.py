@@ -160,7 +160,7 @@ class TestHealthMonitorCheckRoute:
 
         with patch("warden.health_adapter.httpx.AsyncClient") as mock_cls:
             mock_client = AsyncMock()
-            mock_client.request = AsyncMock(side_effect=TimeoutError("connect timed out"))
+            mock_client.request = AsyncMock(side_effect=httpx.TimeoutException("connect timed out"))
             mock_cls.return_value = mock_client
             asyncio.run(adapter.check_route(manager.config.routes[0]))
 

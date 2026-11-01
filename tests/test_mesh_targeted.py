@@ -2,7 +2,15 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
-from warden.mesh import MeshManager, MeshError, NAME_RE, PeerStatus, generate_keypair, generate_psk, public_from_private
+from warden.mesh import MeshManager
+from warden.mesh_peer import (
+    MeshError,
+    NAME_RE,
+    PeerStatus,
+    generate_keypair,
+    generate_psk,
+    public_from_private,
+)
 from warden.config import WardenConfig
 
 def test_mesh_name_validation() -> None:
@@ -189,7 +197,7 @@ def test_mesh_refresh_handshakes_applied() -> None:
     manager.config.mesh.interface = "wg0"
     mesh_mgr = MeshManager(db, manager)
     # Mock status returning applied peers
-    from warden.mesh import PeerStatus
+    from warden.mesh_peer import PeerStatus
     live_peer = {"pub_key": PeerStatus(endpoint="host:123", last_handshake=100.0, rx_bytes=1, tx_bytes=2, keepalive="25")}
     with patch.object(mesh_mgr, "status", return_value={"applied": True, "peers": live_peer}):
         with patch.object(db, "list_mesh_peers", new=AsyncMock(return_value=[])):

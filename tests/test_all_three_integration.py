@@ -4,7 +4,7 @@ from warden.mesh import MeshManager
 from warden.mesh_peer import MeshPeerIntake
 from warden.mesh_apply import MeshApplyAdapter
 from warden.mesh_apply_mock import MockMeshApplyAdapter
-from warden.stats import MetricsModule, HealthMonitor
+from warden.stats import MetricsModule
 from warden.health_adapter import HealthMonitor as HA
 
 def test_all_three() -> None:

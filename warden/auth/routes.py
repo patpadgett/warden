@@ -5,17 +5,15 @@ from __future__ import annotations
 import base64
 import logging
 import os
-import time
-from typing import Any
 from functools import wraps
-from uuid import uuid4
+from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ValidationError
 from starlette.responses import JSONResponse, Response
 
 from warden import __version__
-from warden.auth.passkeys import AuthError, PasskeyService, normalize_username
+from warden.auth.passkeys import AuthError, PasskeyService
 from warden.auth.sessions import (
     authenticate_scope,
     challenge_from_scope,
@@ -26,6 +24,7 @@ from warden.auth.sessions import (
     set_session_cookie,
 )
 from warden.config import WardenConfig
+from warden.db import Session, User
 from warden.templating import templates
 from warden.utils import (
     INTERNAL_PREFIX,
@@ -41,9 +40,6 @@ from warden.utils import (
     safe_next,
     user_agent,
 )
-from fastapi import HTTPException
-from warden.db import Session, User, AlreadyExistsError
-from warden.admin.routes import _guard_host
 
 logger = logging.getLogger("warden.auth")
 router = APIRouter()
@@ -249,15 +245,13 @@ async def otp_verify(request: Request, payload: OTPVerifyPayload) -> JSONRespons
 async def login_page(request: Request) -> Response:
     """Render the login page, handling optional next redirect and session checks.
     """
-    config = _config(request)
+    _config(request)
     next_path = safe_next(request.query_params.get("next"), "/")
     session = None
     if request.cookies.get("warden_session"):
         session = await authenticate_scope(request.scope, _db(request))
     if session is not None:
-        target = next_path if next_path != "/" else (
-            "/" if get_host(request.scope) == config.server.admin_host else "/"
-        )
+        target = next_path if next_path != "/" else "/"
         return redirect(target)
     status = await _passkeys(request).setup_status()
     response = templates.TemplateResponse(
@@ -387,7 +381,7 @@ async def setup_complete(request: Request) -> JSONResponse:
     except AuthError as exc:
         return await _handle_auth_error(request, exc, audit="setup_failed")
     user = result["user"]
-    token, session = await create_session(_db(request), user, request.scope, config)
+    token = await create_session(_db(request), user, request.scope, config)
     await _db(request).audit(
         "setup_completed",
         user_id=user.id,
@@ -469,7 +463,7 @@ async def login_backup(request: Request) -> JSONResponse:
             raise AuthError("Account not found.", 401)
     except AuthError as exc:
         return await _handle_auth_error(request, exc, audit="backup_failed")
-    token, session = await create_session(_db(request), user, request.scope, config)
+    token = await create_session(_db(request), user, request.scope, config)
     await _db(request).audit(
         "login_backup_succeeded",
         user_id=user.id,
@@ -516,7 +510,7 @@ async def login_complete(request: Request) -> JSONResponse:
         )
     except AuthError as exc:
         return await _handle_auth_error(request, exc, audit="login_failed")
-    token, session = await create_session(_db(request), user, request.scope, config)
+    token = await create_session(_db(request), user, request.scope, config)
     await _db(request).audit(
         "login_succeeded",
         user_id=user.id,

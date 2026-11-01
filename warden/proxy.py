@@ -11,11 +11,12 @@ configuration.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
 import ssl
 import time
-import ipaddress
-from typing import Any, MutableMapping
+from collections.abc import MutableMapping
+from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
@@ -382,7 +383,7 @@ class ProxyEngine:
                     )
                     await self._send(response, scope, receive, send)
                     return
-            if route.allowed_ips:
+            if route.allowed_ips:  # noqa: SIM102
                 if not any(client_ip_obj in ipaddress.ip_network(net) for net in route.allowed_ips):
                     response = self._error_response(
                         scope,
@@ -430,7 +431,7 @@ class ProxyEngine:
         has_body = bool(
             (content_length and content_length != "0") or "transfer-encoding" in headers
         )
-        content: Any = request.stream() if has_body else b""
+        request.stream() if has_body else b""
         url = upstream_url(route, scope.get("raw_path"), scope.get("query_string", b""))
         config = self.manager.config
         timeout_seconds = route.timeout_seconds or config.server.request_timeout_seconds
@@ -474,8 +475,6 @@ class ProxyEngine:
                     async for chunk in upstream.aiter_raw():
                         if chunk:
                             yield chunk
-                except (httpx.HTTPError, asyncio.CancelledError):
-                    raise
                 finally:
                     await upstream.aclose()
 
@@ -532,8 +531,8 @@ class ProxyEngine:
                 message="The service behind this address isn't responding. Check that it's running and reachable.",
             )
             await self._send(response, scope, receive, send)
-        except Exception as exc:
-            logger.exception("Proxy failure for %s: %s", route.host, exc)
+        except Exception:
+            logger.exception("Proxy failure for %s", route.host)
             response = self._error_response(
                 scope,
                 status=502,
@@ -657,7 +656,7 @@ class ProxyEngine:
                 max_size=None,
                 compression="deflate",
             )
-        except (InvalidStatus, InvalidHandshake, OSError, asyncio.TimeoutError) as exc:
+        except (TimeoutError, InvalidStatus, InvalidHandshake, OSError) as exc:
             logger.warning("WebSocket upstream failed for %s: %s", route.host, exc)
             await websocket.accept()
             await websocket.close(code=1011, reason="Upstream unavailable")
@@ -714,7 +713,7 @@ class ProxyEngine:
             for task in done:
                 try:
                     task.result()
-                except (ConnectionClosed, Exception):
+                except (ConnectionClosed, Exception):  # noqa: BLE001, S110
                     pass
         finally:
             close_code = upstream.close_code
@@ -722,9 +721,9 @@ class ProxyEngine:
                 close_code = 1000
             try:
                 await upstream.close()
-            except Exception:
+            except Exception:  # noqa: BLE001, S110
                 pass
             try:
                 await websocket.close(code=close_code)
-            except Exception:
+            except Exception:  # noqa: BLE001, S110
                 pass

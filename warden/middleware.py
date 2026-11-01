@@ -10,10 +10,10 @@ adds a strict set of security response headers to every outgoing response.
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, MutableMapping
+from collections.abc import Callable, MutableMapping
+from typing import Any
 
 from starlette.datastructures import Headers, MutableHeaders
-from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.websockets import WebSocket
 
@@ -26,15 +26,13 @@ from warden.templating import templates
 from warden.utils import (
     INTERNAL_PREFIX,
     add_page_headers,
-    admin_url,
     apply_security_headers,
     check_origin,
     get_host,
     is_navigation,
+    login_url,
     next_from_scope,
     request_wants_json,
-    safe_next,
-    login_url,
 )
 
 logger = logging.getLogger("warden.middleware")
@@ -138,18 +136,17 @@ class WardenMiddleware:
 
         if is_admin:
             setup_required = await self.db.user_count() == 0
-            if setup_required:
-                if path != f"{INTERNAL_PREFIX}/setup":
-                    if is_navigation(scope):
-                        response = self._redirect(f"{INTERNAL_PREFIX}/setup")
-                        await response(scope, receive, send)
-                        return
-                    response = self._json_unauthorized(
-                        "Warden has not been set up yet.",
-                        extra={"setup_required": True, "setup_url": f"{INTERNAL_PREFIX}/setup"},
-                    )
+            if setup_required and path != f"{INTERNAL_PREFIX}/setup":
+                if is_navigation(scope):
+                    response = self._redirect(f"{INTERNAL_PREFIX}/setup")
                     await response(scope, receive, send)
                     return
+                response = self._json_unauthorized(
+                    "Warden has not been set up yet.",
+                    extra={"setup_required": True, "setup_url": f"{INTERNAL_PREFIX}/setup"},
+                )
+                await response(scope, receive, send)
+                return
             if session is None:
                 if request_wants_json(scope):
                     await self._json_unauthorized("Sign in to continue.")(scope, receive, send)
@@ -209,7 +206,7 @@ class WardenMiddleware:
         route_user = None
         if route.auth and not route.is_public_path(path):
             if session is None:
-                if await self.db.user_count() == 0:
+                if await self.db.user_count() == 0:  # noqa: SIM102
                     if method in {"GET", "HEAD"} and is_navigation(scope):
                         response = self._redirect(
                             f"{INTERNAL_PREFIX}/setup?next={next_from_scope(scope)}"

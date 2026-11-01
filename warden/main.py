@@ -14,13 +14,15 @@ import logging
 import os
 import re
 import time
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse
+from redis.exceptions import RedisError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 from starlette.staticfiles import StaticFiles
@@ -29,19 +31,20 @@ from warden import __version__
 from warden.admin.routes import router as admin_router
 from warden.auth.passkeys import PasskeyService
 from warden.auth.routes import router as auth_router
-from warden.config import ConfigError, ConfigManager, WardenConfig
-from warden.db import Database, DatabaseError
+from warden.config import ConfigManager, WardenConfig
+from warden.db import Database
+from warden.health_adapter import HealthMonitor
 from warden.mesh import MeshManager
 from warden.middleware import WardenMiddleware
 from warden.proxy import ProxyEngine
-from warden.stats import HealthMonitor, MetricsModule
-from warden.templating import TEMPLATES_DIR, templates
-from warden.tls import TLSError, renewal_loop, validate_runtime_files, ACMEManager
+from warden.stats import MetricsModule
+from warden.templating import templates
+from warden.tls import ACMEManager, TLSError, renewal_loop, validate_runtime_files
 from warden.utils import (
     INTERNAL_PREFIX,
-    RateLimiter, RedisRateLimiter,
+    RateLimiter,
+    RedisRateLimiter,
     add_page_headers,
-    apply_security_headers,
     get_host,
     request_wants_json,
 )
@@ -309,7 +312,7 @@ def create_app(
         ttl = rate_cfg.ttl
         try:
             app.state.rate_limiter = RedisRateLimiter(redis_url, ttl=ttl)
-        except Exception:
+        except RedisError:
             logger.warning("Failed to configure RedisRateLimiter, falling back to in‑process RateLimiter")
             app.state.rate_limiter = RateLimiter()
     else:
@@ -396,4 +399,4 @@ def create_app(
     return app
 
 
-__all__ = ["create_app", "DEFAULT_CONFIG_NAME"]
+__all__ = ["DEFAULT_CONFIG_NAME", "create_app"]

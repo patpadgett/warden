@@ -14,9 +14,12 @@ import logging
 import os
 import sqlite3
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 import aiosqlite
 
@@ -220,16 +223,6 @@ class MeshPeer:
     last_handshake: float | None
 
 
-    name: str
-    public_key: str
-    private_key: str | None
-    preshared_key: str
-    address: str
-    endpoint: str | None
-    keepalive: int
-    enabled: bool
-    created_at: float
-    last_handshake: float | None
 
 
 def _user(row: aiosqlite.Row) -> User:
@@ -405,7 +398,7 @@ class Database:
     #: Per-step migration scripts. Keys are the target schema version.
     #: Each script runs inside a transaction; RAISE(IGNORE) suppresses
     #: "duplicate table" errors when re-running an older migration.
-    _MIGRATIONS: dict[int, str] = {
+    _MIGRATIONS: MappingProxyType = MappingProxyType({
         1: """
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -507,7 +500,7 @@ class Database:
             created_at REAL NOT NULL
         );
         """,
-    }  # type: ignore[assignment]
+    })  # type: ignore[assignment]
 
     async def _migrate(self) -> None:
         conn = self._require_conn()
@@ -556,17 +549,15 @@ class Database:
         if self._conn is None:
             await self.init()
         conn = self._require_conn()
-        async with self._lock:
-            async with conn.execute(sql, params) as cursor:
-                return await cursor.fetchone()
+        async with self._lock, conn.execute(sql, params) as cursor:
+            return await cursor.fetchone()
 
     async def _fetchall(self, sql: str, params: tuple[Any, ...] = ()) -> list[aiosqlite.Row]:
         if self._conn is None:
             await self.init()
         conn = self._require_conn()
-        async with self._lock:
-            async with conn.execute(sql, params) as cursor:
-                return list(await cursor.fetchall())
+        async with self._lock, conn.execute(sql, params) as cursor:
+            return list(await cursor.fetchall())
 
     async def _write(self, sql: str, params: tuple[Any, ...] = ()) -> int:
         if self._conn is None:
@@ -1245,7 +1236,11 @@ class Database:
         if not secret:
             return False
         try:
-            import base64, hmac, hashlib, struct
+            import base64
+            import binascii
+            import hashlib
+            import hmac
+            import struct
             key = base64.b32decode(secret.upper().replace(' ', ''), casefold=True)
             interval = int(time.time() // 30)
             for offset in range(-window, window + 1):
@@ -1256,7 +1251,7 @@ class Database:
                 token = (struct.unpack('>I', h[o:o+4])[0] & 0x7fffffff) % 1000000
                 if f"{token:06d}" == code:
                     return True
-        except Exception:
+        except (binascii.Error, TypeError, struct.error):
             return False
         return False
 

@@ -9,9 +9,11 @@ import time
 import httpx
 
 from warden.config import ConfigManager, RouteConfig, WardenConfig
+
 logger = logging.getLogger("warden.health")
 
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     from warden.stats import MetricsModule
 from warden.utils import upstream_url
@@ -73,7 +75,7 @@ class HealthMonitor:
             interval = max(10, min(300, config.server.health_interval_seconds))
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=interval)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
 
     async def check_all(self, config: WardenConfig) -> None:
@@ -105,7 +107,7 @@ class HealthMonitor:
                 latency_ms=elapsed,
                 error=None if status_code < 500 else f"HTTP {status_code}",
             )
-        except Exception as exc:
+        except httpx.HTTPError as exc:
             elapsed = (time.perf_counter() - started) * 1000
             self.stats.record_health(
                 route.host,

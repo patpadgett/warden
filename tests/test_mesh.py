@@ -7,7 +7,8 @@ import pytest
 
 from warden.config import ConfigManager, parse_config_text
 from warden.db import Database
-from warden.mesh import MeshError, MeshManager, public_from_private
+from warden.mesh import MeshManager
+from warden.mesh_peer import MeshError, public_from_private
 
 from .conftest import config_dict, dump_yaml
 

@@ -9,15 +9,13 @@ challenges and the :func:`renewal_loop` coroutine for periodic renewal.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from pathlib import Path
-import logging
+
 try:
+    from acme import challenges, errors, jose, messages
     from acme import client as acme_client
-    from acme import messages
-    from acme import challenges
-    from acme import jose
-    from acme import errors
 except ImportError:
     acme_client = None
     messages = None
@@ -25,15 +23,16 @@ except ImportError:
     jose = None
     errors = None
 
-from cryptography import x509
 from dataclasses import dataclass
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.x509.oid import NameOID
-from datetime import datetime, timezone
-
+from datetime import UTC, datetime
 from typing import Any
-from warden.config import ConfigManager
+
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.x509.oid import NameOID
+
+from warden.config import ConfigManager, WardenConfig
 
 logger = logging.getLogger("warden.tls")
 
@@ -45,16 +44,17 @@ def generate_self_signed_cert(cert_path: Path, key_path: Path, common_name: str)
     key written in PEM format.
     """
     from datetime import datetime, timedelta
+
+    from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
-    from cryptography import x509
     from cryptography.x509.oid import NameOID
 
     # Private key
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     # Subject and issuer are the same for a self‑signed cert
     subject = issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])
-    now = datetime.utcnow()
+    now = datetime.now(UTC)
     cert = (
         x509.CertificateBuilder()
         .subject_name(subject)
@@ -273,8 +273,8 @@ def read_certificate(path: str | Path) -> CertificateInfo:
         not_after = certificate.not_valid_after_utc
         not_before = certificate.not_valid_before_utc
     except AttributeError:
-        not_after = certificate.not_valid_after.replace(tzinfo=timezone.utc)
-        not_before = certificate.not_valid_before.replace(tzinfo=timezone.utc)
+        not_after = certificate.not_valid_after.replace(tzinfo=UTC)
+        not_before = certificate.not_valid_before.replace(tzinfo=UTC)
     sans: list[str] = []
     try:
         extension = certificate.extensions.get_extension_for_class(x509.SubjectAlternativeName)
@@ -282,7 +282,7 @@ def read_certificate(path: str | Path) -> CertificateInfo:
     except x509.ExtensionNotFound:
         # No SubjectAlternativeName extension, continue without SANs
         pass
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     days_left = (not_after - now).total_seconds() / 86400
     return CertificateInfo(
         path=cert_path,
@@ -356,15 +356,10 @@ async def renewal_loop(app: Any) -> None:
             due = info is None or float(info.get("days_left", 999)) <= tls.renew_days_before
             if due:
                 await _run_renewal(app, config)
-        except asyncio.CancelledError:
-            raise
         except Exception:
             logger.exception("Certificate renewal check failed")
         interval = max(1, tls.check_interval_hours) * 3600
-        try:
-            await asyncio.sleep(interval)
-        except asyncio.CancelledError:
-            raise
+        await asyncio.sleep(interval)
 
 
 async def _run_renewal(app: Any, config: WardenConfig) -> None:
@@ -383,7 +378,7 @@ async def _run_renewal(app: Any, config: WardenConfig) -> None:
         )
         try:
             output, _ = await asyncio.wait_for(process.communicate(), timeout=600)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             process.kill()
             await process.wait()
             raise TLSError("Renewal command timed out after 10 minutes.")
@@ -400,7 +395,7 @@ async def _run_renewal(app: Any, config: WardenConfig) -> None:
             logger.info("Certificate renewal command succeeded. Restart Warden to serve the new certificate.")
         else:
             logger.warning("Certificate renewal command failed with exit code %s", process.returncode)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         app.state.cert_renewal = {
             "ok": False,
             "command": command,

@@ -2,18 +2,14 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
-import httpx
-
-from warden.config import ConfigManager, RouteConfig, WardenConfig
-from warden.health_adapter import HealthMonitor
-from warden.utils import truncate, upstream_url
+from warden.config import RouteConfig, WardenConfig
+from warden.utils import truncate
 
 logger = logging.getLogger("warden.health")
 

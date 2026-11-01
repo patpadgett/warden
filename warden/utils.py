@@ -8,13 +8,13 @@ import json
 import re
 import time
 from collections import defaultdict, deque
+from collections.abc import Iterable, MutableMapping
 from http.cookies import SimpleCookie
-from typing import Any, Iterable, MutableMapping
+from typing import Any
 from urllib.parse import quote, urlsplit
 
-from starlette.datastructures import Headers, MutableHeaders
-from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from starlette.datastructures import Headers
+from starlette.responses import JSONResponse, RedirectResponse, Response
 
 from warden.config import RouteConfig, WardenConfig
 
@@ -134,7 +134,7 @@ def parse_cookies(scope: MutableMapping[str, Any]) -> dict[str, str]:
     jar = SimpleCookie()
     try:
         jar.load(raw)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return {}
     return {name: morsel.value for name, morsel in jar.items()}
 
@@ -252,9 +252,7 @@ def check_origin(scope: MutableMapping[str, Any], config: WardenConfig, *, requi
     if required:
         return False
     fetch_site = headers.get("sec-fetch-site")
-    if fetch_site and fetch_site not in {"same-origin", "none"}:
-        return False
-    return True
+    return not (fetch_site and fetch_site not in {"same-origin", "none"})
 
 
 def apply_security_headers(response: Response) -> Response:
@@ -318,7 +316,7 @@ def html_escape(value: Any) -> str:
     return html.escape(str(value))
 
 
-def humanize_bytes(value: int | float) -> str:
+def humanize_bytes(value: float) -> str:
     """Convert a byte count into a human‑readable string with appropriate units.
     """
     size = float(value)
@@ -329,7 +327,7 @@ def humanize_bytes(value: int | float) -> str:
     return f"{size:.1f} TB"
 
 
-def relative_time(timestamp: float | int | None, *, now: float | None = None) -> str:
+def relative_time(timestamp: float | None, *, now: float | None = None) -> str:
     """Return a human‑readable relative time description (e.g., ``5m ago``).
     """
     if not timestamp:
@@ -349,7 +347,7 @@ def relative_time(timestamp: float | int | None, *, now: float | None = None) ->
     return time.strftime("%b %d, %Y", time.localtime(float(timestamp)))
 
 
-def absolute_time(timestamp: float | int | None) -> str:
+def absolute_time(timestamp: float | None) -> str:
     """Format a timestamp as ``YYYY‑MM‑DD HH:MM`` in local time.
     """
     if not timestamp:
@@ -357,7 +355,7 @@ def absolute_time(timestamp: float | int | None) -> str:
     return time.strftime("%Y-%m-%d %H:%M", time.localtime(float(timestamp)))
 
 
-def iso_time(timestamp: float | int | None) -> str | None:
+def iso_time(timestamp: float | None) -> str | None:
     """Return an ISO‑8601 UTC timestamp string, or ``None`` if not provided.
     """
     if not timestamp:
@@ -456,7 +454,7 @@ def json_script_value(value: Any) -> str:
 
 
 def upstream_url(
-    route: "RouteConfig",
+    route: RouteConfig,
     raw_path: str | bytes | None,
     query_string: bytes,
     *,
@@ -484,6 +482,46 @@ def upstream_url(
     if query_string:
         url += "?" + query_string.decode("latin-1")
     return url
+
+
+class _InMemoryRedis:
+    """Minimal in-memory stand-in for the redis client used when redis-py
+    is not installed."""
+
+    def __init__(self) -> None:
+        self._store: dict[str, dict[str, float]] = {}
+
+    def pipeline(self):
+        return _InMemoryPipeline(self._store)
+
+
+class _InMemoryPipeline:
+    def __init__(self, store: dict[str, dict[str, float]]) -> None:
+        self._store = store
+        self._commands: list[tuple[str, ...]] = []
+
+    def zadd(self, zset: str, members: dict[str, float]) -> None:
+        self._commands.append(("zadd", zset, members))
+
+    def zremrangebyscore(self, zset: str, min_score: Any, max_score: Any) -> None:
+        self._commands.append(("zremrangebyscore", zset, min_score, max_score))
+
+    def zcard(self, zset: str) -> None:
+        self._commands.append(("zcard", zset))
+
+    def expire(self, zset: str, seconds: int) -> None:
+        self._commands.append(("expire", zset, seconds))
+
+    async def execute(self):
+        results: list[Any] = []
+        for cmd in self._commands:
+            if cmd[0] == "zadd" or cmd[0] == "zremrangebyscore":
+                results.append(0)
+            elif cmd[0] == "zcard":
+                results.append(len(self._store.get(cmd[1], {})))
+            elif cmd[0] == "expire":
+                results.append(True)
+        return tuple(results)
 
 
 class RedisRateLimiter:

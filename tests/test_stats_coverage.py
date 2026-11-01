@@ -1,7 +1,8 @@
 from __future__ import annotations
 import time
 import pytest
-from warden.stats import MetricsModule, HealthMonitor, RouteMetrics, Health, TrafficEvent
+from warden.stats import MetricsModule, RouteMetrics, Health, TrafficEvent
+from warden.health_adapter import HealthMonitor
 from warden.config import RouteConfig
 
 

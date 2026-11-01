@@ -1,5 +1,6 @@
 from __future__ import annotations
-from warden.mesh import MeshManager, MeshError
+from warden.mesh import MeshManager
+from warden.mesh_peer import MeshError
 from warden.config import MeshConfig
 
 def test_mesh_config_validation() -> None:

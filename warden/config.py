@@ -13,8 +13,9 @@ import os
 import re
 import tempfile
 import threading
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
@@ -57,9 +58,9 @@ class ConfigError(Exception):
 def normalize_host(value: str, *, allow_wildcard: bool = False) -> str:
     """Normalize and validate a hostname used for routing or WebAuthn."""
     if not isinstance(value, str):
-        raise ValueError("must be a hostname")
+        raise TypeError("must be a hostname")
     host = value.strip().lower().rstrip(".")
-    if host.startswith("http://") or host.startswith("https://"):
+    if host.startswith(("http://", "https://")):
         raise ValueError("use a hostname, not a URL")
     if "/" in host or "?" in host or "#" in host or "@" in host:
         raise ValueError("must be a hostname without a path")
@@ -80,7 +81,7 @@ def normalize_host(value: str, *, allow_wildcard: bool = False) -> str:
 
 
 def _host_under(host: str, parent: str) -> bool:
-    base = host[2:] if host.startswith("*.") else host
+    base = host.removeprefix("*.")
     return base == parent or base.endswith("." + parent)
 
 
@@ -135,7 +136,7 @@ class TLSConfig(BaseModel):
     check_interval_hours: int = Field(default=12, ge=1, le=168)
 
     @model_validator(mode="after")
-    def _check_tls(self) -> "TLSConfig":
+    def _check_tls(self) -> TLSConfig:
         if self.renew_command and not self.acme_webroot:
             # A renewal hook without webroot is allowed for DNS-01 challenges.
             pass
@@ -510,7 +511,7 @@ class WardenConfig(BaseModel):
     _base_dir: Path = PrivateAttr(default_factory=Path.cwd)
 
     @model_validator(mode="after")
-    def _validate_cross_fields(self) -> "WardenConfig":
+    def _validate_cross_fields(self) -> WardenConfig:
         errors: list[str] = []
         rp_id = self.webauthn.rp_id
         admin_host = self.server.admin_host
@@ -525,12 +526,11 @@ class WardenConfig(BaseModel):
                 "so passkeys can be used on the dashboard"
             )
 
-        if cookie_domain:
-            if not _host_under(admin_host, cookie_domain):
-                errors.append(
-                    f"server.cookie_domain ({cookie_domain}) must be a parent domain of "
-                    f"server.admin_host ({admin_host})"
-                )
+        if cookie_domain and not _host_under(admin_host, cookie_domain):
+            errors.append(
+                f"server.cookie_domain ({cookie_domain}) must be a parent domain of "
+                f"server.admin_host ({admin_host})"
+            )
 
         seen: dict[str, int] = {}
         for index, route in enumerate(self.routes):
@@ -725,7 +725,7 @@ class ConfigManager:
         self._lock = threading.RLock()
 
     @classmethod
-    def from_file(cls, path: str | Path) -> "ConfigManager":
+    def from_file(cls, path: str | Path) -> ConfigManager:
         resolved = Path(path).expanduser().resolve()
         return cls(load_config(resolved), resolved)
 
@@ -879,7 +879,7 @@ class ConfigManager:
                     )
                     for key, value in preserved.items():
                         replacement[key] = value
-                    for key in [key for key in item.keys() if key not in replacement]:
+                    for key in [key for key in item if key not in replacement]:
                         del item[key]
                     for key, value in replacement.items():
                         item[key] = value

@@ -27,6 +27,8 @@ import logging
 import time
 from typing import Any
 
+logger = logging.getLogger(__name__)
+
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -47,26 +49,25 @@ from sqlalchemy import (
     text,
     update,
 )
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.exc import IntegrityError
 
 from warden.db import (
-    _audit,
-    _credential,
-    _peer,
-    _session,
-    _user,
     AlreadyExistsError,
     AuditEvent,
     BackupCode,
     Challenge,
+    Credential,
     Database,
     DatabaseError,
     MeshPeer,
     Session,
     User,
-    Credential,
+    _audit,
+    _credential,
+    _session,
+    _user,
 )
 
 # ---------------------------------------------------------------------------
@@ -313,7 +314,7 @@ JOIN users u ON u.id = s.user_id
 """
 
 
-def _challenge(mapping: dict[str, Any]) -> "Challenge":
+def _challenge(mapping: dict[str, Any]) -> Challenge:
     return Challenge(
         id=mapping["id"],
         kind=mapping["kind"],
@@ -383,7 +384,7 @@ class PostgresDatabase(Database):
     #: ``BYTEA``, ``BOOLEAN``) so the same step definitions serve both
     #: backends. ``init()`` reads it off the class so subclasses inherit a
     #: working Postgres migration set.
-    _MIGRATIONS = _MIGRATIONS  # noqa: F811  (class attribute shadowing module)
+    _MIGRATIONS = _MIGRATIONS
 
     # ------------------------------------------------------------------ mesh
     async def list_mesh_peers(self) -> list[MeshPeer]:
@@ -467,7 +468,7 @@ class PostgresDatabase(Database):
         *,
         is_admin: bool = True,
         now: float | None = None,
-    ) -> "User":
+    ) -> User:
         created = now if now is not None else time.time()
         async with self.session_factory() as session:
             try:
@@ -507,7 +508,7 @@ class PostgresDatabase(Database):
         backup_state: bool,
         setup_mode: bool = False,
         now: float | None = None,
-    ) -> tuple["User", "Credential"]:
+    ) -> tuple[User, Credential]:
         created = now if now is not None else time.time()
         async with self.session_factory() as session:
             if setup_mode:
@@ -561,24 +562,24 @@ class PostgresDatabase(Database):
                 raise DatabaseError("User setup failed unexpectedly.")
             return user, _credential(dict(cred_row._mapping))
 
-    async def get_user(self, user_id: int) -> "User | None":
+    async def get_user(self, user_id: int) -> User | None:
         async with self.session_factory() as session:
             result = await session.execute(select(users).where(users.c.id == user_id))
             row = result.fetchone()
             return _user(row._mapping) if row else None
 
-    async def get_user_by_username(self, username: str) -> "User | None":
+    async def get_user_by_username(self, username: str) -> User | None:
         async with self.session_factory() as session:
             result = await session.execute(select(users).where(users.c.username == username))
             row = result.fetchone()
             return _user(row._mapping) if row else None
 
-    async def list_users(self) -> list["User"]:
+    async def list_users(self) -> list[User]:
         async with self.session_factory() as session:
             result = await session.execute(select(users).order_by(users.c.created_at))
             return [_user(r._mapping) for r in result.fetchall()]
 
-    async def get_user_by_webauthn_id(self, webauthn_user_id: bytes) -> "User | None":
+    async def get_user_by_webauthn_id(self, webauthn_user_id: bytes) -> User | None:
         async with self.session_factory() as session:
             result = await session.execute(
                 select(users).where(users.c.webauthn_user_id == webauthn_user_id)
@@ -624,7 +625,7 @@ class PostgresDatabase(Database):
         backup_eligible: bool,
         backup_state: bool,
         now: float | None = None,
-    ) -> "Credential":
+    ) -> Credential:
         created = now if now is not None else time.time()
         async with self.session_factory() as session:
             try:
@@ -652,7 +653,7 @@ class PostgresDatabase(Database):
             raise DatabaseError("Credential disappeared after creation.")
         return credential
 
-    async def get_credential(self, credential_row_id: int) -> "Credential | None":
+    async def get_credential(self, credential_row_id: int) -> Credential | None:
         async with self.session_factory() as session:
             result = await session.execute(
                 select(credentials).where(credentials.c.id == credential_row_id)
@@ -660,7 +661,7 @@ class PostgresDatabase(Database):
             row = result.fetchone()
             return _credential(row._mapping) if row else None
 
-    async def get_credential_by_id(self, credential_id: bytes) -> "Credential | None":
+    async def get_credential_by_id(self, credential_id: bytes) -> Credential | None:
         async with self.session_factory() as session:
             result = await session.execute(
                 select(credentials).where(credentials.c.credential_id == credential_id)
@@ -668,7 +669,7 @@ class PostgresDatabase(Database):
             row = result.fetchone()
             return _credential(row._mapping) if row else None
 
-    async def list_credentials(self, user_id: int | None = None) -> list["Credential"]:
+    async def list_credentials(self, user_id: int | None = None) -> list[Credential]:
         async with self.session_factory() as session:
             if user_id is None:
                 result = await session.execute(select(credentials).order_by(credentials.c.created_at))
@@ -770,7 +771,7 @@ class PostgresDatabase(Database):
 
     async def get_session(
         self, token_hash: str, *, now: float | None = None, touch: bool = True
-    ) -> "Session | None":
+    ) -> Session | None:
         current = now if now is not None else time.time()
         async with self.session_factory() as session:
             result = await session.execute(
@@ -790,7 +791,7 @@ class PostgresDatabase(Database):
                 s.last_seen_at = current
             return s
 
-    async def list_sessions(self, user_id: int, *, current_token_hash: str | None = None) -> list["Session"]:
+    async def list_sessions(self, user_id: int, *, current_token_hash: str | None = None) -> list[Session]:
         async with self.session_factory() as session:
             stmt = text(_SESSION_JOIN + "WHERE s.user_id = :uid")
             if current_token_hash is not None:
@@ -834,7 +835,7 @@ class PostgresDatabase(Database):
     # ------------------------------------------------------------------ challenges
     async def create_challenge(
         self, challenge_id: str, kind: str, payload: dict, ttl_seconds: int, *, now: float | None = None
-    ) -> "Challenge":
+    ) -> Challenge:
         created = now if now is not None else time.time()
         expires_at = created + ttl_seconds
         async with self.session_factory() as session:
@@ -866,8 +867,8 @@ class PostgresDatabase(Database):
             }
         )
 
-    async def consume_challenge(self, challenge_id: str, kind: str, *, now: float | None = None) -> "Challenge | None":
-        current = now if now is not None else time.time()
+    async def consume_challenge(self, challenge_id: str, kind: str, *, now: float | None = None) -> Challenge | None:
+        now if now is not None else time.time()
         async with self.session_factory() as session:
             result = await session.execute(
                 select(challenges).where(
@@ -950,7 +951,7 @@ class PostgresDatabase(Database):
             )
             await session.commit()
 
-    async def list_audit(self, limit: int = 50) -> list["AuditEvent"]:
+    async def list_audit(self, limit: int = 50) -> list[AuditEvent]:
         async with self.session_factory() as session:
             result = await session.execute(select(audit).order_by(audit.c.id.desc()).limit(limit))
             return [_audit(r._mapping) for r in result.fetchall()]
@@ -985,21 +986,20 @@ class PostgresDatabase(Database):
         return int(result.scalar() or 0)
 
     async def use_backup_code(self, code_hash: str) -> int | None:
-        async with self.session_factory() as session:
-            async with session.begin():
-                result = await session.execute(
-                    update(backup_codes).where(backup_codes.c.code_hash == code_hash).values(used_at=time.time())
-                )
-                if result.rowcount == 0:
-                    await session.commit()
-                    return None
-                row = await session.execute(
-                    select(backup_codes.c.user_id).where(backup_codes.c.code_hash == code_hash)
-                )
+        async with self.session_factory() as session, session.begin():
+            result = await session.execute(
+                update(backup_codes).where(backup_codes.c.code_hash == code_hash).values(used_at=time.time())
+            )
+            if result.rowcount == 0:
                 await session.commit()
-                return int(row.scalar() or 0)
+                return None
+            row = await session.execute(
+                select(backup_codes.c.user_id).where(backup_codes.c.code_hash == code_hash)
+            )
+            await session.commit()
+            return int(row.scalar() or 0)
 
-    async def list_backup_codes(self, user_id: int) -> list["BackupCode"]:
+    async def list_backup_codes(self, user_id: int) -> list[BackupCode]:
         async with self.session_factory() as session:
             result = await session.execute(
                 select(backup_codes).where(backup_codes.c.user_id == user_id).order_by(backup_codes.c.id)
@@ -1048,11 +1048,9 @@ class PostgresDatabase(Database):
             return False
         try:
             import base64
-
+            import binascii
             import hashlib
-
             import hmac
-
             import struct
 
             key = base64.b32decode(secret.upper().replace(" ", ""), casefold=True)
@@ -1065,12 +1063,12 @@ class PostgresDatabase(Database):
                 token = (struct.unpack(">I", h[o : o + 4])[0] & 0x7fffffff) % 1000000
                 if f"{token:06d}" == code:
                     return True
-        except Exception:
+        except (binascii.Error, TypeError, struct.error):
             return False
         return False
 
     # ------------------------------------------------------------------ mesh (extra)
-    async def get_mesh_peer(self, peer_id: int) -> MeshPeer | None:
+    async def get_mesh_peer(self, peer_id: int) -> MeshPeer | None:  # noqa: F811
         async with self.session_factory() as session:
             result = await session.execute(
                 select(mesh_peers).where(mesh_peers.c.id == peer_id)
@@ -1078,13 +1076,13 @@ class PostgresDatabase(Database):
             row = result.fetchone()
             return MeshPeer(**dict(row._mapping)) if row else None
 
-    async def delete_mesh_peer(self, peer_id: int) -> bool:
+    async def delete_mesh_peer(self, peer_id: int) -> bool:  # noqa: F811
         async with self.session_factory() as session:
             result = await session.execute(delete(mesh_peers).where(mesh_peers.c.id == peer_id))
             await session.commit()
             return result.rowcount > 0
 
-    async def set_mesh_handshake(self, peer_id: int, timestamp: float | None) -> bool:
+    async def set_mesh_handshake(self, peer_id: int, timestamp: float | None) -> bool:  # noqa: F811
         async with self.session_factory() as session:
             result = await session.execute(
                 update(mesh_peers).where(mesh_peers.c.id == peer_id).values(last_handshake=timestamp)

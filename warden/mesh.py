@@ -11,19 +11,11 @@ from pathlib import Path
 from typing import Any
 
 from warden.config import ConfigManager
-from warden.db import Database, MeshPeer, AlreadyExistsError
-
+from warden.db import Database, MeshPeer
+from warden.mesh_apply import MeshApplyAdapter
 from warden.mesh_peer import (
     MeshPeerIntake,
-    MeshError,
-    PeerStatus,
-    generate_keypair,
-    generate_psk,
-    public_from_private,
-    NAME_RE,
-    HUB_KEY_SETTING,
 )
-from warden.mesh_apply import MeshApplyAdapter
 
 
 class MeshManager:

@@ -2,20 +2,15 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
 import logging
-import time
-
-import random
 import os
-from uuid import uuid4
-from fastapi.openapi.docs import get_swagger_ui_html
-
-from fastapi import HTTPException, Request
-from urllib.parse import urlsplit
+import time
 from typing import Any
+from urllib.parse import urlsplit
+from uuid import uuid4
 
-
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.openapi.docs import get_swagger_ui_html
 from pydantic import BaseModel, Field, ValidationError
 from starlette.responses import JSONResponse, Response
 
@@ -26,8 +21,8 @@ from warden.config import (
     WardenConfig,
     restart_required,
 )
-from warden.db import AlreadyExistsError, Credential, Session, User, DatabaseError
-from warden.mesh import MeshError
+from warden.db import AlreadyExistsError, DatabaseError, Session, User
+from warden.mesh_peer import MeshError
 from warden.templating import templates
 from warden.tls import certificate_status
 from warden.utils import (
@@ -36,10 +31,10 @@ from warden.utils import (
     external_url,
     get_host,
     login_url,
+    redirect,
     relative_time,
     route_color,
     route_initials,
-    redirect,
 )
 
 logger = logging.getLogger("warden.admin")
@@ -272,13 +267,12 @@ async def metrics_api(request: Request) -> Response:
     stats = request.app.state.stats
     content = stats.prometheus_metrics()
     # Health adapter results in metrics
-    from warden.health_adapter import HealthMonitor
     health = getattr(request.app.state, "health_monitor", None)
     if health is not None:
         try:
             content += "\n# HEALTH adapter active\nwarden_health_adapter_active 1\n"
         except Exception:
-            pass
+            logger.exception("Failed to export health adapter metrics")
     # Add mesh handshake metrics if mesh is enabled
     mesh = request.app.state.mesh
     adapter = getattr(mesh, "adapter", None)
@@ -291,11 +285,9 @@ async def metrics_api(request: Request) -> Response:
             for peer_key, info in status.get("peers", {}).items():
                 if info.last_handshake is not None:
                     # Export as gauge with peer public key label
-                    content += f"\nwarden_mesh_last_handshake_seconds{{peer=\"{peer_key}\"}} {info.last_handshake}"
+                    content += f"\nwarden_mesh_last_handshake_seconds{{peer=\\\"{peer_key}\\\"}} {info.last_handshake}"
     except Exception:
-        # If mesh not available, ignore
-        # No action needed
-        pass
+        logger.exception("Mesh handshake metrics export failed")
     return Response(
         content=content,
         media_type="text/plain; version=0.0.4",
@@ -557,7 +549,7 @@ async def mesh_page(request: Request) -> Response:
         peers = await _db(request).list_mesh_peers()
         try:
             status = await mesh.refresh_handshakes()
-        except Exception as exc:
+        except (MeshError, OSError, ValueError) as exc:
             logger.warning("Could not read WireGuard status: %s", exc)
             status = {"available": False, "applied": False, "peers": {}, "detail": str(exc)}
         peer_rows = []
@@ -670,7 +662,7 @@ async def add_service(request: Request, payload: ServicePayload) -> JSONResponse
     manager = request.app.state.manager
     try:
         route = RouteConfig(**payload.model_dump())
-        config, restart = manager.add_route(route)
+        _config, restart = manager.add_route(route)
     except (ConfigError, ValueError, ValidationError) as exc:
         if isinstance(exc, ConfigError):
             return _error(exc)
@@ -685,7 +677,7 @@ async def update_service(request: Request, host: str, payload: ServiceUpdatePayl
     manager = request.app.state.manager
     try:
         route = RouteConfig(**payload.model_dump())
-        config, restart = manager.update_route(host, route)
+        _config, restart = manager.update_route(host, route)
     except (ConfigError, ValueError, ValidationError) as exc:
         if isinstance(exc, ConfigError):
             return _error(exc)
@@ -699,7 +691,7 @@ async def delete_service(request: Request, host: str) -> JSONResponse:
     _guard_host(request)
     manager = request.app.state.manager
     try:
-        config, restart = manager.delete_route(host)
+        _config, restart = manager.delete_route(host)
     except (ConfigError, ValueError) as exc:
         if isinstance(exc, ConfigError):
             return _error(exc)
@@ -896,7 +888,7 @@ async def mesh_peer_config(request: Request, peer_id: int) -> JSONResponse:
 
 @router.delete("/_warden/api/mesh/peers/{peer_id}")
 async def delete_mesh_peer(request: Request, peer_id: int) -> JSONResponse:
-    mesh = _mesh(request)
+    _mesh(request)
     peer = await _db(request).get_mesh_peer(peer_id)
     if peer is None:
         return JSONResponse({"detail": "Peer not found."}, status_code=404)
@@ -921,7 +913,7 @@ async def mesh_status(request: Request) -> JSONResponse:
     mesh = _mesh(request)
     try:
         status = await mesh.refresh_handshakes()
-    except Exception as exc:
+    except (MeshError, OSError, ValueError) as exc:
         return JSONResponse({"detail": str(exc)}, status_code=500)
     peers = status.pop("peers", {})
     return JSONResponse({"ok": True, **status, "peer_status": {
