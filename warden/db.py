@@ -765,7 +765,9 @@ class Database:
         conn = self._require_conn()
         config = getattr(self, "config", None)
         if config is not None:
-            path = conn.execute("PRAGMA database_path").fetchone()[0]
+            async with conn.execute("PRAGMA database_path") as cursor:
+                row = await cursor.fetchone()
+                path = row[0] if row else None
             size = os.path.getsize(path) if path else 0
             if size < config.server.max_vacuum_bytes:
                 logger.debug(
