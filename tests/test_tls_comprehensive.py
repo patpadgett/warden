@@ -48,7 +48,7 @@ def config_dict(
         "bind": "127.0.0.1",
         "http_port": "8080",
         "https_port": "8443",
-        "tls": {"enabled": "False"},
+        "tls": {"enabled": False},
         "log_level": "warning",
         "health_interval_seconds": "3600",
     }
@@ -645,18 +645,31 @@ class TestRequestCertificate:
         mock_authz = MagicMock()
         mock_authz.body = MagicMock()
         mock_authz.body.status = "valid"
-        mock_authz.body.challenges = [MagicMock()]
-        mock_authz.body.challenges[0].chall = MagicMock()
-        mock_authz.body.challenges[0].chall.token = "test-token"
-        mock_authz.body.challenges[0].chall.response = MagicMock(return_value="dummy-response")
+        # Simulate an HTTP-01 challenge with a proper chall object
+        # The code checks `isinstance(chall.chall, challenges.HTTP01)`
+        # So we need a mock that passes the isinstance check
+        from acme import challenges as acme_challenges
+        from unittest.mock import create_autospec
+        # Create a mock with the same type as HTTP01 (for isinstance check)
+        http01_chall = create_autospec(acme_challenges.HTTP01, instance=True)
+        http01_chall.token = "test-token"
+        # response is a method that takes account_key; mock it to return a string
+        http01_chall.response = MagicMock(return_value="dummy-key-authorization")
+        mock_chall = MagicMock()
+        mock_chall.chall = http01_chall
+        mock_authz.body.challenges = [mock_chall]
         mock_order.authorizations = [mock_authz]
-        mock_client.new_order = MagicMock(return_value=mock_order)
-        mock_client.new_account = MagicMock()
-        mock_client.poll = MagicMock(return_value=mock_authz)
-        mock_client.answer_challenge = MagicMock()
-        mock_client.finalize_order = MagicMock(return_value=MagicMock(
-            fullchain_pem="-----BEGIN CERTIFICATE-----\nTEST\n-----END CERTIFICATE-----\n"
-        ))
+        # Mock ClientV2 client
+        mock_net = MagicMock()
+        mock_net.new_order = MagicMock(return_value=mock_order)
+        mock_net.new_account = MagicMock()
+        mock_net.poll = MagicMock(return_value=mock_authz)
+        mock_net.answer_challenge = MagicMock()
+        mock_finalized = MagicMock()
+        mock_finalized.fullchain_pem = "-----BEGIN CERTIFICATE-----\nTEST\n-----END CERTIFICATE-----\n"
+        mock_net.finalize_order = MagicMock(return_value=mock_finalized)
+        mock_client.ClientV2 = MagicMock(return_value=mock_net)
+
         tls_mod.acme_client = mock_client
 
         try:
