@@ -773,7 +773,7 @@ class Database:
                 logger.debug(
                     "VACUUM skipped, database file %d bytes < threshold %d",
                     size,
-                    config.server.max_vacuum_bytes,
+                    config.max_vacuum_bytes,
                 )
                 return
         async with self._lock:
