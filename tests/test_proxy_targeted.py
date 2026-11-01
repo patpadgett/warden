@@ -7,6 +7,9 @@ from warden.proxy import ProxyEngine
 from warden.stats import MetricsModule
 
 
+import httpx
+
+
 def test_proxy_engine_init() -> None:
     manager = MagicMock(spec=ConfigManager)
     manager.config = WardenConfig()
@@ -166,3 +169,239 @@ def test_proxy_upstream_url() -> None:
     from warden.utils import upstream_url
     url = upstream_url(route, b"/test", b"foo=bar")
     assert url == "http://192.168.1.5:3000/api/test?foo=bar"
+
+
+class TestProxyHandleHttp:
+    """Public handle_http control flow (largest proxy.py coverage gap)."""
+
+    @pytest.fixture
+    def engine(self):
+        manager = MagicMock(spec=ConfigManager)
+        manager.config = WardenConfig()
+        manager.config.server.max_body_size_mb = 10
+        manager.config.server.request_timeout_seconds = 30
+        engine = ProxyEngine(manager, MetricsModule())
+        # Mock client and send so we can assert control-flow branch coverage
+        engine._clients = {}
+        engine._clients = {}
+        engine._send = AsyncMock()
+        engine._client = AsyncMock()
+        return engine
+
+    def _client(self, upstream):
+        client = MagicMock()
+        client.send = AsyncMock(return_value=upstream)
+        return client
+
+    def _scope(
+        self,
+        method="GET",
+        path="/",
+        client=("127.0.0.1", 12345),
+        headers=None,
+        query_string=b"",
+    ):
+        return {
+            "type": "http",
+            "method": method,
+            "path": path,
+            "raw_path": (method + " " + path).encode(),
+            "query_string": query_string,
+            "scheme": "http",
+            "client": client,
+            "headers": headers or [(b"host", b"test.local")],
+        }
+
+    def _route(self, **kwargs):
+        defaults = {
+            "host": "app.local",
+            "upstream": "http://192.168.1.5:3000/api",
+            "verify_tls": True,
+            "denied_ips": [],
+            "allowed_ips": [],
+            "preserve_host": False,
+            "rewrite_redirects": False,
+            "rewrite_cookies": False,
+            "auth": False,
+            "enabled": True,
+        }
+        defaults.update(kwargs)
+        return RouteConfig(**defaults)
+
+    def _upstream(self, status=200, body=b"", aiter_raw=None):
+        upstream = MagicMock()
+        upstream.status_code = status
+        upstream.headers = MagicMock()
+        upstream.headers.get_list.side_effect = lambda k: (
+            ["keep-alive"] if k.lower() == "connection" else []
+        )
+        upstream.headers.multi_items.return_value = []
+        if aiter_raw is None:
+            aiter_raw = [body]
+        upstream.aiter_raw = AsyncMock()
+        if aiter_raw:
+
+            def _aiter():
+                for chunk in aiter_raw:
+                    yield chunk
+
+            upstream.aiter_raw.return_value = _aiter()
+        upstream.aclose = AsyncMock()
+        upstream.reason = None
+        upstream.request = MagicMock()
+        return upstream
+
+    def _make_request(self, body=b"", method="GET"):
+        async def _body():
+            return body
+        req = MagicMock()
+        req.body = _body
+        req.method = method
+        return req
+
+    async def _call(self, engine, scope, receive, send, route, body=b"", method="GET"):
+        with patch(
+            "warden.proxy.Request",
+            return_value=self._make_request(body=body, method=method),
+        ):
+            return await engine.handle_http(scope, receive, send, route, None)
+
+    async def test_handle_http_acme_challenge(self, engine):
+        # ACME challenge returns early with the challenge token.
+        route = self._route()
+        scope = self._scope(path="/.well-known/acme-challenge/abc123")
+        engine.acme_tokens = {"abc123": "token-response"}
+        receive = AsyncMock()
+        send = MagicMock()
+        with patch("warden.proxy.Request", return_value=self._make_request()):
+            await self._call(engine, scope, receive, send, route)
+        engine._client.assert_not_called()
+        engine._send.assert_awaited_once()
+        assert engine._send.call_args[0][0].status_code == 200
+        assert engine._send.call_args[0][0].body == b"token-response"
+
+    async def test_handle_http_ip_denied(self, engine):
+        # Client IP is in route.denied_ips -> 403.
+        route = self._route(denied_ips=["192.168.1.100/32"])
+        scope = self._scope(client=("192.168.1.100", 12345))
+        upstream = self._upstream(status=403)
+        engine._client = MagicMock(return_value=self._client(upstream))
+        with patch("warden.proxy.Request", return_value=self._make_request()):
+            await self._call(engine, scope, AsyncMock(), MagicMock(), route)
+        engine._client.assert_not_called()
+        engine._send.assert_awaited_once()
+        assert engine._send.call_args[0][0].status_code == 403
+
+    async def test_handle_http_ip_not_allowed(self, engine):
+        # Client IP is not in route.allowed_ips -> 403.
+        route = self._route(allowed_ips=["10.0.0.0/8"])
+        scope = self._scope(client=("192.168.1.100", 12345))
+        upstream = self._upstream(status=403)
+        engine._client = MagicMock(return_value=self._client(upstream))
+        with patch("warden.proxy.Request", return_value=self._make_request()):
+            await self._call(engine, scope, AsyncMock(), MagicMock(), route)
+        engine._client.assert_not_called()
+        engine._send.assert_awaited_once()
+        assert engine._send.call_args[0][0].status_code == 403
+
+    async def test_handle_http_ip_invalid_no_allowed(self, engine):
+        # Client IP is unparseable; with allowed_ips set, a 403 is returned.
+        route = self._route(allowed_ips=["10.0.0.0/8"])
+        scope = self._scope(client=("not-an-ip", 12345))
+        upstream = self._upstream(status=403)
+        engine._client = MagicMock(return_value=self._client(upstream))
+        with patch("warden.proxy.Request", return_value=self._make_request()):
+            await self._call(engine, scope, AsyncMock(), MagicMock(), route)
+        engine._client.assert_not_called()
+        engine._send.assert_awaited_once()
+        assert engine._send.call_args[0][0].status_code == 403
+
+    async def test_handle_http_max_body_too_large(self, engine):
+        # Request body exceeds max_body_size_mb -> 413.
+        route = self._route()
+        scope = self._scope()
+        upstream = self._upstream(status=413)
+        engine._client = MagicMock(return_value=self._client(upstream))
+        with patch("warden.proxy.Request", return_value=self._make_request()):
+            await self._call(engine, scope, AsyncMock(), MagicMock(), route, body=b"x" * 10485761)
+        engine._client.assert_called_once()
+        engine._send.assert_awaited_once()
+        assert engine._send.call_args[0][0].status_code == 413
+
+    async def test_handle_http_head_no_body(self, engine):
+        # HEAD request returns the response without streaming a body.
+        route = self._route()
+        scope = self._scope(method="HEAD")
+        upstream = self._upstream(status=200)
+        engine._client = MagicMock(return_value=self._client(upstream))
+        with patch("warden.proxy.Request", return_value=self._make_request(method="HEAD")):
+            await self._call(engine, scope, AsyncMock(), MagicMock(), route)
+        engine._client.assert_called_once()
+        engine._send.assert_awaited_once()
+        assert engine._send.call_args[0][0].status_code == 200
+
+    async def test_handle_http_status_204_no_body(self, engine):
+        # 204 / 304 responses are streamed without a body.
+        route = self._route()
+        scope = self._scope()
+        upstream = self._upstream(status=204)
+        engine._client = MagicMock(return_value=self._client(upstream))
+        with patch("warden.proxy.Request", return_value=self._make_request()):
+            await self._call(engine, scope, AsyncMock(), MagicMock(), route)
+        engine._client.assert_called_once()
+        engine._send.assert_awaited_once()
+        assert engine._send.call_args[0][0].status_code == 204
+
+    async def test_handle_http_timeout(self, engine):
+        # Upstream timeout -> 504.
+        route = self._route()
+        scope = self._scope()
+        upstream = self._upstream(status=504)
+        client = self._client(upstream)
+        client.send = AsyncMock(side_effect=httpx.TimeoutException("timed out"))
+        engine._client = MagicMock(return_value=client)
+        with patch("warden.proxy.Request", return_value=self._make_request()):
+            await self._call(engine, scope, AsyncMock(), MagicMock(), route)
+        engine._client.assert_called_once()
+        engine._send.assert_awaited_once()
+        assert engine._send.call_args[0][0].status_code == 504
+
+    async def test_handle_http_upstream_error(self, engine):
+        # Upstream HTTP error -> 502.
+        route = self._route()
+        scope = self._scope()
+        upstream = self._upstream(status=502)
+        client = self._client(upstream)
+        client.send = AsyncMock(side_effect=httpx.HTTPError("boom"))
+        engine._client = MagicMock(return_value=client)
+        with patch("warden.proxy.Request", return_value=self._make_request()):
+            await self._call(engine, scope, AsyncMock(), MagicMock(), route)
+        engine._client.assert_called_once()
+        engine._send.assert_awaited_once()
+        assert engine._send.call_args[0][0].status_code == 502
+
+    async def test_handle_http_success_streaming(self, engine):
+        # Normal upstream response is streamed through and recorded.
+        route = self._route()
+        scope = self._scope()
+        upstream = self._upstream(status=200, body=b"hello", aiter_raw=[b"hel", b"lo"])
+        engine._client = MagicMock(return_value=self._client(upstream))
+        with patch("warden.proxy.Request", return_value=self._make_request()):
+            await self._call(engine, scope, AsyncMock(), MagicMock(), route)
+        engine._client.assert_called_once()
+        engine._send.assert_awaited_once()
+        assert engine._send.call_args[0][0].status_code == 200
+
+    async def test_handle_http_error_response_body(self, engine):
+        # Upstream error response body contains the expected message.
+        route = self._route()
+        scope = self._scope()
+        upstream = self._upstream(status=502)
+        client = self._client(upstream)
+        client.send = AsyncMock(side_effect=httpx.HTTPError("boom"))
+        engine._client = MagicMock(return_value=client)
+        with patch("warden.proxy.Request", return_value=self._make_request()):
+            await self._call(engine, scope, AsyncMock(), MagicMock(), route)
+        sent = engine._send.call_args[0][0]
+        assert sent.status_code == 502
+        assert b"out of reach" in sent.body
