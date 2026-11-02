@@ -746,6 +746,44 @@ class ConfigManager:
         base = self.path.parent if self.path else self.base_dir
         return parse_config_text(text, base_dir=base, source=str(self.path or "config"))
 
+    def validate_startup(self) -> None:
+        """Validate runtime dependencies before the server accepts traffic.
+
+        Checks:
+        * TLS certificate/key files exist when TLS is enabled.
+        * ACME webroot directory exists when ACME challenges are configured.
+        * Mesh config file exists when mesh is enabled.
+        """
+        config = self.config
+        if config.server.tls.enabled:
+            certfile = config.certfile_path
+            keyfile = config.keyfile_path
+            if not certfile or not keyfile:
+                raise ConfigError("TLS is enabled but certfile/keyfile are not configured.")
+            if not certfile.exists():
+                raise ConfigError(f"TLS certificate not found: {certfile}")
+            if not keyfile.exists():
+                raise ConfigError(f"TLS private key not found: {keyfile}")
+        if config.server.tls.acme_webroot:
+            webroot = config.acme_webroot_path
+            if webroot and not webroot.exists():
+                raise ConfigError(f"ACME webroot not found: {webroot}")
+        if config.mesh.enabled and config.mesh.config_path:
+            mesh_path = config.mesh_config_path
+            if mesh_path and not mesh_path.exists():
+                raise ConfigError(f"Mesh config not found: {mesh_path}")
+
+    def _backup_config(self) -> Path | None:
+        """Create a timestamped backup of the current config file."""
+        if not self.path or not self.path.exists():
+            return None
+        backup = self.path.with_suffix(f".{self.path.suffix}.bak")
+        try:
+            backup.write_bytes(self.path.read_bytes())
+            return backup
+        except OSError:
+            return None
+
     def _write_text(self, text: str) -> None:
         if not self.path:
             raise ConfigError("This Warden instance is not running from a YAML file.")
@@ -770,6 +808,7 @@ class ConfigManager:
             config = self.validate_text(text)
             previous = self._config
             changes = restart_required(previous, config)
+            self._backup_config()
             self._write_text(text)
             # Route changes take effect immediately. Listener, TLS, database,
             # WebAuthn RP ID, and mesh changes are persisted but held back

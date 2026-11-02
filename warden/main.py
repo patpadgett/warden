@@ -9,7 +9,6 @@ error handling, and request utilities.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import os
 import re
@@ -58,6 +57,7 @@ logger = logging.getLogger("warden")
 DEFAULT_CONFIG_NAME = "warden.yaml"
 _ACME_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 _CLEANUP_INTERVAL = 3600.0
+_SHUTDOWN_TIMEOUT = 10.0
 
 
 def _default_config_path() -> Path:
@@ -228,6 +228,7 @@ def create_app(
     """
     manager = _manager_for(config_path, config)
     active_config = manager.config
+    manager.validate_startup()
     if db is not None:
         database = db
     elif active_config.database.type == "postgres":
@@ -281,8 +282,12 @@ def create_app(
                 if task is None:
                     continue
                 task.cancel()
-                with contextlib.suppress(asyncio.CancelledError, Exception):
-                    await task
+                try:
+                    await asyncio.wait_for(task, timeout=_SHUTDOWN_TIMEOUT)
+                except asyncio.CancelledError:
+                    pass
+                except TimeoutError:
+                    logger.warning("Background task %s did not exit within shutdown timeout", task.get_name())
             await monitor.stop()
             await engine.close()
             await database.close()

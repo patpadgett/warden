@@ -10,6 +10,7 @@ adds a strict set of security response headers to every outgoing response.
 from __future__ import annotations
 
 import logging
+import uuid
 from collections.abc import Callable, MutableMapping
 from typing import Any
 
@@ -84,6 +85,8 @@ class WardenMiddleware:
         host = get_host(scope)
         path = scope.get("path", "/")
         is_admin = host == config.server.admin_host
+        state = scope.setdefault("state", {})
+        state.setdefault("request_id", uuid.uuid4().hex)
         if scope["type"] == "websocket":
             await self._handle_websocket(scope, receive, send, config, host, is_admin, path)
             return
@@ -237,6 +240,7 @@ class WardenMiddleware:
         async def send_with_security(message: MutableMapping[str, Any]) -> None:
             if message["type"] == "http.response.start":
                 headers = MutableHeaders(scope=message)
+                headers.setdefault("X-Request-ID", scope.get("state", {}).get("request_id", ""))
                 headers.setdefault("X-Content-Type-Options", "nosniff")
                 headers.setdefault("X-Frame-Options", "DENY")
                 headers.setdefault("Referrer-Policy", "no-referrer")

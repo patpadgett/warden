@@ -14,11 +14,11 @@ from warden.config import WardenConfig
 from warden.db import Database, Session, User
 from warden.utils import (
     CHALLENGE_COOKIE,
-    SESSION_COOKIE,
     client_ip,
     cookie_domain,
     get_cookie,
     is_secure_request,
+    session_cookie_name,
     user_agent,
 )
 
@@ -75,7 +75,7 @@ async def authenticate_scope(
     * Looks up the session by its hash and returns the ``Session`` object if valid,
       otherwise ``None``.
     """
-    token = get_cookie(scope, SESSION_COOKIE)
+    token = get_cookie(scope, session_cookie_name(db.config, scope))
     if not token:
         return None
     return await db.get_session(hash_token(token))
@@ -101,8 +101,9 @@ def set_session_cookie(
     * Sets ``max_age`` based on the configured session TTL.
     * Applies appropriate security flags (secure, HttpOnly, SameSite).
     """
+    cookie_name = session_cookie_name(config, scope)
     response.set_cookie(
-        SESSION_COOKIE,
+        cookie_name,
         token,
         max_age=config.server.session_ttl_hours * 3600,
         path="/",
@@ -120,8 +121,9 @@ def clear_session_cookie(
 
     Mirrors the settings used in :func:`set_session_cookie`.
     """
+    cookie_name = session_cookie_name(config, scope)
     response.delete_cookie(
-        SESSION_COOKIE,
+        cookie_name,
         path="/",
         domain=cookie_domain(config),
         secure=is_secure_request(scope, config),

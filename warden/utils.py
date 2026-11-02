@@ -126,6 +126,22 @@ def cookie_domain(config: WardenConfig) -> str | None:
     return domain
 
 
+def session_cookie_name(config_server: Any, scope: MutableMapping[str, Any]) -> str:
+    """Return the session cookie name, using ``__Host-`` prefix when possible.
+
+    ``__Host-`` cookies require ``Secure`` and no ``Domain`` attribute.
+    """
+    if hasattr(config_server, "server"):
+        server = config_server.server
+    else:
+        server = config_server
+    secure = bool(server.secure_cookies) if server.secure_cookies is not None else base_scheme(scope) == "https"
+    domain = server.cookie_domain
+    if secure and not domain:
+        return f"__Host-{SESSION_COOKIE}"
+    return SESSION_COOKIE
+
+
 def parse_cookies(scope: MutableMapping[str, Any]) -> dict[str, str]:
     """Parse the ``Cookie`` header into a dictionary of name/value pairs, ignoring malformed entries."""
     raw = Headers(scope=scope).get("cookie")
