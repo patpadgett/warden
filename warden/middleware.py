@@ -263,9 +263,19 @@ class WardenMiddleware:
                     f"{INTERNAL_PREFIX}/static/"
                 ):
                     headers.setdefault("Cache-Control", "no-store")
+                scope.setdefault("state", {})["_status_code"] = message.get("status", 0)
             await send(message)
 
         await self.app(scope, receive, send_with_security)
+        status_code = scope.get("state", {}).get("_status_code", 0)
+        if status_code:
+            logger.info(
+                "%s %s %d %s",
+                scope.get("method", "?"),
+                scope.get("path", "/"),
+                status_code,
+                scope.get("state", {}).get("request_id", "-"),
+            )
 
     # -------------------------------------------------------------- responses
     def _redirect(self, target: str) -> Response:
