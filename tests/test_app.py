@@ -1,23 +1,18 @@
 from __future__ import annotations
 
 import sqlite3
-import time
 from pathlib import Path
 
-import pytest
-
-from warden.config import ConfigError, load_config
+from warden.config import load_config
 
 from .conftest import (
     add_session,
     admin_headers,
     config_dict,
     count_rows,
-    dump_yaml,
     host_headers,
     write_config,
 )
-from warden.auth.sessions import hash_token
 
 
 def test_health_and_security_headers(client) -> None:
@@ -87,7 +82,7 @@ def test_admin_pages_require_session(client) -> None:
 
 
 def test_dashboard_and_pages_render(client, app_and_path) -> None:
-    app, path = app_and_path
+    _app, path = app_and_path
     dashboard = client.get("/", headers=admin_headers())
     assert dashboard.status_code == 200
     assert "App" in dashboard.text
@@ -419,7 +414,7 @@ def test_config_api_reads_validates_and_saves(client, app_and_path, tmp_path: Pa
 
 
 def test_passkey_and_session_apis(client, app_and_path) -> None:
-    app, path = app_and_path
+    app, _path = app_and_path
     db_path = app.state.db.path
     headers = admin_headers(**{"X-Warden-Request": "1"})
 
@@ -494,6 +489,7 @@ def test_mesh_api_disabled(client) -> None:
 
 def test_acme_challenge_route(tmp_path: Path) -> None:
     from starlette.testclient import TestClient
+
     from warden.main import create_app
 
     webroot = tmp_path / "acme"

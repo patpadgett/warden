@@ -1,8 +1,9 @@
 from __future__ import annotations
-from unittest.mock import AsyncMock, MagicMock
+
+from unittest.mock import MagicMock
+
 from warden.health_adapter import HealthMonitor
 from warden.stats import MetricsModule
-import pytest
 
 
 def test_health_adapter_init() -> None:

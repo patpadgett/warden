@@ -1,8 +1,10 @@
 from __future__ import annotations
-from unittest.mock import AsyncMock, MagicMock
-from warden.mesh_peer import MeshPeerIntake
-from warden.mesh_apply import MeshApplyAdapter
+
+from unittest.mock import MagicMock
+
 from warden.mesh import MeshManager
+from warden.mesh_apply import MeshApplyAdapter
+from warden.mesh_peer import MeshPeerIntake
 
 
 def test_facade_delegates_intake_and_adapter() -> None:

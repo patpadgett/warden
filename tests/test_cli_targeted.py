@@ -1,11 +1,17 @@
 from __future__ import annotations
-import sys
-from unittest.mock import patch
-from warden.cli import (
-    build_parser, _config_path, _human_time, _human_bytes,
-    _print_error, _ACME_TOKEN_RE, INIT_TEMPLATE, main, cmd_init,
-)
+
 import argparse
+
+from warden.cli import (
+    _ACME_TOKEN_RE,
+    INIT_TEMPLATE,
+    _config_path,
+    _human_bytes,
+    _human_time,
+    _print_error,
+    build_parser,
+)
+
 
 def test_build_parser_has_subcommands() -> None:
     parser = build_parser()

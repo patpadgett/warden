@@ -10,6 +10,7 @@ import pytest
 
 from warden.utils import SESSION_COOKIE
 
+
 # Helper to generate a TOTP code compatible with the server's verification logic
 def _generate_totp(secret: str) -> str:
     # Decode the base32 secret (case‑insensitive, ignore spaces)

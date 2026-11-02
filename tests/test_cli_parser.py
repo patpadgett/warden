@@ -5,7 +5,6 @@ This focuses on the `serve` subcommand and verifies that the recently added
 specified.
 """
 
-import pytest
 
 
 def test_build_parser_includes_no_access_log_flag():
@@ -13,7 +12,7 @@ def test_build_parser_includes_no_access_log_flag():
     parser = build_parser()
     args = parser.parse_args(["serve", "--no-access-log"])
     # The flag should be parsed as True
-    assert getattr(args, "no_access_log") is True
+    assert args.no_access_log is True
     # Without the flag it should be False (default)
     args_no = parser.parse_args(["serve"])
-    assert getattr(args_no, "no_access_log") is False
+    assert args_no.no_access_log is False

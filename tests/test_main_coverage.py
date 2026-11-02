@@ -1,9 +1,10 @@
 from __future__ import annotations
-from warden.main import create_app
+
 
 def test_create_app_loads() -> None:
     # Minimal create_app test using default config
-    import tempfile, pathlib
+    import pathlib
+    import tempfile
     with tempfile.TemporaryDirectory() as td:
         p = pathlib.Path(td) / "w.yaml"
         p.write_text("version: 1\nserver:\n  admin_host: localhost\nwebauthn:\n  rp_id: localhost\nroutes: []\n")

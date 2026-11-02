@@ -1,17 +1,19 @@
 from __future__ import annotations
+
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
+
 from warden.mesh import MeshManager
 from warden.mesh_peer import (
-    MeshError,
     NAME_RE,
+    MeshError,
     PeerStatus,
     generate_keypair,
-    generate_psk,
     public_from_private,
 )
-from warden.config import WardenConfig
+
 
 def test_mesh_name_validation() -> None:
     assert NAME_RE.match("test-peer_1")
@@ -157,8 +159,8 @@ def test_mesh_write_config_success() -> None:
     manager.config.mesh.client_allowed_ips = "10.44.0.0/24"
     db.get_setting = AsyncMock(return_value="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
     db.list_mesh_peers = AsyncMock(return_value=[])
-    mesh_mgr = MeshManager(db, manager)
-    with patch("pathlib.Path.mkdir") as mock_mkdir, patch("os.chmod"), patch("pathlib.Path.write_text"), patch("os.replace"), patch("os.chmod"):
+    MeshManager(db, manager)
+    with patch("pathlib.Path.mkdir"), patch("os.chmod"), patch("pathlib.Path.write_text"), patch("os.replace"), patch("os.chmod"):
         # The method writes to file; just verify it completes without error when mocked properly
         pass
 
@@ -175,9 +177,8 @@ def test_mesh_apply_raises_no_wg() -> None:
     manager.config.mesh_config_path = "/tmp/test.conf"
     db.get_setting = AsyncMock(return_value="hubkey")
     mesh_mgr = MeshManager(db, manager)
-    with patch("shutil.which", return_value=None):
-        with pytest.raises(MeshError, match="WireGuard isn't installed"):
-            asyncio.run(mesh_mgr.apply())
+    with patch("shutil.which", return_value=None), pytest.raises(MeshError, match="WireGuard isn't installed"):
+        asyncio.run(mesh_mgr.apply())
 
 def test_mesh_status_disabled() -> None:
     db = AsyncMock()
@@ -199,10 +200,8 @@ def test_mesh_refresh_handshakes_applied() -> None:
     # Mock status returning applied peers
     from warden.mesh_peer import PeerStatus
     live_peer = {"pub_key": PeerStatus(endpoint="host:123", last_handshake=100.0, rx_bytes=1, tx_bytes=2, keepalive="25")}
-    with patch.object(mesh_mgr, "status", return_value={"applied": True, "peers": live_peer}):
-        with patch.object(db, "list_mesh_peers", new=AsyncMock(return_value=[])):
-            with patch.object(db, "set_mesh_handshake", new=AsyncMock()):
-                result = asyncio.run(mesh_mgr.refresh_handshakes())
+    with patch.object(mesh_mgr, "status", return_value={"applied": True, "peers": live_peer}), patch.object(db, "list_mesh_peers", new=AsyncMock(return_value=[])), patch.object(db, "set_mesh_handshake", new=AsyncMock()):
+        result = asyncio.run(mesh_mgr.refresh_handshakes())
     assert "applied" in result
 
 def test_mesh_subprocess_command_timeout_path() -> None:

@@ -9,10 +9,9 @@ the full application.
 
 import json
 
-import pytest
 from starlette.requests import Request
 
-from warden.main import _public_base_url, _error_response
+from warden.main import _error_response, _public_base_url
 
 
 class DummyTLS:

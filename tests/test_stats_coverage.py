@@ -1,9 +1,10 @@
 from __future__ import annotations
+
 import time
-import pytest
-from warden.stats import MetricsModule, RouteMetrics, Health, TrafficEvent
-from warden.health_adapter import HealthMonitor
+
 from warden.config import RouteConfig
+from warden.health_adapter import HealthMonitor
+from warden.stats import Health, MetricsModule, RouteMetrics, TrafficEvent
 
 
 def test_route_metrics_average_latency() -> None:
@@ -63,7 +64,7 @@ def test_stats_record_request() -> None:
 
 
 def test_stats_route_snapshot() -> None:
-    from warden.config import WardenConfig, RouteConfig
+    from warden.config import RouteConfig, WardenConfig
     cfg = WardenConfig()
     cfg.routes = [RouteConfig(host="snap.home", upstream="http://localhost:8000", auth=False)]
     s = MetricsModule()
@@ -74,8 +75,10 @@ def test_stats_route_snapshot() -> None:
 
 
 def test_health_monitor_start_stop() -> None:
-    from warden.config import ConfigManager, WardenConfig
-    import tempfile, pathlib
+    import pathlib
+    import tempfile
+
+    from warden.config import ConfigManager
     with tempfile.TemporaryDirectory() as td:
         cfg_path = pathlib.Path(td) / "w.yaml"
         cfg_path.write_text("version: 1\nserver:\n  admin_host: localhost\nroutes: []\n")

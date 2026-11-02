@@ -1,9 +1,17 @@
 from __future__ import annotations
+
 import pytest
+
 from warden.auth.passkeys import (
-    normalize_display_name, normalize_setup_code, hash_setup_code,
-    generate_setup_code, USERNAME_RE, AuthError, DEFAULT_SETUP_HELP,
+    DEFAULT_SETUP_HELP,
+    USERNAME_RE,
+    AuthError,
+    generate_setup_code,
+    hash_setup_code,
+    normalize_display_name,
+    normalize_setup_code,
 )
+
 
 def test_normalize_display_name_fallback() -> None:
     assert normalize_display_name(None, "Alice") == "Alice"

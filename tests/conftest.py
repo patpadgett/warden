@@ -13,10 +13,9 @@ from ruamel.yaml import YAML
 from starlette.testclient import TestClient
 
 from warden.auth.sessions import hash_token
-from warden.config import ConfigManager, WardenConfig, parse_config_text
+from warden.config import ConfigManager, parse_config_text
 from warden.db import Database
 from warden.main import create_app
-from warden.templating import templates
 from warden.utils import SESSION_COOKIE
 
 

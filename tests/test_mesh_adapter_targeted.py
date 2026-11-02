@@ -1,8 +1,11 @@
 from __future__ import annotations
+
 from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from warden.mesh_peer import MeshPeerIntake, MeshError
+
 from warden.mesh_apply import MeshApplyAdapter
+from warden.mesh_peer import MeshError, MeshPeerIntake
 
 
 def test_adapter_init() -> None:

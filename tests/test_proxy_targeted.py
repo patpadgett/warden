@@ -1,13 +1,14 @@
 from __future__ import annotations
-import asyncio
-from unittest.mock import MagicMock, AsyncMock, patch
-import pytest
-from warden.config import RouteConfig, WardenConfig, ConfigManager
-from warden.proxy import ProxyEngine
-from warden.stats import MetricsModule
 
+import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
+import pytest
+
+from warden.config import ConfigManager, RouteConfig, WardenConfig
+from warden.proxy import ProxyEngine
+from warden.stats import MetricsModule
 
 
 def test_proxy_engine_init() -> None:
@@ -67,7 +68,7 @@ def test_proxy_build_request_headers_basic() -> None:
         "query_string": b"",
     }
     headers = engine._request_headers(scope, route, user=None)
-    lower = [k.lower() for k, _ in headers]
+    [k.lower() for k, _ in headers]
     # Warden strips client-supplied forwarding headers (including x-forwarded-for)
     assert any(k.lower() == "x-forwarded-for" for k, _ in headers)
 
@@ -242,8 +243,7 @@ class TestProxyHandleHttp:
         if aiter_raw:
 
             def _aiter():
-                for chunk in aiter_raw:
-                    yield chunk
+                yield from aiter_raw
 
             upstream.aiter_raw.return_value = _aiter()
         upstream.aclose = AsyncMock()

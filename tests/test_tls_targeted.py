@@ -1,17 +1,15 @@
 from __future__ import annotations
-import tempfile
+
 from pathlib import Path
-from datetime import datetime
+
+from warden.config import WardenConfig
 from warden.tls import (
-    generate_self_signed_cert,
-    TLSError,
-    CertificateInfo,
     ACMEToken,
-    ACMEManager,
     certificate_status,
+    generate_self_signed_cert,
     read_certificate,
 )
-from warden.config import WardenConfig
+
 
 def test_generate_self_signed_cert(tmp_path: Path) -> None:
     cert_path = tmp_path / "test.crt"

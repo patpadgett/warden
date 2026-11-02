@@ -1,6 +1,8 @@
-from warden.config import parse_config_text, ConfigError
-from pathlib import Path
 import tempfile
+from pathlib import Path
+
+from warden.config import parse_config_text
+
 
 def test_parse_config_text_valid() -> None:
     with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False, mode="w") as f:

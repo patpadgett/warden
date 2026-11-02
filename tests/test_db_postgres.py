@@ -9,12 +9,12 @@ required.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
+from typing import Self
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from warden.db import DatabaseError, MeshPeer, AlreadyExistsError
+from warden.db import DatabaseError, MeshPeer
 from warden.db_postgres import PostgresDatabase
 
 NOW = 1_700_000_000.0
@@ -78,10 +78,10 @@ class _Result:
 class _BeginContext:
     """Async context manager returned by ``session.begin()``."""
 
-    def __init__(self, session: "_MockSession") -> None:
+    def __init__(self, session: _MockSession) -> None:
         self.session = session
 
-    async def __aenter__(self) -> "_MockSession":
+    async def __aenter__(self) -> _MockSession:
         return self.session
 
     async def __aexit__(self, *exc) -> None:
@@ -98,7 +98,7 @@ class _MockSession:
     def begin(self) -> _BeginContext:
         return _BeginContext(self)
 
-    async def __aenter__(self) -> "_MockSession":
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, *exc) -> None:
@@ -110,7 +110,6 @@ class _MockSession:
 # ---------------------------------------------------------------------------
 class TestPostgresDatabaseInit:
     def test_engine_and_session_factory_are_created(self) -> None:
-        from sqlalchemy.ext.asyncio import AsyncSession
 
         mock_engine = AsyncMock()
         mock_session_factory = MagicMock(return_value=AsyncMock())
@@ -728,7 +727,7 @@ class TestPostgresDatabaseBackupCodes:
         session.commit.assert_called_once()
 
     async def test_use_backup_code(self) -> None:
-        session, result = _MockSession(), MagicMock()
+        session, _result = _MockSession(), MagicMock()
         update_result = MagicMock()
         update_result.rowcount = 1
         select_result = _Result(scalar=1)

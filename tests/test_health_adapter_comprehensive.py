@@ -6,10 +6,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 
+from warden.config import RouteConfig, WardenConfig
 from warden.health_adapter import HealthMonitor
 from warden.stats import MetricsModule
-
-from warden.config import RouteConfig, WardenConfig
 
 
 def make_manager(config: WardenConfig | None = None) -> MagicMock:

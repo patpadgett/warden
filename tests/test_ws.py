@@ -36,7 +36,7 @@ def _handler(connection) -> None:
     try:
         for message in connection:
             connection.send(message)
-    except Exception:
+    except Exception:  # noqa: BLE001,S110
         pass
 
 
@@ -139,39 +139,35 @@ def test_websocket_authenticated_identity(ws_client) -> None:
 
 
 def test_websocket_requires_session(ws_client) -> None:
-    with pytest.raises(WebSocketDisconnect) as excinfo:
-        with ws_client.websocket_connect(
-            "/echo", headers={"host": "ws-auth.home.lan"}
-        ) as websocket:
-            websocket.receive_text()
+    with pytest.raises(WebSocketDisconnect) as excinfo, ws_client.websocket_connect(
+        "/echo", headers={"host": "ws-auth.home.lan"}
+    ) as websocket:
+        websocket.receive_text()
     assert excinfo.value.code == 4401
     assert "Sign in required" in excinfo.value.reason
 
 
 def test_websocket_unknown_service(ws_client) -> None:
-    with pytest.raises(WebSocketDisconnect) as excinfo:
-        with ws_client.websocket_connect(
-            "/echo", headers={"host": "nothing.home.lan"}
-        ) as websocket:
-            websocket.receive_text()
+    with pytest.raises(WebSocketDisconnect) as excinfo, ws_client.websocket_connect(
+        "/echo", headers={"host": "nothing.home.lan"}
+    ) as websocket:
+        websocket.receive_text()
     assert excinfo.value.code == 4404
 
     # The admin host does not expose proxy WebSockets.
-    with pytest.raises(WebSocketDisconnect) as excinfo:
-        with ws_client.websocket_connect(
-            "/echo", headers={"host": "admin.home.lan"}
-        ) as websocket:
-            websocket.receive_text()
+    with pytest.raises(WebSocketDisconnect) as excinfo, ws_client.websocket_connect(
+        "/echo", headers={"host": "admin.home.lan"}
+    ) as websocket:
+        websocket.receive_text()
     assert excinfo.value.code == 4404
 
 
 def test_websocket_bad_origin(ws_client) -> None:
-    with pytest.raises(WebSocketDisconnect) as excinfo:
-        with ws_client.websocket_connect(
-            "/echo",
-            headers={"host": "ws-public.home.lan", "origin": "http://evil.example"},
-        ) as websocket:
-            websocket.receive_text()
+    with pytest.raises(WebSocketDisconnect) as excinfo, ws_client.websocket_connect(
+        "/echo",
+        headers={"host": "ws-public.home.lan", "origin": "http://evil.example"},
+    ) as websocket:
+        websocket.receive_text()
     assert excinfo.value.code == 4403
     assert "Origin" in excinfo.value.reason
 
@@ -186,21 +182,19 @@ def test_websocket_allows_configured_origin(ws_client) -> None:
 
 
 def test_websocket_disabled_route(ws_client) -> None:
-    with pytest.raises(WebSocketDisconnect) as excinfo:
-        with ws_client.websocket_connect(
-            "/echo", headers={"host": "ws-disabled.home.lan"}
-        ) as websocket:
-            websocket.receive_text()
+    with pytest.raises(WebSocketDisconnect) as excinfo, ws_client.websocket_connect(
+        "/echo", headers={"host": "ws-disabled.home.lan"}
+    ) as websocket:
+        websocket.receive_text()
     assert excinfo.value.code == 1008
     assert "disabled" in excinfo.value.reason.lower()
 
 
 def test_websocket_upstream_unavailable(ws_client) -> None:
-    with pytest.raises(WebSocketDisconnect) as excinfo:
-        with ws_client.websocket_connect(
-            "/echo", headers={"host": "ws-dead.home.lan"}
-        ) as websocket:
-            websocket.receive_text()
+    with pytest.raises(WebSocketDisconnect) as excinfo, ws_client.websocket_connect(
+        "/echo", headers={"host": "ws-dead.home.lan"}
+    ) as websocket:
+        websocket.receive_text()
     assert excinfo.value.code == 1011
     assert "Upstream" in excinfo.value.reason
 

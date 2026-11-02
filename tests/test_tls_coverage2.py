@@ -1,18 +1,18 @@
 from __future__ import annotations
-import asyncio
+
 import time
+from datetime import UTC, datetime
 from pathlib import Path
-from datetime import datetime, timezone
+
+from warden.config import WardenConfig
 from warden.tls import (
-    generate_self_signed_cert,
-    TLSError,
-    CertificateInfo,
     ACMEToken,
-    ACMEManager,
+    CertificateInfo,
+    TLSError,
     certificate_status,
+    generate_self_signed_cert,
     read_certificate,
 )
-from warden.config import WardenConfig
 
 
 def test_generate_self_signed_cert_creates_files(tmp_path: Path) -> None:
@@ -112,8 +112,8 @@ def test_certificate_info_property() -> None:
         path=Path("test.pem"),
         subject="CN=test",
         issuer="CN=root",
-        not_before=datetime(2020, 1, 1, tzinfo=timezone.utc),
-        not_after=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        not_before=datetime(2020, 1, 1, tzinfo=UTC),
+        not_after=datetime(2025, 1, 1, tzinfo=UTC),
         days_left=1825.0,
         sans=[],
     )
@@ -124,8 +124,8 @@ def test_certificate_info_property() -> None:
         path=Path("test.pem"),
         subject="CN=test",
         issuer="CN=root",
-        not_before=datetime(2020, 1, 1, tzinfo=timezone.utc),
-        not_after=datetime(2020, 6, 1, tzinfo=timezone.utc),
+        not_before=datetime(2020, 1, 1, tzinfo=UTC),
+        not_after=datetime(2020, 6, 1, tzinfo=UTC),
         days_left=-181.0,
         sans=[],
     )

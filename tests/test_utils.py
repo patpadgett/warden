@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from warden.config import RouteConfig
+from warden.config import RouteConfig, parse_config_text
 from warden.utils import (
     RateLimiter,
     check_origin,
@@ -22,7 +22,6 @@ from warden.utils import (
 )
 
 from .conftest import config_dict, dump_yaml
-from warden.config import parse_config_text
 
 
 def scope(

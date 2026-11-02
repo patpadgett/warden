@@ -1,8 +1,8 @@
 from __future__ import annotations
+
 from pathlib import Path
-import pytest
-from warden.cli import cmd_config_show, cmd_check, cmd_init
-from warden.config import ConfigManager
+
+from warden.cli import cmd_check, cmd_config_show, cmd_init
 
 
 def test_config_show(tmp_path: Path) -> None:

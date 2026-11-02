@@ -6,25 +6,25 @@ ACME certificate issuance, and renewal.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+import asyncio
+from datetime import UTC, datetime, timedelta
 from io import StringIO
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import asyncio
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
-from warden.config import parse_config_text, WardenConfig, ConfigManager
+from warden.config import ConfigManager, WardenConfig, parse_config_text
 from warden.tls import (
-    TLSError,
     ACMEManager,
     ACMEToken,
     CertificateInfo,
+    TLSError,
     certificate_status,
     generate_self_signed_cert,
     read_certificate,
@@ -79,7 +79,7 @@ def make_certificate(
     names: tuple[str, ...] = ("admin.home.lan",),
 ) -> tuple[Path, Path]:
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     cn = names[0] if names else "admin.home.lan"
     subject = issuer = x509.Name(
         [
@@ -319,8 +319,8 @@ class TestCertificateInfo:
             path=Path("/tmp/cert.pem"),
             subject="CN=admin.home.lan",
             issuer="CN=admin.home.lan",
-            not_before=datetime.now(timezone.utc) - timedelta(days=1),
-            not_after=datetime.now(timezone.utc) + timedelta(days=80),
+            not_before=datetime.now(UTC) - timedelta(days=1),
+            not_after=datetime.now(UTC) + timedelta(days=80),
             days_left=75.0,
             sans=["admin.home.lan"],
         )
@@ -331,8 +331,8 @@ class TestCertificateInfo:
             path=Path("/tmp/cert.pem"),
             subject="CN=admin.home.lan",
             issuer="CN=admin.home.lan",
-            not_before=datetime.now(timezone.utc) - timedelta(days=1),
-            not_after=datetime.now(timezone.utc) - timedelta(days=1),
+            not_before=datetime.now(UTC) - timedelta(days=1),
+            not_after=datetime.now(UTC) - timedelta(days=1),
             days_left=-1.0,
             sans=["admin.home.lan"],
         )
@@ -343,8 +343,8 @@ class TestCertificateInfo:
             path=Path("/tmp/cert.pem"),
             subject="CN=admin.home.lan",
             issuer="CN=admin.home.lan",
-            not_before=datetime.now(timezone.utc) - timedelta(days=1),
-            not_after=datetime.now(timezone.utc) + timedelta(days=80),
+            not_before=datetime.now(UTC) - timedelta(days=1),
+            not_after=datetime.now(UTC) + timedelta(days=80),
             days_left=75.0,
             sans=["admin.home.lan"],
         )
@@ -517,7 +517,6 @@ class TestRenewalLoop:
     @pytest.mark.asyncio
     async def test_renew_due(self, tmp_path: Path) -> None:
         import warden.tls as warden_tls_module
-        from warden.tls import renewal_loop as _renewal_loop
         app = MagicMock()
         app.state.manager = MagicMock()
         app.state.cert_renewal = None
@@ -537,7 +536,7 @@ class TestRenewalLoop:
         cert_path = tmp_path / "cert.pem"
         key_path = tmp_path / "key.pem"
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "admin.home.lan")])
         builder = (
             x509.CertificateBuilder()
@@ -565,9 +564,7 @@ class TestRenewalLoop:
             }
             mock_renewal = AsyncMock()
             mock_renewal.return_value = mock_renewal  # Return itself (a coroutine)
-            with patch("warden.tls.certificate_status", mock_status):
-                # Patch renewal_loop in the warden.tls module
-                with patch.object(__import__("warden.tls", fromlist=["renewal_loop"]), "renewal_loop", mock_renewal):
+            with patch("warden.tls.certificate_status", mock_status), patch.object(__import__("warden.tls", fromlist=["renewal_loop"]), "renewal_loop", mock_renewal):
                     mock_sleep.side_effect = [None]
                     renewal_task = asyncio.create_task(warden_tls_module.renewal_loop(app))
                     await asyncio.sleep(0.1)
@@ -597,8 +594,7 @@ class TestRequestCertificate:
 
     @pytest.fixture()
     def manager(self, tmp_path: Path):
-        from unittest.mock import Mock
-        from warden.config import WardenConfig, ServerConfig, TLSConfig
+        from warden.config import ServerConfig, TLSConfig
         config = WardenConfig(
             version=1,
             server=ServerConfig(
@@ -648,8 +644,9 @@ class TestRequestCertificate:
         # Simulate an HTTP-01 challenge with a proper chall object
         # The code checks `isinstance(chall.chall, challenges.HTTP01)`
         # So we need a mock that passes the isinstance check
-        from acme import challenges as acme_challenges
         from unittest.mock import create_autospec
+
+        from acme import challenges as acme_challenges
         # Create a mock with the same type as HTTP01 (for isinstance check)
         http01_chall = create_autospec(acme_challenges.HTTP01, instance=True)
         http01_chall.token = "test-token"

@@ -8,7 +8,7 @@ from warden.config import (
     ConfigError,
     ConfigManager,
     RouteConfig,
-    WardenConfig,
+    env_substitute,
     load_config,
     normalize_host,
     parse_config_text,
@@ -209,3 +209,54 @@ def test_config_manager_without_file_rejects_writes(tmp_path: Path) -> None:
         manager.read_text()
     with pytest.raises(ConfigError):
         manager.save_text(dump_yaml(config_dict(tmp_path)))
+
+
+def test_env_var_substitution_strings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("WARDEN_TEST_UPSTREAM", "http://127.0.0.1:9000")
+    data = {
+        "server": {
+            "bind": "0.0.0.0",
+            "http_port": 8080,
+            "https_port": 8443,
+        },
+        "routes": [
+            {
+                "host": "test.home.lan",
+                "upstream": "${WARDEN_TEST_UPSTREAM}",
+                "name": "Test",
+                "auth": False,
+            },
+        ],
+    }
+    config = parse_config_text(dump_yaml(data), base_dir=tmp_path)
+    assert config.routes[0].upstream == "http://127.0.0.1:9000"
+
+
+def test_env_var_substitution_missing_keeps_placeholder(tmp_path: Path) -> None:
+    data = {
+        "server": {
+            "bind": "0.0.0.0",
+            "http_port": 8080,
+            "https_port": 8443,
+        },
+        "routes": [
+            {
+                "host": "test.home.lan",
+                "upstream": "http://localhost:9000",
+                "name": "Test",
+                "auth": False,
+            },
+        ],
+    }
+    config = parse_config_text(dump_yaml(data), base_dir=tmp_path)
+    assert config.routes[0].upstream == "http://localhost:9000"
+
+
+def test_env_substitute_replaces_var() -> None:
+    import os
+
+    os.environ["WARDEN_TEST_VAR"] = "replaced"
+    assert env_substitute("hello ${WARDEN_TEST_VAR} world") == "hello replaced world"
+    assert env_substitute("hello $WARDEN_TEST_VAR world") == "hello replaced world"
+    assert env_substitute("hello ${MISSING} world") == "hello ${MISSING} world"
+    del os.environ["WARDEN_TEST_VAR"]

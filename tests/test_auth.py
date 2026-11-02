@@ -12,7 +12,7 @@ from starlette.testclient import TestClient
 from warden.auth.passkeys import SETUP_EXPIRY_KEY, normalize_setup_code
 from warden.main import create_app
 
-from .conftest import config_dict, count_rows, host_headers, write_config
+from .conftest import config_dict, count_rows, write_config
 
 ADMIN = {"host": "admin.home.lan"}
 SAME_ORIGIN = {**ADMIN, "origin": "http://admin.home.lan"}

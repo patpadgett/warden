@@ -1,11 +1,13 @@
 from __future__ import annotations
+
 """All three improvements verified together."""
+from warden.health_adapter import HealthMonitor as HA
 from warden.mesh import MeshManager
-from warden.mesh_peer import MeshPeerIntake
 from warden.mesh_apply import MeshApplyAdapter
 from warden.mesh_apply_mock import MockMeshApplyAdapter
+from warden.mesh_peer import MeshPeerIntake
 from warden.stats import MetricsModule
-from warden.health_adapter import HealthMonitor as HA
+
 
 def test_all_three() -> None:
     assert MeshManager is not None

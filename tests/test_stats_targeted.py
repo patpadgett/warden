@@ -1,9 +1,12 @@
 from __future__ import annotations
+
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
-from warden.stats import MetricsModule, RouteMetrics, Health, TrafficEvent
+from unittest.mock import MagicMock
+
+from warden.config import RouteConfig, WardenConfig
 from warden.health_adapter import HealthMonitor
-from warden.config import WardenConfig, RouteConfig
+from warden.stats import Health, MetricsModule, RouteMetrics, TrafficEvent
+
 
 def test_stats_init() -> None:
     s = MetricsModule()
@@ -70,7 +73,7 @@ def test_route_snapshot_states() -> None:
     # Just verify snapshot produces valid dicts for default routes
     snap = s.route_snapshot(config)
     assert isinstance(snap, dict)
-    for host, data in snap.items():
+    for data in snap.values():
         assert "state" in data
         assert data["state"] in ("disabled", "checking", "online", "offline")
 

@@ -1,12 +1,12 @@
 from __future__ import annotations
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+
 from pathlib import Path
+
+from tests.conftest import config_dict, dump_yaml
 from warden.config import ConfigManager, parse_config_text
 from warden.db import Database
-from warden.mesh_peer import MeshPeerIntake
 from warden.mesh_apply_mock import MockMeshApplyAdapter
-from tests.conftest import config_dict, dump_yaml
+from warden.mesh_peer import MeshPeerIntake
 
 
 def mesh_config(tmp_path: Path, **mesh):
@@ -21,7 +21,6 @@ def mesh_config(tmp_path: Path, **mesh):
         "config_path": str(tmp_path / "wg0.conf"),
     }
     values.update(mesh)
-    import tempfile
     data = config_dict(tmp_path, mesh=values)
     return parse_config_text(dump_yaml(data), base_dir=tmp_path)
 
@@ -36,7 +35,7 @@ async def test_full_adapter_integration(tmp_path: Path) -> None:
         adapter = MockMeshApplyAdapter(intake)
 
         # Intake: add peer + render
-        peer = await intake.add_peer(name="Phone")
+        await intake.add_peer(name="Phone")
         server = await intake.render_server_config()
         assert "[Interface]" in server
 

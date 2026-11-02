@@ -1,5 +1,7 @@
 from __future__ import annotations
-from warden.utils import RateLimiter, RedisRateLimiter
+
+from warden.utils import RateLimiter
+
 
 def test_memory_rate_limiter() -> None:
     r = RateLimiter()
