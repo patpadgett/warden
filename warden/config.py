@@ -226,6 +226,8 @@ class ServerConfig(BaseModel):
     #: Maximum request body size in MB (deprecated in favor of max_vacuum_bytes).
     max_body_size_mb: int = Field(default=10, ge=1, le=1024)
     log_level: str = "info"
+    #: Maximum concurrent sessions per user. ``None`` disables the limit.
+    max_sessions_per_user: int | None = Field(default=None, ge=1)
 
     @field_validator("admin_host")
     @classmethod

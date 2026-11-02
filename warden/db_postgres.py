@@ -794,7 +794,23 @@ class PostgresDatabase(Database):
         now: float | None = None,
     ) -> int:
         created = now if now is not None else time.time()
+        config = getattr(self, "config", None)
+        max_sessions = getattr(getattr(config, "server", None), "max_sessions_per_user", None) if config else None
         async with self.session_factory() as session:
+            if max_sessions is not None and max_sessions > 0:
+                result = await session.execute(
+                    select(sessions.c.id)
+                    .where(sessions.c.user_id == user_id, sessions.c.expires_at > created)
+                    .order_by(sessions.c.created_at.asc())
+                    .limit(max_sessions),
+                )
+                current = [row[0] for row in result.fetchall()]
+                if len(current) >= max_sessions:
+                    overflow = len(current) - max_sessions + 1
+                    await session.execute(
+                        delete(sessions).where(sessions.c.id.in_(current[:overflow]))
+                    )
+                    await session.commit()
             result = await session.execute(
                 insert(sessions).values(
                     token_hash=token_hash,

@@ -918,6 +918,17 @@ class Database:
         now: float | None = None,
     ) -> int:
         created = now if now is not None else time.time()
+        config = getattr(self, "config", None)
+        max_sessions = getattr(getattr(config, "server", None), "max_sessions_per_user", None) if config else None
+        if max_sessions is not None and max_sessions > 0:
+            rows = await self._fetchall(
+                "SELECT id FROM sessions WHERE user_id = ? AND expires_at > ? ORDER BY created_at ASC",
+                (user_id, created),
+            )
+            if len(rows) >= max_sessions:
+                overflow = len(rows) - max_sessions + 1
+                for row in rows[:overflow]:
+                    await self.revoke_session(user_id, row["id"])
         return await self._write(
             "INSERT INTO sessions "
             "(token_hash, user_id, created_at, expires_at, last_seen_at, ip, user_agent) "
