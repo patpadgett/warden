@@ -117,14 +117,18 @@ class ProxyEngine:
     def _client(self, verify: bool) -> httpx.AsyncClient:
         client = self._clients.get(verify)
         if client is None:
-            client = httpx.AsyncClient(
-                verify=verify,
-                follow_redirects=False,
-                trust_env=False,
-                limits=httpx.Limits(max_connections=200, max_keepalive_connections=50),
-                timeout=httpx.Timeout(60.0, connect=10.0),
-                headers={"User-Agent": "warden/1"},
-            )
+            client_kwargs: dict[str, Any] = {
+                "verify": verify,
+                "follow_redirects": False,
+                "trust_env": False,
+                "limits": httpx.Limits(max_connections=200, max_keepalive_connections=50),
+                "timeout": httpx.Timeout(60.0, connect=10.0),
+                "headers": {"User-Agent": "warden/1"},
+            }
+            try:
+                client = httpx.AsyncClient(http2=True, **client_kwargs)
+            except ImportError:
+                client = httpx.AsyncClient(**client_kwargs)
             self._clients[verify] = client
         return client
 
