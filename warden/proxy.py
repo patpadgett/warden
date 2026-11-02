@@ -450,7 +450,17 @@ class ProxyEngine:
 
         if route.blocked_paths:
             request_path = scope.get("path", "")
-            if any(request_path == blocked or request_path.startswith(blocked.rstrip("*") + "/") if blocked.endswith("/*") else request_path == blocked for blocked in route.blocked_paths):
+            blocked_match = False
+            for blocked in route.blocked_paths:
+                if blocked.endswith("/*"):
+                    prefix = blocked[:-1]
+                    if request_path == prefix.rstrip("/") or request_path.startswith(prefix.rstrip("/") + "/"):
+                        blocked_match = True
+                        break
+                elif request_path == blocked:
+                    blocked_match = True
+                    break
+            if blocked_match:
                 response = self._error_response(
                     scope,
                     status=403,
