@@ -324,6 +324,7 @@ class RouteConfig(BaseModel):
     #: limiting (falls back to the global limiter).
     rate_limit: int | None = Field(default=None, ge=1)
     blocked_user_agents: list[str] = Field(default_factory=list)
+    blocked_paths: list[str] = Field(default_factory=list)
 
     @field_validator("host")
     @classmethod

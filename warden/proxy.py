@@ -448,6 +448,18 @@ class ProxyEngine:
                 await self._send(response, scope, receive, send)
                 return
 
+        if route.blocked_paths:
+            request_path = scope.get("path", "")
+            if any(request_path == blocked or request_path.startswith(blocked.rstrip("*") + "/") if blocked.endswith("/*") else request_path == blocked for blocked in route.blocked_paths):
+                response = self._error_response(
+                    scope,
+                    status=403,
+                    title="Access denied",
+                    message="This path is not allowed.",
+                )
+                await self._send(response, scope, receive, send)
+                return
+
         # Enforce max request body size.
         # Per RFC 7230, Transfer-Encoding (e.g. chunked) takes precedence over
         # Content-Length; when it is present, ignore Content-Length for the size
