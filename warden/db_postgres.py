@@ -29,7 +29,11 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-import asyncpg
+try:
+    import asyncpg
+except ImportError:
+    asyncpg = None  # type: ignore[assignment]
+
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -337,6 +341,11 @@ class PostgresDatabase(Database):
         )
 
     async def _ensure_database_exists(self) -> None:
+        if asyncpg is None:
+            raise DatabaseError(
+                "asyncpg is required for PostgreSQL auto-create support. "
+                "Install it with: pip install asyncpg"
+            )
         parsed = make_url(self.url)
         database = parsed.database
         if not database:
