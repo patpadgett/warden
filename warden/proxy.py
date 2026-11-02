@@ -531,6 +531,8 @@ class ProxyEngine:
                 message="The service behind this address isn't responding. Check that it's running and reachable.",
             )
             await self._send(response, scope, receive, send)
+        except (KeyboardInterrupt, SystemExit):
+            raise
         except Exception:
             logger.exception("Proxy failure for %s", route.host)
             response = self._error_response(
@@ -680,6 +682,9 @@ class ProxyEngine:
                 latency_ms=(time.perf_counter() - started) * 1000,
                 user=str(user.username) if user else None,
             )
+        except (KeyboardInterrupt, SystemExit):
+            await upstream.close()
+            raise
         except Exception:
             await upstream.close()
             raise
@@ -721,9 +726,13 @@ class ProxyEngine:
                 close_code = 1000
             try:
                 await upstream.close()
+            except (KeyboardInterrupt, SystemExit):
+                raise
             except Exception:  # noqa: BLE001, S110
                 pass
             try:
                 await websocket.close(code=close_code)
+            except (KeyboardInterrupt, SystemExit):
+                raise
             except Exception:  # noqa: BLE001, S110
                 pass

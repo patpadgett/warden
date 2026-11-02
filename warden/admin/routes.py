@@ -14,6 +14,7 @@ from fastapi.openapi.docs import get_swagger_ui_html
 from pydantic import BaseModel, Field, ValidationError
 from starlette.responses import JSONResponse, Response
 
+from warden.auth.passkeys import hash_backup_code
 from warden.auth.sessions import clear_session_cookie
 from warden.config import (
     ConfigError,
@@ -652,7 +653,7 @@ async def create_backup_code(request: Request) -> JSONResponse:
     for _ in range(10):
         code = uuid4().hex[:10]
         try:
-            await db.add_backup_code(user.id, code)
+            await db.add_backup_code(user.id, hash_backup_code(code))
             break
         except AlreadyExistsError:
             continue

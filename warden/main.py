@@ -98,6 +98,8 @@ async def _cleanup_loop(
                 logger.debug("VACUUM skipped (vacuum_enabled=false)")
         except asyncio.CancelledError:
             raise
+        except (KeyboardInterrupt, SystemExit):
+            raise
         except Exception:
             logger.exception("Background cleanup failed")
         await asyncio.sleep(interval)

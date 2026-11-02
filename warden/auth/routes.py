@@ -13,7 +13,7 @@ from pydantic import BaseModel, ValidationError
 from starlette.responses import JSONResponse, Response
 
 from warden import __version__
-from warden.auth.passkeys import AuthError, PasskeyService
+from warden.auth.passkeys import AuthError, PasskeyService, hash_backup_code
 from warden.auth.sessions import (
     authenticate_scope,
     challenge_from_scope,
@@ -455,7 +455,7 @@ async def login_backup(request: Request) -> JSONResponse:
     try:
         body = await _body(request, BackupCodeBody)
         assert isinstance(body, BackupCodeBody)
-        user_id = await _db(request).use_backup_code(body.code)
+        user_id = await _db(request).use_backup_code(hash_backup_code(body.code))
         if user_id is None:
             raise AuthError("Invalid or already used recovery code.", 401)
         user = await _db(request).get_user(user_id)

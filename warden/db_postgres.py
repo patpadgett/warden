@@ -824,7 +824,7 @@ class PostgresDatabase(Database):
 
     async def list_sessions(self, user_id: int, *, current_token_hash: str | None = None) -> list[Session]:
         async with self.session_factory() as session:
-            sql = _SESSION_JOIN + "WHERE s.user_id = :uid"
+            sql = _SESSION_JOIN + "WHERE s.user_id = :uid ORDER BY s.last_seen_at DESC"
             params: dict[str, Any] = {"uid": user_id}
             if current_token_hash is not None:
                 sql += " AND s.token_hash <> :h"

@@ -395,6 +395,8 @@ async def _run_renewal(app: Any, config: WardenConfig) -> None:
             logger.info("Certificate renewal command succeeded. Restart Warden to serve the new certificate.")
         else:
             logger.warning("Certificate renewal command failed with exit code %s", process.returncode)
+    except (KeyboardInterrupt, SystemExit):
+        raise
     except Exception as exc:  # noqa: BLE001
         app.state.cert_renewal = {
             "ok": False,

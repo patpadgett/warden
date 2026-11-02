@@ -108,6 +108,14 @@ def hash_setup_code(value: str) -> str:
     return hashlib.sha256(normalize_setup_code(value).encode("utf-8")).hexdigest()
 
 
+def hash_backup_code(value: str) -> str:
+    """Return a SHA‑256 hash of a backup recovery code.
+
+    Used to store a non‑reversible representation of the backup code in the database.
+    """
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
 def generate_setup_code() -> str:
     """Generate a random 12‑character setup code.
 
@@ -168,9 +176,7 @@ class PasskeyService:
         codes = []
         for _ in range(10):
             code = secrets.token_hex(8)  # 16 chars
-            # In a production system, we would hash these. 
-            # For this implementation, we store them as-is for simpler recovery logic.
-            await self.db.add_backup_code(user_id, code)
+            await self.db.add_backup_code(user_id, hash_backup_code(code))
             codes.append(code)
         return codes
 
