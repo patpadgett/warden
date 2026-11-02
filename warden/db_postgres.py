@@ -815,10 +815,12 @@ class PostgresDatabase(Database):
 
     async def list_sessions(self, user_id: int, *, current_token_hash: str | None = None) -> list[Session]:
         async with self.session_factory() as session:
-            stmt = text(_SESSION_JOIN + "WHERE s.user_id = :uid")
+            sql = _SESSION_JOIN + "WHERE s.user_id = :uid"
+            params: dict[str, Any] = {"uid": user_id}
             if current_token_hash is not None:
-                stmt = stmt + text("AND s.token_hash <> :h")
-            result = await session.execute(stmt, {"uid": user_id, "h": current_token_hash})
+                sql += " AND s.token_hash <> :h"
+                params["h"] = current_token_hash
+            result = await session.execute(text(sql), params)
             return [_session(r._mapping) for r in result.fetchall()]
 
     async def revoke_session(self, user_id: int, session_id: int) -> bool:
