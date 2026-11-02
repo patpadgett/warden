@@ -1120,10 +1120,15 @@ class Database:
             ),
         )
 
-    async def list_audit(self, limit: int = 50) -> list[AuditEvent]:
-        rows = await self._fetchall(
-            "SELECT * FROM audit ORDER BY created_at DESC LIMIT ?", (max(1, int(limit)),)
-        )
+    async def list_audit(self, limit: int = 50, event: str | None = None) -> list[AuditEvent]:
+        query = "SELECT * FROM audit"
+        params: list[Any] = []
+        if event:
+            query += " WHERE event = ?"
+            params.append(event)
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(max(1, int(limit)))
+        rows = await self._fetchall(query, tuple(params))
         return [_audit(row) for row in rows]
 
     async def count_audit(self, *, event: str | None = None, since: float | None = None) -> int:

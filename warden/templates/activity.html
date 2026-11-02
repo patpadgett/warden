@@ -53,8 +53,10 @@
     <div class="card-head">
       <h2 id="activity-title">Event stream</h2>
       <div class="card-head-tools">
-        <label class="visually-hidden" for="activity-filter">Filter events</label>
-        <input class="input filter-input" id="activity-filter" type="search" placeholder="Filter events…" autocomplete="off">
+        <form class="filter-form" method="get" action="/activity">
+          <label class="visually-hidden" for="activity-filter">Filter events</label>
+          <input class="input filter-input" id="activity-filter" name="event" type="search" placeholder="Filter events…" value="{{ event_filter }}" autocomplete="off">
+        </form>
         <span class="aside">{{ count }} shown</span>
       </div>
     </div>

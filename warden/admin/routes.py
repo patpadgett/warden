@@ -494,13 +494,14 @@ EVENT_META: dict[str, tuple[str, str, str]] = {
 @router.get("/activity")
 async def activity_page(request: Request) -> Response:
     _guard_host(request)
-    events = await _db(request).list_audit(150)
+    event_filter = request.query_params.get("event")
+    events = await _db(request).list_audit(150, event=event_filter)
     decorated = []
     for event in events:
         label, tone, icon = EVENT_META.get(event.event, (event.event.replace("_", " ").title(), "neutral", "dot"))
         decorated.append({"event": event, "label": label, "tone": tone, "icon": icon})
     context = _base_context(request, page="activity", title="Activity")
-    context.update({"events": decorated, "count": len(decorated)})
+    context.update({"events": decorated, "count": len(decorated), "event_filter": event_filter or ""})
     return _render(request, "activity.html", context)
 
 
