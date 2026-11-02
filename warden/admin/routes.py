@@ -671,6 +671,14 @@ async def status_api(request: Request) -> JSONResponse:
     return JSONResponse(snapshot)
 
 
+@router.get("/_warden/api/database/health")
+async def database_health_api(request: Request) -> JSONResponse:
+    _guard_host(request)
+    db = _db(request)
+    healthy = await db.health_check()
+    return JSONResponse({"ok": healthy})
+
+
 @router.post("/_warden/api/services")
 async def add_service(request: Request, payload: ServicePayload) -> JSONResponse:
     _guard_host(request)

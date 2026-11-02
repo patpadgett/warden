@@ -121,6 +121,10 @@ def test_dashboard_and_pages_render(client, app_and_path) -> None:
     assert "app.home.lan" in payload["services"]
     assert payload["services"]["app.home.lan"]["state"] in {"checking", "online", "offline"}
 
+    health = client.get("/_warden/api/database/health", headers=admin_headers())
+    assert health.status_code == 200
+    assert health.json() == {"ok": True}
+
 
 def test_login_page_redirects_authenticated_session(client) -> None:
     response = client.get("/_warden/login", headers=admin_headers(), follow_redirects=False)

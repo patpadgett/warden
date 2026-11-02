@@ -770,6 +770,14 @@ class Database:
             await conn.execute("DELETE FROM mesh_peers")
             await conn.commit()
 
+    async def health_check(self) -> bool:
+        try:
+            conn = self._require_conn()
+            await conn.execute("SELECT 1")
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+
     async def vacuum(self) -> None:
         conn = self._require_conn()
         config = getattr(self, "config", None)
