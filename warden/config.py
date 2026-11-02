@@ -308,6 +308,9 @@ class RouteConfig(BaseModel):
     allowed_ips: list[str] = Field(default_factory=list)
     #: List of CIDR networks denied access to this route.
     denied_ips: list[str] = Field(default_factory=list)
+    #: Per-route rate limit in requests per minute. ``None`` disables per-route
+    #: limiting (falls back to the global limiter).
+    rate_limit: int | None = Field(default=None, ge=1)
 
     @field_validator("host")
     @classmethod

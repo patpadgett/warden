@@ -15,6 +15,7 @@ import ipaddress
 import logging
 import ssl
 import time
+from collections import deque
 from collections.abc import MutableMapping
 from typing import Any
 from urllib.parse import urlsplit
@@ -91,7 +92,27 @@ class ProxyEngine:
 
         self._clients: dict[bool, httpx.AsyncClient] = {}
         # ACME challenge store: token -> response
+        self._rate_windows: dict[str, deque[float]] = {}
 
+    def _per_route_rate_limit(self, route: RouteConfig, now: float | None = None) -> bool:
+        """Return ``True`` if the request should be rate-limited."""
+        limit = route.rate_limit
+        if limit is None:
+            return False
+        now = now if now is not None else time.monotonic()
+        key = f"{route.host}:{route.upstream}"
+        window = self._rate_windows.get(key)
+        if window is None:
+            self._rate_windows[key] = deque([now], maxlen=limit)
+            return False
+        # Purge entries older than 60 seconds
+        cutoff = now - 60.0
+        while window and window[0] < cutoff:
+            window.popleft()
+        if len(window) >= limit:
+            return True
+        window.append(now)
+        return False
 
     def _client(self, verify: bool) -> httpx.AsyncClient:
         client = self._clients.get(verify)
@@ -349,6 +370,11 @@ class ProxyEngine:
         """
         # ACME challenge response.
         path = scope.get("path", "")
+        if self._per_route_rate_limit(route):
+            response = Response("Rate limit exceeded", status_code=429, media_type="text/plain")
+            response.headers["Retry-After"] = "60"
+            await self._send(apply_security_headers(response), scope, receive, send)
+            return
         if path.startswith("/.well-known/acme-challenge/"):
             token = path[len("/.well-known/acme-challenge/"):]
             response_token = None
