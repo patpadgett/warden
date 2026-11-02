@@ -11,7 +11,7 @@ from warden.db import Database
 @pytest.mark.asyncio
 async def test_non_admin_denied_on_admin_host(app_and_path, client) -> None:
     """A non-admin user authenticated on the admin host must be denied."""
-    app, cfg_path = app_and_path
+    _app, cfg_path = app_and_path
     db_path = cfg_path.with_name("warden.db")
 
     db = Database(db_path)
