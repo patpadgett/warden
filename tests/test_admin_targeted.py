@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+from pydantic import ValidationError
 from unittest.mock import MagicMock
 
 from fastapi import Request
@@ -35,8 +37,10 @@ def test_config_payload() -> None:
 def test_import_payload() -> None:
     p = ImportPayload(yaml="test")
     assert p.yaml == "test"
-    p2 = ImportPayload(db_sql="SELECT 1")
-    assert p2.db_sql == "SELECT 1"
+    # `db_sql` was a dead field on the old import model; the model now only
+    # accepts `yaml` (pydantic extra="forbid"), so it must be rejected.
+    with pytest.raises(ValidationError):
+        ImportPayload(db_sql="SELECT 1")
 
 def test_passkey_name_payload() -> None:
     p = PasskeyNamePayload(name="key1")

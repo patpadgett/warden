@@ -1120,14 +1120,15 @@ class Database:
             ),
         )
 
-    async def list_audit(self, limit: int = 50, event: str | None = None) -> list[AuditEvent]:
+    async def list_audit(self, limit: int = 50, event: str | None = None, offset: int = 0) -> list[AuditEvent]:
         query = "SELECT * FROM audit"
         params: list[Any] = []
         if event:
             query += " WHERE event = ?"
             params.append(event)
-        query += " ORDER BY created_at DESC LIMIT ?"
+        query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
         params.append(max(1, int(limit)))
+        params.append(int(offset))
         rows = await self._fetchall(query, tuple(params))
         return [_audit(row) for row in rows]
 

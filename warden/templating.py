@@ -11,6 +11,7 @@ from pathlib import Path
 from starlette.templating import Jinja2Templates
 
 from warden.i18n import _
+from warden import __version__
 from warden.utils import (
     absolute_time,
     humanize_bytes,
@@ -35,3 +36,4 @@ templates.env.filters["client"] = parse_user_agent
 templates.env.filters["truncate_middle"] = truncate
 templates.env.globals["_"] = _
 templates.env.globals["static_prefix"] = "/_warden/static"
+templates.env.globals["app_version"] = __version__

@@ -624,6 +624,32 @@ async def _renew_now(manager: ConfigManager, command: str) -> int:
     return 0
 
 
+# ----------------------------------------------------------------------- backup
+def cmd_backup(args: argparse.Namespace) -> int:
+    """Back up the SQLite database to a timestamped file."""
+    try:
+        manager = _load_manager(args)
+    except ConfigError as exc:
+        _print_error(exc.pretty())
+        return 1
+    db_path = manager.config.database_path
+    if not db_path.exists():
+        _print_error(f"database not found: {db_path}")
+        return 1
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    backup_path = db_path.with_name(f"{db_path.name}.backup-{timestamp}")
+    try:
+        import sqlite3
+        with sqlite3.connect(str(db_path)) as src:
+            src.backup(sqlite3.connect(str(backup_path)))
+        os.chmod(backup_path, 0o600)
+    except OSError as exc:
+        _print_error(f"could not write backup {backup_path}: {exc}")
+        return 1
+    print(f"backup written to {backup_path}")
+    return 0
+
+
 # ------------------------------------------------------------------------ auth
 def cmd_auth_reset(args: argparse.Namespace) -> int:
     """Reset admin account."""
@@ -837,6 +863,9 @@ def build_parser() -> argparse.ArgumentParser:
     certs.add_argument("--json", action="store_true", help="JSON output for status")
     certs.add_argument("--dry-run", action="store_true", help="print the renewal command only")
     certs.set_defaults(func=cmd_certs)
+
+    backup = sub.add_parser("backup", help="back up the SQLite database")
+    backup.set_defaults(func=cmd_backup)
 
     auth = sub.add_parser("auth", help="account recovery")
     auth_sub = auth.add_subparsers(dest="auth_action", required=True)

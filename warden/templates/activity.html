@@ -60,6 +60,7 @@
         <form class="filter-form" method="get" action="/activity">
           <label class="visually-hidden" for="activity-filter">Filter events</label>
           <input class="input filter-input" id="activity-filter" name="event" type="search" placeholder="Filter events…" value="{{ event_filter }}" autocomplete="off">
+        <input type="hidden" name="since" value="{{ since }}">
         </form>
         <span class="aside">{{ count }} shown</span>
       </div>

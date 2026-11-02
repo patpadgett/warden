@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.openapi.docs import get_swagger_ui_html
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.responses import JSONResponse, Response
 
 from warden.auth.passkeys import hash_backup_code
@@ -69,8 +69,8 @@ class ConfigPayload(BaseModel):
 
 
 class ImportPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     yaml: str | None = None
-    db_sql: str | None = None
 
 
 class PasskeyNamePayload(BaseModel):
@@ -495,13 +495,20 @@ EVENT_META: dict[str, tuple[str, str, str]] = {
 async def activity_page(request: Request) -> Response:
     _guard_host(request)
     event_filter = request.query_params.get("event")
-    events = await _db(request).list_audit(150, event=event_filter)
+    since_raw = request.query_params.get("since")
+    since: float | None = None
+    if since_raw:
+        try:
+            since = float(since_raw)
+        except ValueError:
+            since = None
+    events = await _db(request).list_audit(150, event=event_filter, offset=0)
     decorated = []
     for event in events:
         label, tone, icon = EVENT_META.get(event.event, (event.event.replace("_", " ").title(), "neutral", "dot"))
         decorated.append({"event": event, "label": label, "tone": tone, "icon": icon})
     context = _base_context(request, page="activity", title="Activity")
-    context.update({"events": decorated, "count": len(decorated), "event_filter": event_filter or ""})
+    context.update({"events": decorated, "count": len(decorated), "event_filter": event_filter or "", "since": since})
     return _render(request, "activity.html", context)
 
 
@@ -969,12 +976,18 @@ async def rotate_mesh_hub_key(request: Request) -> JSONResponse:
     await _audit(request, "mesh_hub_key_rotated", "Hub key rotated")
     return JSONResponse({"ok": True, "new_private_key": new_key})
 
-@router.get("/api/audit/export")
-async def audit_export(request: Request, limit: int = 500, event: str | None = None, fmt: str = "json") -> JSONResponse:
-    """Export audit events as JSON or CSV (admin only; protected by host guard)."""
+@router.get("/_warden/api/audit/export")
+async def audit_export(request: Request, limit: int = 500, offset: int = 0, event: str | None = None, fmt: str = "json") -> JSONResponse:
+    """Export audit events as JSON or CSV (admin only; protected by host guard).
+
+    Supports ``limit`` and ``offset`` for pagination.
+    """
     _guard_host(request)
     db = _db(request)
-    events = await db.list_audit(limit, event=event)
+    offset = max(0, int(offset))
+    limit = max(1, min(int(limit), 5000))
+    events = await db.list_audit(limit, offset=offset, event=event)
+    total = await db.count_audit(event=event)
     result = [{"id": e.id, "created_at": e.created_at, "event": e.event,
                "username": e.username, "ip": e.ip, "detail": e.detail} for e in events]
     if fmt == "csv":
@@ -985,7 +998,7 @@ async def audit_export(request: Request, limit: int = 500, event: str | None = N
         writer.writeheader()
         writer.writerows(result)
         return Response(buf.getvalue(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=audit.csv"})
-    return JSONResponse({"count": len(result), "events": result})
+    return JSONResponse({"count": total, "offset": offset, "limit": limit, "events": result})
 
 @router.post("/api/backup_codes/bulk")
 async def backup_codes_bulk(request: Request, count: int = 5) -> JSONResponse:
