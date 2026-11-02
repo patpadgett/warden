@@ -381,7 +381,7 @@ async def setup_complete(request: Request) -> JSONResponse:
     except AuthError as exc:
         return await _handle_auth_error(request, exc, audit="setup_failed")
     user = result["user"]
-    token = await create_session(_db(request), user, request.scope, config)
+    token, _ = await create_session(_db(request), user, request.scope, config)
     await _db(request).audit(
         "setup_completed",
         user_id=user.id,
@@ -463,7 +463,7 @@ async def login_backup(request: Request) -> JSONResponse:
             raise AuthError("Account not found.", 401)
     except AuthError as exc:
         return await _handle_auth_error(request, exc, audit="backup_failed")
-    token = await create_session(_db(request), user, request.scope, config)
+    token, _ = await create_session(_db(request), user, request.scope, config)
     await _db(request).audit(
         "login_backup_succeeded",
         user_id=user.id,
@@ -510,7 +510,7 @@ async def login_complete(request: Request) -> JSONResponse:
         )
     except AuthError as exc:
         return await _handle_auth_error(request, exc, audit="login_failed")
-    token = await create_session(_db(request), user, request.scope, config)
+    token, _ = await create_session(_db(request), user, request.scope, config)
     await _db(request).audit(
         "login_succeeded",
         user_id=user.id,
