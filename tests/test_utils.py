@@ -123,8 +123,8 @@ def test_rate_limiter_window() -> None:
     limiter = RateLimiter()
     assert limiter.allow("k", 2, 60)
     assert limiter.allow("k", 2, 60)
-    assert not limiter.allow("k", 2, 60)
-    assert limiter.allow("other", 1, 60)
+    assert not limiter.allow("k", 2, 60)[0]
+    assert limiter.allow("other", 1, 60)[0]
     # A zero-length window expires immediately.
     assert limiter.allow("k", 1, 0)
 

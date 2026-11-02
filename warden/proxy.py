@@ -248,9 +248,6 @@ class ProxyEngine:
         upstream_port = upstream.port or (443 if upstream.scheme == "https" else 80)
         if (target.hostname or "").lower() != upstream.hostname.lower() or target_port != upstream_port:
             return location
-        scheme = str(scope.get("scheme", "http"))
-        if scheme in {"ws", "wss"}:
-            scheme = "http" if scheme == "ws" else "https"
         public = f"{public_scheme(scope, self.manager.config)}://{get_host_header(scope)}"
         return f"{public}{target.path or '/'}" + (f"?{target.query}" if target.query else "") + (
             f"#{target.fragment}" if target.fragment else ""
@@ -511,7 +508,6 @@ class ProxyEngine:
         has_body = bool(
             (content_length and content_length != "0") or "transfer-encoding" in headers
         )
-        request.stream() if has_body else b""
         url = upstream_url(route, scope.get("raw_path"), scope.get("query_string", b""))
         config = self.manager.config
         timeout_seconds = route.timeout_seconds or config.server.request_timeout_seconds

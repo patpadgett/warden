@@ -152,14 +152,16 @@ def _origin_ok(request: Request) -> bool:
 
 def _limited(request: Request, action: str, limit: int, window: float = 60.0) -> tuple[bool, dict[str, str]]:
     limiter = request.app.state.rate_limiter
-    allowed = limiter.allow(f"{client_ip(request.scope)}:{action}", limit, window)
+    allowed, remaining = limiter.allow(f"{client_ip(request.scope)}:{action}", limit, window)
     if allowed:
         request.app.state.stats.inc_rate_limit_allowed()
     else:
         request.app.state.stats.inc_rate_limit_blocked()
-    headers = {"X-RateLimit-Limit": str(limit), "X-RateLimit-Window": str(int(window))}
-    # Note: remaining count requires additional query; approximate here
-    headers["X-RateLimit-Remaining"] = "0" if not allowed else str(max(0, limit - 1))
+    headers = {
+        "X-RateLimit-Limit": str(limit),
+        "X-RateLimit-Window": str(int(window)),
+        "X-RateLimit-Remaining": str(max(0, remaining)),
+    }
     return allowed, headers
 
 async def _audit_failure(

@@ -18,14 +18,14 @@ Audit run: 2026-11-02 (EST). No files were changed during the audit.
 | T3 | L | **Audit/activity pagination is hard-coded** (export `limit=500`, activity `150`). No `offset`/load-more or `since` filter. | `warden/admin/routes.py` + templates | FIXED — export supports `limit`/`offset` (+ total); activity supports `since` filter and hidden `since` input |
 | T4 | M | **No DB schema-migration or backup tooling.** Migrations live only in embedded SQL strings; there is no guided backup command. | `warden/db.py` + CLI | FIXED — added `warden backup` (atomic SQLite `.backup`, mode 0600) |
 | T5 | L | **Footer `app_version` is undefined.** `base.html` rendered `{{ app_version }}` but no template context supplied it, so every admin page showed "warden v". | `warden/main.py` `_error_response`, `warden/admin/routes.py` `_base_context` | FIXED — `app_version` exposed as a template global in `warden/templating.py` |
-| T6 | H | **VACUUM silently never runs.** `Database.vacuum()` executed `PRAGMA database_path`, which returns no rows, so the path came back empty and the reclaim step was skipped. | `warden/db.py` `vacuum()` | OPEN |
-| T7 | L | **Dead `request.stream()` no-op in `handle_http`.** `request.stream() if has_body else b""` discarded its result and may advance the ASGI receive iterator unexpectedly. | `warden/proxy.py` `handle_http` | OPEN |
-| T8 | L | **Dashboard "Last sign-in" reads "never" even after sign-ins.** It reads the last of the most-recent 60 audit events, which can be older than today's sign-ins. | `warden/admin/routes.py` `dashboard` | OPEN |
-| T9 | M | **Config-save in-memory config diverges from disk** (`_preserve_restart_fields` keeps restart-only fields at their *previous* values, so the running app never reconciles new TLS/config until a manual restart). | `warden/config.py` `save_text` | OPEN |
-| T10 | L | **`X-RateLimit-Remaining` is not a real remaining count** (hard-coded `"0"`/ `limit-1`). | `warden/auth/routes.py` `_limited` | OPEN |
-| T11 | L | **Dead code to remove** — `_rewrite_location` computes an unused `scheme`; `metrics_api` wraps a plain concat in a `try/except` that can't fire. | `warden/proxy.py`, `warden/admin/routes.py` | OPEN |
+| T6 | H | **VACUUM silently skipped** (`PRAGMA database_path` is not a valid pragma; the path lookup returned empty, so the reclaim step never ran. | `warden/db.py` `vacuum()` | FIXED |
+| T7 | L | **Dead `request.stream() if has_body else b""` no-op discarded its result and advanced the ASGI receive iterator.** | `warden/proxy.py` `handle_http` | FIXED |
+| T8 | L | **Dashboard "Last sign-in" read the most recent of the last 60 audit rows — sign-ins older than 60 events showed "never" despite `signins_today > 0`.** | `warden/admin/routes.py` `dashboard` | FIXED |
+| T9 | M | Config-save divergence: `save_text` preserves restart-only fields at their previous runtime values in `manager.config` while the file holds the new values. | `warden/config.py` `save_text` | CLARIFIED — confirmed by design (restart-required UX); no change requested |
+| T10 | L | `X-RateLimit-Remaining` was a hard-coded approximation (`0` or `limit-1`). | `warden/auth/routes.py` `_limited`, `warden/utils.py` | FIXED — `allow` now reports the real remaining count for both in-process and Redis limiters |
+| T11 | L | **Dead code: discarded `request.stream()` no-op in `handle_http`; a `try/except` in `metrics_api` that can never fire; an unused `scheme` variable in `_rewrite_location`.** | `warden/proxy.py`, `warden/admin/routes.py` | FIXED |
 
 ## Recommended fix order (per user instruction)
 1. Missing items: T2, T3, T4, T5 — **completed in this batch** (357 tests pass, coverage 78.55%).
-2. Next highest-priority items: T6, T7, T9, T8, T10, T11.
+2. Next highest-priority items: T6, T7, T8, T10, T11 — **completed in this batch** (357 tests pass, coverage 78.42%).
 3. T0 (security) is still open and deliberately held; T1 (self-registration) is blocked on design.

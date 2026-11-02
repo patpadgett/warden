@@ -782,10 +782,22 @@ class Database:
         conn = self._require_conn()
         config = getattr(self, "config", None)
         if config is not None:
-            async with conn.execute("PRAGMA database_path") as cursor:
-                row = await cursor.fetchone()
-                path = row[0] if row else None
-            size = os.path.getsize(path) if path else 0
+            # ``PRAGMA database_path`` is not a real SQLite pragma, so read the
+            # main database's file path from ``PRAGMA database_list`` instead.
+            async with conn.execute("PRAGMA database_list") as cursor:
+                rows = await cursor.fetchall()
+            path = None
+            for row in rows:
+                if row["name"] == "main":
+                    path = row["file"]
+                    break
+            if path:
+                try:
+                    size = os.path.getsize(path)
+                except OSError:
+                    size = 0
+            else:
+                size = 0
             if size < config.max_vacuum_bytes:
                 logger.debug(
                     "VACUUM skipped, database file %d bytes < threshold %d",

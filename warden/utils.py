@@ -434,18 +434,19 @@ class RateLimiter:
         self._events: dict[str, deque[float]] = defaultdict(deque)
         self._last_cleanup = time.monotonic()
 
-    def allow(self, key: str, limit: int, window_seconds: float) -> bool:
+    def allow(self, key: str, limit: int, window_seconds: float) -> tuple[bool, int]:
+        """Return ``(allowed, remaining)`` for the current window."""
         now = time.monotonic()
         events = self._events[key]
         cutoff = now - window_seconds
         while events and events[0] <= cutoff:
             events.popleft()
         if len(events) >= limit:
-            return False
+            return False, max(0, limit - len(events))
         events.append(now)
         if now - self._last_cleanup > 300:
             self._cleanup(now)
-        return True
+        return True, max(0, limit - len(events))
 
     def _cleanup(self, now: float) -> None:
         stale: Iterable[str] = [
@@ -572,7 +573,7 @@ class RedisRateLimiter:
             self._redis = _redis.from_url(url)
         self._default_ttl = ttl
 
-    async def allow(self, key: str, limit: int, window_seconds: float) -> bool:
+    async def allow(self, key: str, limit: int, window_seconds: float) -> tuple[bool, int]:
         """Return ``True`` if the request identified by ``key`` is within the rate limit.
 
         The method adds the current timestamp, discards entries older than
@@ -587,4 +588,4 @@ class RedisRateLimiter:
         pipe.zcard(zset)
         pipe.expire(zset, max(int(window_seconds) + 60, self._default_ttl))
         _, _, count, _ = await pipe.execute()
-        return count <= limit
+        return count <= limit, max(0, limit - count)

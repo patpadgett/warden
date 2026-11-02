@@ -284,10 +284,7 @@ async def metrics_api(request: Request) -> Response:
     # Health adapter results in metrics
     health = getattr(request.app.state, "health_monitor", None)
     if health is not None:
-        try:
-            content += "\n# HEALTH adapter active\nwarden_health_adapter_active 1\n"
-        except Exception:
-            logger.exception("Failed to export health adapter metrics")
+        content += "\n# HEALTH adapter active\nwarden_health_adapter_active 1\n"
     # Add mesh handshake metrics if mesh is enabled
     mesh = request.app.state.mesh
     adapter = getattr(mesh, "adapter", None)
@@ -402,7 +399,8 @@ async def dashboard(request: Request) -> Response:
     credentials = await db.list_credentials(user.id)
     sessions = await db.list_sessions(user.id, current_token_hash=session.token_hash)
     audit = await db.list_audit(60)
-    last_login = next((event for event in audit if event.event == "login_succeeded"), None)
+    last_login_row = await db.list_audit(1, event="login_succeeded")
+    last_login = last_login_row[0] if last_login_row else None
     since = time.time() - 86400
     signins_today = await db.count_audit(event="login_succeeded", since=since)
     tls_info = _cert_context(request, config)
