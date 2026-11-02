@@ -531,11 +531,21 @@ class _InMemoryPipeline:
     async def execute(self):
         results: list[Any] = []
         for cmd in self._commands:
-            if cmd[0] == "zadd" or cmd[0] == "zremrangebyscore":
+            op = cmd[0]
+            if op == "zadd":
+                zset, members = cmd[1], cmd[2]
+                current = self._store.get(zset, {})
+                current.update(members)
+                self._store[zset] = current
                 results.append(0)
-            elif cmd[0] == "zcard":
+            elif op == "zremrangebyscore":
+                zset, min_score, max_score = cmd[1], cmd[2], cmd[3]
+                current = self._store.get(zset, {})
+                self._store[zset] = {k: v for k, v in current.items() if not (min_score <= v <= max_score)}
+                results.append(0)
+            elif op == "zcard":
                 results.append(len(self._store.get(cmd[1], {})))
-            elif cmd[0] == "expire":
+            elif op == "expire":
                 results.append(True)
         return tuple(results)
 
