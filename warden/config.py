@@ -668,6 +668,20 @@ def format_validation_errors(exc: Exception) -> list[str]:
     return [str(exc)]
 
 
+def env_substitute(value: Any) -> Any:
+    """Recursively replace ``${VAR}`` and ``$VAR`` with environment variables."""
+    if isinstance(value, dict):
+        return {key: env_substitute(val) for key, val in value.items()}
+    if isinstance(value, list):
+        return [env_substitute(item) for item in value]
+    if isinstance(value, str):
+        def _replace(match: re.Match[str]) -> str:
+            var_name = match.group(1) or match.group(2)
+            return os.environ.get(var_name, match.group(0))
+        return re.sub(r"\$\{(\w+)\}|\$(\w+)", _replace, value)
+    return value
+
+
 def parse_config_text(text: str, *, base_dir: Path, source: str = "config") -> WardenConfig:
     yaml = YAML(typ="safe", pure=True)
     yaml.allow_duplicate_keys = False
@@ -679,6 +693,7 @@ def parse_config_text(text: str, *, base_dir: Path, source: str = "config") -> W
         raise ConfigError(f"{source} is empty.")
     if not isinstance(data, dict):
         raise ConfigError(f"{source} must contain a YAML mapping at the top level.")
+    data = env_substitute(data)
     try:
         config = WardenConfig.model_validate(data)
     except Exception as exc:  # pydantic.ValidationError and ValueErrors
