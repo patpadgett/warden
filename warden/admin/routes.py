@@ -974,9 +974,7 @@ async def audit_export(request: Request, limit: int = 500, event: str | None = N
     """Export audit events as JSON (admin only; protected by host guard)."""
     _guard_host(request)
     db = _db(request)
-    events = await db.list_audit(limit)
-    if event:
-        events = [e for e in events if e.event == event]
+    events = await db.list_audit(limit, event=event)
     result = [{"id": e.id, "created_at": e.created_at, "event": e.event,
                "username": e.username, "ip": e.ip, "detail": e.detail} for e in events]
     return JSONResponse({"count": len(result), "events": result})
