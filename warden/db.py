@@ -323,6 +323,15 @@ JOIN users u ON u.id = s.user_id
 """
 
 
+def _session_touch_interval(session_id: int) -> float:
+    """Return a jittered touch interval for session keep-alive writes.
+
+    The base interval is 300s; jitter of ±60s spreads writes across sessions
+    so they don't all update at once.
+    """
+    return 300.0 + ((session_id % 121) - 60)  # 240..360
+
+
 class Database:
     """Async SQLite database wrapper for Warden.
 
@@ -927,7 +936,7 @@ class Database:
         if session.expires_at <= current:
             await self.revoke_session_by_hash(token_hash)
             return None
-        if touch and current - session.last_seen_at > 300:
+        if touch and current - session.last_seen_at > _session_touch_interval(session.id):
             await self._write(
                 "UPDATE sessions SET last_seen_at = ? WHERE id = ?", (current, session.id)
             )

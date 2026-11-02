@@ -294,6 +294,7 @@ class RouteConfig(BaseModel):
     enabled: bool = True
     websocket: bool = True
     websocket_subprotocols: list[str] = Field(default_factory=list)
+    websocket_max_size: int = 16 * 1024 * 1024
     preserve_host: bool = False
     verify_tls: bool = True
     rewrite_redirects: bool = True

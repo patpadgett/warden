@@ -73,6 +73,7 @@ from warden.db import (
     _audit,
     _credential,
     _session,
+    _session_touch_interval,
     _user,
 )
 
@@ -764,6 +765,14 @@ class PostgresDatabase(Database):
             await session.execute(delete(mesh_peers))
             await session.commit()
 
+    async def health_check(self) -> bool:
+        try:
+            async with self.session_factory() as session:
+                await session.execute(text("SELECT 1"))
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+
     async def vacuum(self) -> None:
         # PostgreSQL relies on ``autovacuum`` (enabled by default) to reclaim
         # dead tuples and keep bloat under control. Manual ``VACUUM`` holds a
@@ -815,7 +824,7 @@ class PostgresDatabase(Database):
             if s.expires_at <= current:
                 await self.revoke_session_by_hash(token_hash)
                 return None
-            if touch and current - s.last_seen_at > 300:
+            if touch and current - s.last_seen_at > _session_touch_interval(s.id):
                 await session.execute(
                     update(sessions).where(sessions.c.id == s.id).values(last_seen_at=current)
                 )
@@ -970,18 +979,19 @@ class PostgresDatabase(Database):
         username: str | None = None,
         ip: str | None = None,
         user_agent: str | None = None,
-        detail: dict | None = None,
+        detail: str | dict[str, Any] | None = None,
+        now: float | None = None,
     ) -> None:
         async with self.session_factory() as session:
             await session.execute(
                 insert(audit).values(
-                    created_at=time.time(),
+                    created_at=now if now is not None else time.time(),
                     event=event,
                     user_id=user_id,
                     username=username,
                     ip=ip,
                     user_agent=user_agent,
-                    detail=json.dumps(detail) if detail is not None else None,
+                    detail=json.dumps(detail) if isinstance(detail, dict) else detail,
                 )
             )
             await session.commit()

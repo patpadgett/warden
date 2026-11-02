@@ -655,7 +655,7 @@ class ProxyEngine:
                 open_timeout=10,
                 ping_interval=20,
                 ping_timeout=20,
-                max_size=None,
+                max_size=route.websocket_max_size,
                 compression="deflate",
             )
         except (TimeoutError, InvalidStatus, InvalidHandshake, OSError) as exc:
