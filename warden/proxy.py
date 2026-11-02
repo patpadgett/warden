@@ -435,6 +435,19 @@ class ProxyEngine:
                 await self._send(response, scope, receive, send)
                 return
 
+        if route.blocked_user_agents:
+            user_agent = headers.get("user-agent", "")
+            blocked_lower = [ua.lower() for ua in route.blocked_user_agents]
+            if any(ua in user_agent.lower() for ua in blocked_lower):
+                response = self._error_response(
+                    scope,
+                    status=403,
+                    title="Access denied",
+                    message="This service does not accept requests from your client.",
+                )
+                await self._send(response, scope, receive, send)
+                return
+
         # Enforce max request body size.
         # Per RFC 7230, Transfer-Encoding (e.g. chunked) takes precedence over
         # Content-Length; when it is present, ignore Content-Length for the size

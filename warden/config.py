@@ -323,6 +323,7 @@ class RouteConfig(BaseModel):
     #: Per-route rate limit in requests per minute. ``None`` disables per-route
     #: limiting (falls back to the global limiter).
     rate_limit: int | None = Field(default=None, ge=1)
+    blocked_user_agents: list[str] = Field(default_factory=list)
 
     @field_validator("host")
     @classmethod
