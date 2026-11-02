@@ -970,13 +970,21 @@ async def rotate_mesh_hub_key(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True, "new_private_key": new_key})
 
 @router.get("/api/audit/export")
-async def audit_export(request: Request, limit: int = 500, event: str | None = None) -> JSONResponse:
-    """Export audit events as JSON (admin only; protected by host guard)."""
+async def audit_export(request: Request, limit: int = 500, event: str | None = None, fmt: str = "json") -> JSONResponse:
+    """Export audit events as JSON or CSV (admin only; protected by host guard)."""
     _guard_host(request)
     db = _db(request)
     events = await db.list_audit(limit, event=event)
     result = [{"id": e.id, "created_at": e.created_at, "event": e.event,
                "username": e.username, "ip": e.ip, "detail": e.detail} for e in events]
+    if fmt == "csv":
+        import csv
+        import io
+        buf = io.StringIO()
+        writer = csv.DictWriter(buf, fieldnames=["id", "created_at", "event", "username", "ip", "detail"])
+        writer.writeheader()
+        writer.writerows(result)
+        return Response(buf.getvalue(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=audit.csv"})
     return JSONResponse({"count": len(result), "events": result})
 
 @router.post("/api/backup_codes/bulk")
