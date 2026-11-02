@@ -79,14 +79,16 @@ class ProxyEngine:
       rewrites redirect locations, and sanitises ``Set‑Cookie`` values.
     * Enforces per‑route IP allow/deny lists and request‑size limits.
     """
-    def __init__(self, manager: ConfigManager, stats: MetricsModule) -> None:
+    def __init__(self, manager: ConfigManager, stats: MetricsModule, health_monitor: Any = None) -> None:
         """Create a new ``ProxyEngine``.
 
         * ``manager`` – provides configuration and the mesh manager.
         * ``stats`` – used to record request and health‑check metrics.
+        * ``health_monitor`` – optional upstream health monitor for pre‑flight checks.
         """
         self.manager = manager
         self.stats = stats
+        self.health_monitor = health_monitor
         # ACME challenge token store: token -> response token (clear after successful renewal)
         self.acme_tokens: dict[str, str] = {}
 
@@ -466,6 +468,19 @@ class ProxyEngine:
                     status=403,
                     title="Access denied",
                     message="This path is not allowed.",
+                )
+                await self._send(response, scope, receive, send)
+                return
+
+        if self.health_monitor is not None:
+            upstream_host = urlsplit(route.upstream).hostname or route.upstream
+            health = self.stats.health.get(upstream_host)
+            if health is not None and health.online is False and health.checked_at is not None:
+                response = self._error_response(
+                    scope,
+                    status=503,
+                    title="Service unavailable",
+                    message="The upstream service is currently offline.",
                 )
                 await self._send(response, scope, receive, send)
                 return

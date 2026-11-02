@@ -265,6 +265,9 @@ def create_app(
         monitor = HealthMonitor(metrics, manager)
         app.state.health_monitor = monitor
         await monitor.start()
+        engine.health_monitor = monitor
+        if proxy is None:
+            app.state.engine = engine
         tasks: list[asyncio.Task[Any]] = [
             asyncio.create_task(
                 _cleanup_loop(app, manager.config, database), name="warden-cleanup"
