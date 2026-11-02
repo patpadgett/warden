@@ -161,6 +161,10 @@ class WardenMiddleware:
                     return
                 await self._json_unauthorized("Sign in to continue.")(scope, receive, send)
                 return
+            if not session.user.is_admin:
+                response = self._json_unauthorized("Admin access required.")
+                await response(scope, receive, send)
+                return
             if path.startswith(f"{INTERNAL_PREFIX}/api/") and method not in {"GET", "HEAD", "OPTIONS"}:
                 header = Headers(scope=scope).get("x-warden-request")
                 if header != "1":
