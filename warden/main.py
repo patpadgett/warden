@@ -189,6 +189,7 @@ def _error_response(request: Request, status: int, title: str, message: str) -> 
             "host": host,
             "retry_url": request.url.path,
             "admin_url": "/" if admin else None,
+            "retry_after": request.headers.get("retry-after"),
         },
         status_code=status,
     )

@@ -28,6 +28,9 @@
         <a class="btn btn-secondary" href="{{ admin_url }}">Open Warden</a>
         {% endif %}
       </div>
+      {% if retry_after %}
+      <p class="retry-note">Try again in {{ retry_after }} seconds.</p>
+      {% endif %}
       {% if detail %}
       <p class="error-detail">{{ detail }}</p>
       {% endif %}
