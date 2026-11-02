@@ -228,6 +228,16 @@ class ServerConfig(BaseModel):
     log_level: str = "info"
     #: Maximum concurrent sessions per user. ``None`` disables the limit.
     max_sessions_per_user: int | None = Field(default=None, ge=1)
+    #: Optional log file path. When set, logs are written to this file with
+    #: rotation enabled. Requires ``log_rotation`` to be set.
+    log_file: str | None = None
+    #: Log rotation strategy: ``size`` for RotatingFileHandler, ``time`` for
+    #: TimedRotatingFileHandler. Only used when ``log_file`` is set.
+    log_rotation: str = "size"
+    #: Maximum log file size in MB before rotation (only for ``size`` mode).
+    log_max_size_mb: int = Field(default=10, ge=1, le=1024)
+    #: Number of rotated log files to keep.
+    log_backup_count: int = Field(default=5, ge=1, le=100)
 
     @field_validator("admin_host")
     @classmethod

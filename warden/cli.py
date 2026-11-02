@@ -7,6 +7,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import logging.handlers
 import os
 import re
 import signal
@@ -110,17 +111,38 @@ def _load_manager(args: argparse.Namespace) -> ConfigManager:
     return ConfigManager.from_file(_config_path(args))
 
 
-def _configure_logging(level: str) -> None:
+def _configure_logging(level: str, log_file: str | None = None, log_rotation: str = "size", log_max_size_mb: int = 10, log_backup_count: int = 5) -> None:
     """Configure the root logger based on a textual log level.
 
     Accepts standard ``logging`` level names (e.g., ``INFO``, ``DEBUG``). If the
     level is unrecognised, defaults to ``INFO``.
+
+    When ``log_file`` is provided, logs are also written to that file with
+    rotation enabled.
     """
     numeric = getattr(logging, str(level).upper(), logging.INFO)
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    if log_file:
+        max_bytes = max(1024 * 1024, log_max_size_mb * 1024 * 1024)
+        if log_rotation == "time":
+            file_handler = logging.handlers.TimedRotatingFileHandler(
+                log_file,
+                when="midnight",
+                backupCount=log_backup_count,
+            )
+        else:
+            file_handler = logging.handlers.RotatingFileHandler(
+                log_file,
+                maxBytes=max_bytes,
+                backupCount=log_backup_count,
+            )
+        file_handler.setFormatter(logging.Formatter("%(asctime)s  %(levelname)-7s %(name)s · %(message)s"))
+        handlers.append(file_handler)
     logging.basicConfig(
         level=numeric,
         format="%(asctime)s  %(levelname)-7s %(name)s · %(message)s",
         datefmt="%H:%M:%S",
+        handlers=handlers,
     )
 
 
@@ -364,7 +386,13 @@ def cmd_serve(args: argparse.Namespace) -> int:
     except TLSError as exc:
         _print_error(str(exc))
         return 1
-    _configure_logging(config.server.log_level)
+    _configure_logging(
+        config.server.log_level,
+        log_file=config.server.log_file,
+        log_rotation=config.server.log_rotation,
+        log_max_size_mb=config.server.log_max_size_mb,
+        log_backup_count=config.server.log_backup_count,
+    )
     host = args.host or config.server.bind
     app = create_app(manager.path, config=config)
     try:

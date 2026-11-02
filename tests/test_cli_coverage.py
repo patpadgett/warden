@@ -1,8 +1,30 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
-from warden.cli import cmd_check, cmd_config_show, cmd_init
+from warden.cli import _configure_logging, cmd_check, cmd_config_show, cmd_init
+
+
+def test_configure_logging_default() -> None:
+    root = logging.getLogger()
+    for handler in list(root.handlers):
+        root.removeHandler(handler)
+    _configure_logging("info")
+    assert root.level == logging.INFO
+
+
+def test_configure_logging_rotating_file(tmp_path: Path) -> None:
+    root = logging.getLogger()
+    for handler in list(root.handlers):
+        root.removeHandler(handler)
+    log_path = tmp_path / "warden.log"
+    _configure_logging("debug", log_file=str(log_path), log_rotation="size", log_max_size_mb=1, log_backup_count=2)
+    logger = logging.getLogger("warden.test")
+    logger.info("hello rotation")
+    assert log_path.exists()
+    content = log_path.read_text()
+    assert "hello rotation" in content
 
 
 def test_config_show(tmp_path: Path) -> None:
