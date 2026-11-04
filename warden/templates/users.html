@@ -1,43 +1,48 @@
 {% extends "base.html" %}
 
 {% block content %}
-<section class="page-heading">
+<section class="page-head">
   <div>
-    <h1>Who holds the keys.</h1>
-    <p class="subhead">Manage users. Each user must register at least one passkey. The <strong>is_admin</strong> toggle grants or removes dashboard access. Only admins can create users or change settings.</p>
+    <p class="panel-title" style="margin-bottom: 6px;">People</p>
+    <h1 class="page-title">Who holds the keys.</h1>
+    <p class="subhead">Manage users. Each user must register at least one passkey. The admin toggle grants or removes dashboard access. Only admins can create users or change settings.</p>
   </div>
   <div class="page-actions">
     <button class="btn btn-primary" id="add-user" type="button">
-      <svg viewBox="0 0 20 0" aria-hidden="true"><path d="M10 4v12M4 10h12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       <span>Add user</span>
     </button>
   </div>
 </section>
 
-<div class="card">
-  <table class="user-table">
+<div class="table-wrap">
+  <table class="table">
     <thead>
       <tr>
         <th>User</th>
+        <th>Role</th>
         <th>Joined</th>
         <th class="text-right">Actions</th>
       </tr>
     </thead>
     <tbody>
       {% for user in users %}
-      <tr data-user-id="{{ user.id }}">
+      <tr data-user-id="{{ user.id }}" class="user-row">
         <td>
           <div class="user-info">
             <span class="user-name">{{ user.display_name }}</span>
             <span class="user-handle">@{{ user.username }}</span>
+            {% if user.email %}
+            <span class="user-email">{{ user.email }}</span>
+            {% endif %}
           </div>
         </td>
         <td>
-          <span class="badge {{ 'badge-admin' if user.is_admin else 'badge-user' }}">
+          <span class="badge {{ 'badge-accent' if user.is_admin else 'badge-indigo' }}">
             {{ 'Administrator' if user.is_admin else 'User' }}
           </span>
         </td>
-        <td>{{ user.created_at | relative_time }}</td>
+        <td class="mono">{{ user.created_at | relative_time }}</td>
         <td class="text-right">
           <button class="btn btn-ghost btn-sm toggle-admin" type="button">
             {{ 'Demote' if user.is_admin else 'Promote' }}
@@ -52,76 +57,110 @@
   </table>
 </div>
 
-<div class="modal" id="user-modal">
-  <div class="modal-shell">
+<div class="modal-overlay" id="user-modal-overlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="user-modal-title">
     <div class="modal-head">
-      <h2>Add new user</h2>
-      <button class="btn-close" type="button">&times;</button>
+      <div>
+        <h2 id="user-modal-title">Add new user</h2>
+        <p style="margin-top: 4px; font-size: 13px; color: var(--text-muted);">Create an account. The user will set up their passkey on first sign-in.</p>
+      </div>
+      <button class="modal-close" type="button" data-close-modal aria-label="Close">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
     </div>
     <form id="user-form" class="form-stack">
       <label class="field">
         <span class="field-label">Username</span>
-        <input class="input" name="username" type="text" required placeholder="username">
+        <input class="input" name="username" type="text" required placeholder="username" autocomplete="off">
       </label>
       <label class="field">
         <span class="field-label">Display Name</span>
-        <input class="input" name="display_name" type="text" required placeholder="Display name">
+        <input class="input" name="display_name" type="text" required placeholder="Display name" autocomplete="off">
       </label>
-      <label class="field checkbox">
+      <label class="field">
+        <span class="field-label">Email <span class="optional">(optional — used for invite delivery)</span></span>
+        <input class="input" name="email" type="email" placeholder="user@example.com" autocomplete="off">
+      </label>
+      <label class="switch">
         <input type="checkbox" name="is_admin">
-        <span class="label-text">Grant administrator privileges</span>
+        <span class="switch-track"></span>
+        <span class="switch-copy"><strong>Grant administrator privileges</strong><span>Full access to all settings</span></span>
       </label>
-      <div class="modal-footer">
-        <button class="btn btn-secondary" type="button" id="cancel-user">Cancel</button>
-        <button class="btn btn-primary" type="submit">Create user</button>
+      <div class="form-actions">
+        <button class="btn btn-ghost" type="button" data-close-modal>Cancel</button>
+        <button class="btn btn-primary" type="submit" id="user-submit">Create user</button>
       </div>
     </form>
   </div>
 </div>
 
-<style>
-.user-table {
-  width: 100%;
-  border-collapse: collapse;
-  text-align: left;
-}
-.user-table th, .user-table td {
-  padding: 12px;
-  border-bottom: 1px solid var(--line);
-}
-.user-info {
-  display: flex;
-  flex-direction: column;
-}
-.user-name {
-  font-weight: 600;
-  color: var(--text);
-}
-.user-handle {
-  font-size: 0.85rem;
-  color: var(--muted);
-}
-.badge {
-  font-size: 0.75rem;
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-weight: 500;
-}
-.badge-admin {
-  background: var(--lime-soft);
-  color: var(--lime);
-}
-.badge-user {
-  background: var(--panel-3);
-  color: var(--muted);
-}
-.text-right {
-  text-align: right;
-}
-</style>
+<div class="modal-overlay" id="edit-user-modal-overlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="edit-user-modal-title">
+    <div class="modal-head">
+      <div>
+        <h2 id="edit-user-modal-title">Edit user</h2>
+        <p style="margin-top: 4px; font-size: 13px; color: var(--text-muted);">Update display name, email, or admin status.</p>
+      </div>
+      <button class="modal-close" type="button" data-close-modal aria-label="Close">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <form id="edit-user-form" class="form-stack">
+      <input type="hidden" name="user_id">
+      <label class="field">
+        <span class="field-label">Display Name</span>
+        <input class="input" name="display_name" type="text" required placeholder="Display name" autocomplete="off">
+      </label>
+      <label class="field">
+        <span class="field-label">Email <span class="optional">(optional)</span></span>
+        <input class="input" name="email" type="email" placeholder="user@example.com" autocomplete="off">
+      </label>
+      <label class="switch">
+        <input type="checkbox" name="is_admin">
+        <span class="switch-track"></span>
+        <span class="switch-copy"><strong>Administrator</strong><span>Full access to all settings</span></span>
+      </label>
+      <div class="form-actions">
+        <button class="btn btn-ghost" type="button" data-close-modal>Cancel</button>
+        <button class="btn btn-primary" type="submit" id="edit-user-submit">Save changes</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal-overlay" id="invite-modal-overlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="invite-modal-title">
+    <div class="modal-head">
+      <div>
+        <h2 id="invite-modal-title">Invite created</h2>
+        <p style="margin-top: 4px; font-size: 13px; color: var(--text-muted);">Share this token with the user so they can finish first-login setup.</p>
+      </div>
+      <button class="modal-close" type="button" data-close-modal aria-label="Close">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <div class="form-stack">
+      <label class="field">
+        <span class="field-label">Invite token</span>
+        <div class="form-row" style="margin-top: 0;">
+          <input class="input input-monospace" id="invite-token" type="text" readonly style="flex: 1; min-width: 0;">
+          <button class="btn btn-secondary" type="button" id="invite-copy">Copy</button>
+        </div>
+      </label>
+      <p style="font-size: 12px; color: var(--text-muted);">
+        If email delivery is configured and the user has an address, they were emailed automatically. Otherwise send this token through your own channel.
+      </p>
+      <div class="form-actions">
+        <button class="btn btn-primary" type="button" data-close-modal>Done</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="user-error" class="hidden panel" style="border-color: var(--red); background: var(--red-soft); margin-top: 12px;">
+  <div class="panel-body" style="color: #fca5a5; font-size: 12px;"></div>
+</div>
+<div id="edit-user-error" class="hidden panel" style="border-color: var(--red); background: var(--red-soft); margin-top: 12px;">
+  <div class="panel-body" style="color: #fca5a5; font-size: 12px;"></div>
+</div>
 {% endblock %}
-<style>
-.form-stack .field { margin-bottom: 1.25rem; }
-.form-stack .input { padding: 0.55rem 0.7rem; }
-.modal-foot { margin-top: 1.5rem; }
-</style>

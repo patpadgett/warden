@@ -14,6 +14,7 @@ import logging
 import os
 import sqlite3
 import time
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -143,6 +144,7 @@ class User:
     is_admin: bool
     created_at: float
     recovery_token: str | None = None
+    email: str | None = None
 
 
 @dataclass(slots=True)
@@ -234,6 +236,7 @@ def _user(row: aiosqlite.Row) -> User:
         is_admin=bool(row["is_admin"]),
         created_at=float(row["created_at"]),
         recovery_token=row["recovery_token"],
+        email=row["email"],
     )
 
 
@@ -269,6 +272,7 @@ def _session(row: aiosqlite.Row) -> Session:
         is_admin=bool(row["u_is_admin"]),
         created_at=float(row["u_created_at"]),
         recovery_token=row["u_recovery_token"],
+        email=row["u_email"],
     )
     return Session(
         id=row["id"],
@@ -317,7 +321,8 @@ SELECT s.id, s.token_hash, s.user_id, s.created_at, s.expires_at, s.last_seen_at
        s.user_agent,
        u.id AS u_id, u.username AS u_username, u.display_name AS u_display_name,
        u.webauthn_user_id AS u_webauthn_user_id, u.is_admin AS u_is_admin,
-       u.created_at AS u_created_at, u.recovery_token AS u_recovery_token
+       u.created_at AS u_created_at, u.recovery_token AS u_recovery_token,
+       u.email AS u_email
 FROM sessions s
 JOIN users u ON u.id = s.user_id
 """
@@ -402,7 +407,7 @@ class Database:
                 pass
 
     #: Schema version number. Incremented whenever the schema changes.
-    SCHEMA_VERSION = 3
+    SCHEMA_VERSION = 5
 
     #: Per-step migration scripts. Keys are the target schema version.
     #: Each script runs inside a transaction; RAISE(IGNORE) suppresses
@@ -509,7 +514,27 @@ class Database:
             created_at REAL NOT NULL
         );
         """,
-    })  # type: ignore[assignment]
+        4: """
+        -- Invite codes for first-login passkey registration.
+        CREATE TABLE IF NOT EXISTS invites (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            token_hash TEXT NOT NULL UNIQUE,
+            expires_at REAL NOT NULL,
+            used INTEGER NOT NULL DEFAULT 0,
+            created_at REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_invites_user ON invites(user_id);
+        CREATE INDEX IF NOT EXISTS idx_invites_token ON invites(token_hash);
+        CREATE INDEX IF NOT EXISTS idx_invites_used ON invites(used);
+        """,
+    5: """\
+        -- Add user email address. ``email`` is nullable so that existing
+        -- databases without this column carry on; application code supplies
+        -- the address when the account is created/invited.
+        ALTER TABLE users ADD COLUMN email TEXT
+        """,
+})  # type: ignore[assignment]
 
     async def _migrate(self) -> None:
         conn = self._require_conn()
@@ -590,6 +615,7 @@ class Database:
         display_name: str,
         webauthn_user_id: bytes,
         *,
+        email: str | None = None,
         is_admin: bool = True,
         now: float | None = None,
     ) -> User:
@@ -599,9 +625,9 @@ class Database:
         created = now if now is not None else time.time()
         try:
             user_id = await self._write(
-                "INSERT INTO users (username, display_name, webauthn_user_id, is_admin, created_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (username, display_name, webauthn_user_id, int(is_admin), created),
+                "INSERT INTO users (username, display_name, webauthn_user_id, email, is_admin, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (username, display_name, webauthn_user_id, email, int(is_admin), created),
             )
         except sqlite3.IntegrityError as exc:
             raise AlreadyExistsError("That username is already registered.") from exc
@@ -610,7 +636,42 @@ class Database:
             raise DatabaseError("User disappeared after creation.")
         return user
 
+
+    async def create_invite(
+        self,
+        user_id: int,
+        token: str,
+        expires_at: float,
+        *,
+        now: float | None = None,
+    ) -> int:
+        """Create an invite for ``user_id``. The raw token is stored only as a hash."""
+        created = now if now is not None else time.time()
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        return await self._write(
+            "INSERT INTO invites (user_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?)",
+            (user_id, token_hash, expires_at, created),
+        )
+
+    async def get_invite(self, token: str) -> Any:
+        conn = self._require_conn()
+        async with conn.execute(
+            "SELECT * FROM invites WHERE token_hash = ?",
+            (hashlib.sha256(token.encode("utf-8")).hexdigest(),),
+        ) as cursor:
+            return await cursor.fetchone()
+
+    async def mark_invite_used(self, invite_id: int) -> bool:
+        conn = self._require_conn()
+        async with conn.execute(
+            "UPDATE invites SET used = 1 WHERE id = ?", (invite_id,)
+        ) as cursor:
+            await conn.commit()
+            return cursor.rowcount > 0
+
+
     async def create_user_with_credential(
+
         self,
         *,
         username: str,
@@ -754,6 +815,20 @@ class Database:
         async with self._lock:
             cursor = await conn.execute(
                 "UPDATE users SET display_name = ? WHERE id = ?", (display_name, user_id)
+            )
+            await conn.commit()
+            changed = cursor.rowcount
+            await cursor.close()
+        return bool(changed)
+
+    async def update_user_email(self, user_id: int, email: str | None) -> bool:
+        """Set the ``email`` for a user. Returns ``True`` on success."""
+        if self._conn is None:
+            await self.init()
+        conn = self._require_conn()
+        async with self._lock:
+            cursor = await conn.execute(
+                "UPDATE users SET email = ? WHERE id = ?", (email, user_id)
             )
             await conn.commit()
             changed = cursor.rowcount

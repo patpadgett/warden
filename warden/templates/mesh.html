@@ -1,19 +1,20 @@
 {% extends "base.html" %}
 
 {% block content %}
-<section class="page-heading">
+<section class="page-head">
   <div>
-    <h1>A private road<br>home.</h1>
+    <p class="panel-title" style="margin-bottom: 6px;">Networking</p>
+    <h1 class="page-title">A private road<br>home.</h1>
     <p class="subhead">Give a laptop or phone its own address inside your network. Warden generates the keys, writes the hub config, and hands you a client file.</p>
   </div>
   {% if mesh_enabled %}
   <div class="page-actions">
-    <button class="btn btn-secondary" id="mesh-apply" type="button">
-      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3v9M6.5 6.5 10 3l3.5 3.5M4 12.5V16h12v-3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <button class="btn btn-ghost" id="mesh-apply" type="button">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v9M6.5 6.5 10 3l3.5 3.5M4 12.5V16h12v-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       <span>Apply to host</span>
     </button>
     <button class="btn btn-primary" id="add-peer" type="button">
-      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       <span>Add peer</span>
     </button>
   </div>
@@ -21,67 +22,82 @@
 </section>
 
 {% if not mesh_enabled %}
-<div class="card">
-  <div class="card-pad" style="padding: 42px;">
-    <h2 class="serif" style="margin: 0 0 10px; font-size: 30px; font-weight: 400; letter-spacing: -0.03em;">The mesh is waiting.</h2>
-    <p class="muted" style="max-width: 560px; margin: 0 0 22px;">Enable WireGuard in <code>warden.yaml</code> to generate a hub, enroll peers, and download ready-to-import client configurations.</p>
-    <div class="config-snippet">
-<pre>mesh:
+<div class="panel">
+  <div class="panel-body" style="padding: 42px;">
+    <h2 style="font-size: 26px; font-weight: 700; margin: 0 0 10px; letter-spacing: -0.02em;">The mesh is waiting.</h2>
+    <p style="font-size: 14px; color: var(--text-secondary); max-width: 560px; margin: 0 0 22px; line-height: 1.55;">Enable WireGuard in <code class="code">warden.yaml</code> to generate a hub, enroll peers, and download ready-to-import client configurations.</p>
+    <pre class="mono" style="background: var(--bg-base); border: 2px solid var(--border); padding: 16px; font-size: 12px; line-height: 1.6; overflow-x: auto; color: var(--text-secondary);">mesh:
   enabled: true
   interface: wg0
   address: 10.44.0.1/24
   listen_port: 51820
   endpoint: vpn.example.com:51820
   config_path: /etc/wireguard/wg0.conf</pre>
-    </div>
     <div class="form-actions" style="justify-content: flex-start; margin-top: 18px;">
       <a class="btn btn-primary" href="/config">Edit configuration</a>
-      <span class="card-note">Restart Warden after saving mesh settings.</span>
+      <span style="font-size: 12px; color: var(--text-muted);">Restart Warden after saving mesh settings.</span>
     </div>
   </div>
 </div>
 {% else %}
 
 {% if not mesh_status.available %}
-<div class="alert alert-warn" role="status">WireGuard is not readable from this process{% if mesh_status.detail %}: {{ mesh_status.detail }}{% endif %}. Peer configs can still be generated; apply and live handshakes need <code>wg</code> installed and root access.</div>
+<div class="panel" style="border-color: var(--amber); background: var(--amber-soft);">
+  <div class="panel-body" style="color: var(--amber);">WireGuard is not readable from this process{% if mesh_status.detail %}: {{ mesh_status.detail }}{% endif %}. Peer configs can still be generated; apply and live handshakes need <code class="code">wg</code> installed and root access.</div>
+</div>
 {% elif not mesh_status.applied %}
-<div class="alert alert-warn" role="status">Interface <code>{{ mesh.interface }}</code> is not up yet{% if mesh_status.detail %} — {{ mesh_status.detail }}{% endif %}. Add peers, then press “Apply to host”.</div>
-{% endif %}
-
-{% if last_apply %}
-<div class="alert {% if last_apply.ok %}alert-success{% else %}alert-error{% endif %}" role="status">
-  Last apply {{ last_apply.timestamp|relative_time }}{% if last_apply.output %} — <span class="mono">{{ last_apply.output|truncate_middle(240) }}</span>{% endif %}
+<div class="panel" style="border-color: var(--amber); background: var(--amber-soft);">
+  <div class="panel-body" style="color: var(--amber);">Interface <code class="code">{{ mesh.interface }}</code> is not up yet{% if mesh_status.detail %} — {{ mesh_status.detail }}{% endif %}. Add peers, then press “Apply to host”.</div>
 </div>
 {% endif %}
 
-<section class="hub-grid" aria-label="Mesh summary">
-  <div class="hub-stat">
-    <div class="label">Interface</div>
-    <div class="value lime">{{ mesh.interface }}</div>
+{% if last_apply %}
+<div class="panel" style="border-color: {{ 'var(--accent)' if last_apply.ok else 'var(--red)' }}; background: {{ 'var(--accent-soft)' if last_apply.ok else 'var(--red-soft)' }};">
+  <div class="panel-body" style="color: {{ 'var(--accent)' if last_apply.ok else '#fca5a5' }};">Last apply {{ last_apply.timestamp|relative_time }}{% if last_apply.output %} — <span class="mono" style="font-size: 11px;">{{ last_apply.output|truncate_middle(240) }}</span>{% endif %}</div>
+</div>
+{% endif %}
+
+<section class="stat-grid" aria-label="Mesh summary" style="margin-bottom: 24px;">
+  <div class="panel">
+    <div class="panel-body">
+      <div class="stat-label">Interface</div>
+      <div class="stat-value" style="color: var(--accent);">{{ mesh.interface }}</div>
+    </div>
   </div>
-  <div class="hub-stat">
-    <div class="label">Hub address</div>
-    <div class="value">{{ mesh.address }}</div>
+  <div class="panel">
+    <div class="panel-body">
+      <div class="stat-label">Hub address</div>
+      <div class="stat-value">{{ mesh.address }}</div>
+    </div>
   </div>
-  <div class="hub-stat">
-    <div class="label">Listen port</div>
-    <div class="value">{{ mesh.listen_port }}</div>
+  <div class="panel">
+    <div class="panel-body">
+      <div class="stat-label">Listen port</div>
+      <div class="stat-value">{{ mesh.listen_port }}</div>
+    </div>
   </div>
-  <div class="hub-stat">
-    <div class="label">Peers</div>
-    <div class="value">{{ peer_count }}</div>
+  <div class="panel">
+    <div class="panel-body">
+      <div class="stat-label">Peers</div>
+      <div class="stat-value">{{ peer_count }}</div>
+    </div>
   </div>
 </section>
 
-<div class="page-grid">
+<div style="display: grid; grid-template-columns: 1fr 340px; gap: 16px; align-items: start;">
   <div class="stack-lg">
-    <section class="card" aria-labelledby="peers-title">
-      <div class="card-head">
-        <h2 id="peers-title">Peers</h2>
-        <span class="aside">{% if mesh_status.applied %}<span class="status-dot"></span> interface live{% else %}config only{% endif %}</span>
+    <section class="panel" aria-labelledby="peers-title">
+      <div class="panel-head">
+        <h2 class="panel-title" id="peers-title">
+          <svg viewBox="0 0 24 24" width="16" height="16" style="color: var(--text-muted);" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+          Peers
+        </h2>
+        <span style="font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 6px;">
+          {% if mesh_status.applied %}<span style="width: 8px; height: 8px; border: 2px solid var(--border); background: var(--accent); box-shadow: 0 0 8px var(--accent-glow); display: inline-block;"></span> interface live{% else %}config only{% endif %}
+        </span>
       </div>
-      <div class="table-wrap">
-        <table class="data-table">
+      <div class="panel-body" style="padding: 0; overflow-x: auto;">
+        <table class="table">
           <thead>
             <tr>
               <th>Peer</th>
@@ -89,82 +105,91 @@
               <th>Endpoint</th>
               <th>Handshake</th>
               <th>Transfer</th>
-              <th class="row-actions"><span class="visually-hidden">Actions</span></th>
+              <th style="width: 140px;"></th>
             </tr>
           </thead>
           <tbody id="peer-list">
             {% for row in peers %}
             <tr data-peer-id="{{ row.peer.id }}" data-public-key="{{ row.peer.public_key }}">
               <td>
-                <span class="primary">{{ row.peer.name }}</span>
-                <span class="mono-cell" style="display: block; color: var(--faint);" title="{{ row.peer.public_key }}">{{ row.peer.public_key[:12] }}…</span>
+                <span style="font-weight: 500;">{{ row.peer.name }}</span>
+                <span class="mono" style="display: block; font-size: 11px; color: var(--text-muted); margin-top: 2px;" title="{{ row.peer.public_key }}">{{ row.peer.public_key[:12] }}…</span>
               </td>
-              <td class="mono-cell">{{ row.peer.address }}</td>
-              <td class="mono-cell" data-peer-endpoint>{{ row.endpoint or '—' }}</td>
+              <td class="mono">{{ row.peer.address }}</td>
+              <td class="mono" data-peer-endpoint>{{ row.endpoint or '—' }}</td>
               <td><time data-peer-handshake data-ts="{{ row.handshake or '' }}">{% if row.handshake %}{{ row.handshake|relative_time }}{% else %}never{% endif %}</time></td>
-              <td class="mono-cell" data-peer-transfer>{{ row.rx|bytes }} ↓ · {{ row.tx|bytes }} ↑</td>
-              <td class="row-actions">
+              <td class="mono" data-peer-transfer>{{ row.rx|bytes }} ↓ · {{ row.tx|bytes }} ↑</td>
+              <td style="text-align: right;">
                 <button class="btn btn-ghost btn-sm" type="button" data-peer-config>Config</button>
-                <button class="btn btn-danger btn-sm" type="button" data-delete-peer>Remove</button>
+                <button class="btn btn-ghost btn-sm btn-danger" type="button" data-delete-peer>Remove</button>
               </td>
             </tr>
             {% else %}
-            <tr><td colspan="6" class="empty-list">No peers yet. Add a laptop, phone, or a whole subnet.</td></tr>
+            <tr><td colspan="6" style="text-align: center; padding: 32px; color: var(--text-muted);">No peers yet. Add a laptop, phone, or a whole subnet.</td></tr>
             {% endfor %}
           </tbody>
         </table>
       </div>
       {% if hub_public_key %}
-      <div class="key-line">
-        <span class="card-note nowrap">Hub public key</span>
-        <code id="hub-public-key">{{ hub_public_key }}</code>
-        <button class="copy-button" type="button" data-copy-hub>Copy</button>
+      <div style="display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-top: 2px solid var(--border);">
+        <span style="font-size: 12px; color: var(--text-muted); white-space: nowrap;">Hub public key</span>
+        <code id="hub-public-key" class="mono" style="flex: 1; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ hub_public_key }}</code>
+        <button class="btn btn-ghost btn-sm" type="button" data-copy-hub>Copy</button>
       </div>
       {% endif %}
     </section>
 
-    <div class="side-note">
-      <h3>Applying config</h3>
-      <p>“Apply to host” writes <code>{{ mesh.config_path or '/etc/wireguard/' ~ mesh.interface ~ '.conf' }}</code> and runs <code>wg-quick</code> or <code>wg syncconf</code>. Warden must run as root or with <code>CAP_NET_ADMIN</code> to touch the interface.</p>
-      <p>Peer private keys stay in Warden's SQLite database so you can download a client file again later.</p>
+    <div class="panel" style="border-left: 2px solid var(--accent);">
+      <div class="panel-body">
+        <h3 style="font-size: 13px; font-weight: 600; margin-bottom: 8px;">Applying config</h3>
+        <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.55;">“Apply to host” writes <code class="code">{{ mesh.config_path or '/etc/wireguard/' ~ mesh.interface ~ '.conf' }}</code> and runs <code class="code">wg-quick</code> or <code class="code">wg syncconf</code>. Warden must run as root or with <code class="code">CAP_NET_ADMIN</code> to touch the interface.</p>
+        <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.55; margin-top: 8px;">Peer private keys stay in Warden's SQLite database so you can download a client file again later.</p>
+      </div>
     </div>
   </div>
 
   <aside class="stack">
-    <section class="card">
-      <div class="card-head">
-        <h2>Client defaults</h2>
-        <span class="aside">generated</span>
+    <section class="panel">
+      <div class="panel-head">
+        <h2 class="panel-title">
+          <svg viewBox="0 0 24 24" width="16" height="16" style="color: var(--text-muted);" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          Client defaults
+        </h2>
+        <span class="badge badge-accent">generated</span>
       </div>
-      <div class="card-pad access-summary">
+      <div class="panel-body">
         <div class="access-row">
           <span class="access-label">DNS</span>
-          <span class="access-value mono">{{ mesh.dns or 'not set' }}</span>
+          <span class="access-value" style="font-family: var(--font);">{{ mesh.dns or 'not set' }}</span>
         </div>
         <div class="access-row">
           <span class="access-label">Allowed IPs</span>
-          <span class="access-value mono">{{ mesh.client_allowed_ips }}</span>
+          <span class="access-value" style="font-family: var(--font);">{{ mesh.client_allowed_ips }}</span>
         </div>
         <div class="access-row">
           <span class="access-label">Endpoint</span>
-          <span class="access-value mono">{{ mesh.endpoint or 'not set' }}</span>
+          <span class="access-value" style="font-family: var(--font);">{{ mesh.endpoint or 'not set' }}</span>
         </div>
         <div class="access-row">
           <span class="access-label">Config path</span>
-          <span class="access-value mono" style="max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{{ mesh.config_path or '' }}">{{ mesh.config_path or '—' }}</span>
+          <span class="access-value" style="font-family: var(--font); max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{{ mesh.config_path or '' }}">{{ mesh.config_path or '—' }}</span>
         </div>
       </div>
     </section>
 
-    <div class="side-note warn">
-      <h3>Route the whole LAN?</h3>
-      <p>Set <code>mesh.client_allowed_ips</code> to your home subnets, for example <code>10.44.0.0/24, 192.168.1.0/24</code>, to reach services without a public port.</p>
+    <div class="panel" style="border-left: 2px solid var(--accent);">
+      <div class="panel-body">
+        <h3 style="font-size: 13px; font-weight: 600; margin-bottom: 8px;">Route the whole LAN?</h3>
+        <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.55;">Set <code class="code">mesh.client_allowed_ips</code> to your home subnets, for example <code class="code">10.44.0.0/24, 192.168.1.0/24</code>, to reach services without a public port.</p>
+      </div>
     </div>
 
-    <div class="side-note">
-      <h3>Keys &amp; trust</h3>
-      <p>Each peer gets a private key, a preshared key, and a unique address. The hub config only ever contains public halves and the PSK.</p>
-      <p>Removing a peer deletes its keys from Warden. Apply again to drop the live session.</p>
+    <div class="panel" style="border-left: 2px solid var(--indigo);">
+      <div class="panel-body">
+        <h3 style="font-size: 13px; font-weight: 600; margin-bottom: 8px;">Keys &amp; trust</h3>
+        <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.55;">Each peer gets a private key, a preshared key, and a unique address. The hub config only ever contains public halves and the PSK.</p>
+        <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.55; margin-top: 8px;">Removing a peer deletes its keys from Warden. Apply again to drop the live session.</p>
+      </div>
     </div>
   </aside>
 </div>
@@ -173,76 +198,77 @@
 
 {% block modals %}
 {% if mesh_enabled %}
-<dialog class="modal" id="peer-modal" aria-labelledby="peer-modal-title">
-  <form id="peer-form" novalidate>
+<div class="modal-overlay" id="peer-modal-overlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="peer-modal-title">
     <div class="modal-head">
       <div>
         <h2 id="peer-modal-title">Add a peer</h2>
-        <p>One device, one address, one key.</p>
+        <p style="margin-top: 4px; font-size: 13px; color: var(--text-muted);">One device, one address, one key.</p>
       </div>
       <button class="modal-close" type="button" data-close-modal aria-label="Close">
-        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       </button>
     </div>
     <div class="modal-body">
-      <div class="alert alert-error" id="peer-error" role="alert" hidden></div>
-      <div class="form-row">
-        <label class="field">
-          <span class="field-label">Peer name</span>
-          <input class="input" id="peer-name" type="text" placeholder="Pat's laptop" maxlength="39" autocomplete="off" required>
-        </label>
-        <label class="field">
-          <span class="field-label">Address <span class="optional">auto</span></span>
-          <input class="input" id="peer-address" type="text" placeholder="10.44.0.2" autocomplete="off" inputmode="decimal">
-        </label>
+      <div class="panel" id="peer-error" role="alert" hidden style="border-color: var(--red); background: var(--red-soft);">
+        <div class="panel-body" style="color: #fca5a5; font-size: 12px;"></div>
       </div>
-      <div class="form-row">
-        <label class="field">
-          <span class="field-label">Peer endpoint <span class="optional">optional</span></span>
-          <input class="input" id="peer-endpoint" type="text" placeholder="laptop.example.net:51820" autocomplete="off">
-          <span class="field-hint">Only needed if this peer accepts inbound connections.</span>
-        </label>
-        <label class="field">
-          <span class="field-label">Keepalive</span>
-          <input class="input" id="peer-keepalive" type="number" value="25" min="0" max="65535">
-        </label>
-      </div>
-      <p class="modal-note">A private key, preshared key, and client configuration are generated as soon as you save.</p>
+      <form id="peer-form" novalidate>
+        <div class="form-row">
+          <label class="field">
+            <span class="field-label">Peer name</span>
+            <input class="input" id="peer-name" type="text" placeholder="Pat's laptop" maxlength="39" autocomplete="off" required>
+          </label>
+          <label class="field">
+            <span class="field-label">Address <span class="optional">auto</span></span>
+            <input class="input" id="peer-address" type="text" placeholder="10.44.0.2" autocomplete="off" inputmode="decimal">
+          </label>
+        </div>
+        <div class="form-row" style="margin-top: 14px;">
+          <label class="field">
+            <span class="field-label">Peer endpoint <span class="optional">optional</span></span>
+            <input class="input" id="peer-endpoint" type="text" placeholder="laptop.example.net:51820" autocomplete="off">
+            <span class="field-hint">Only needed if this peer accepts inbound connections.</span>
+          </label>
+          <label class="field">
+            <span class="field-label">Keepalive</span>
+            <input class="input" id="peer-keepalive" type="number" value="25" min="0" max="65535">
+          </label>
+        </div>
+        <p style="margin-top: 14px; font-size: 12px; color: var(--text-muted);">A private key, preshared key, and client configuration are generated as soon as you save.</p>
+      </form>
     </div>
-    <div class="modal-foot">
+    <div class="modal-foot" style="display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 14px 20px; border-top: 2px solid var(--border);">
       <button class="btn btn-ghost" type="button" data-close-modal>Cancel</button>
-      <button class="btn btn-primary" id="peer-submit" type="submit">
+      <button class="btn btn-primary" id="peer-submit" type="submit" form="peer-form">
         <span>Create peer</span>
         <span class="btn-spinner" aria-hidden="true"></span>
       </button>
     </div>
-  </form>
-</dialog>
+  </div>
+</div>
 
-<dialog class="modal" id="peer-config-modal" aria-labelledby="peer-config-title">
-  <div class="modal-head">
-    <div>
-      <h2 id="peer-config-title">Client configuration</h2>
-      <p id="peer-config-copy">Import this file into the WireGuard app on the peer.</p>
+<div class="modal-overlay" id="peer-config-modal-overlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="peer-config-title">
+    <div class="modal-head">
+      <div>
+        <h2 id="peer-config-title">Client configuration</h2>
+        <p id="peer-config-copy" style="margin-top: 4px; font-size: 13px; color: var(--text-muted);">Import this file into the WireGuard app on the peer.</p>
+      </div>
+      <button class="modal-close" type="button" data-close-modal aria-label="Close">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
     </div>
-    <button class="modal-close" type="button" data-close-modal aria-label="Close">
-      <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
-    </button>
+    <div class="modal-body">
+      <pre id="peer-config-text" class="mono" style="background: var(--bg-base); border: 2px solid var(--border); padding: 14px; font-size: 12px; line-height: 1.6; overflow-x: auto; white-space: pre-wrap; word-break: break-all;"></pre>
+      <p style="margin-top: 10px; font-size: 12px; color: var(--text-muted);">This file contains a private key. Transfer it over a channel you trust and delete it from shared storage afterwards.</p>
+    </div>
+    <div class="modal-foot" style="display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 14px 20px; border-top: 2px solid var(--border);">
+      <button class="btn btn-ghost" type="button" data-close-modal>Close</button>
+      <button class="btn btn-ghost btn-sm" id="peer-config-copy-btn" type="button">Copy</button>
+      <button class="btn btn-primary" id="peer-config-download" type="button">Download .conf</button>
+    </div>
   </div>
-  <div class="modal-body">
-    <div class="secret-box"><pre id="peer-config-text"></pre></div>
-    <p class="modal-note">This file contains a private key. Transfer it over a channel you trust and delete it from shared storage afterwards.</p>
-  </div>
-  <div class="modal-foot">
-    <button class="btn btn-ghost" type="button" data-close-modal>Close</button>
-    <button class="btn btn-secondary" id="peer-config-copy-btn" type="button">Copy</button>
-    <button class="btn btn-primary" id="peer-config-download" type="button">Download .conf</button>
-  </div>
-</dialog>
+</div>
 {% endif %}
 {% endblock %}
-<style>
-.form-stack .field { margin-bottom: 1.25rem; }
-.form-stack .input, .form-stack input[type="text"], .form-stack input[type="password"] { padding: 0.55rem 0.7rem; }
-.modal-footer { margin-top: 1.5rem; }
-</style>

@@ -1,42 +1,47 @@
 {% extends "base.html" %}
 
 {% block content %}
-<section class="page-heading">
+<section class="page-head">
   <div>
-    <p class="eyebrow">Configuration</p>
-    <h1>The whole door,<br>in one file.</h1>
-    <p class="subhead">Edit <code>warden.yaml</code> directly. Warden validates before writing, keeps a backup in memory, and applies route changes without a restart.</p>
+    <p class="panel-title" style="margin-bottom: 6px;">Configuration</p>
+    <h1 class="page-title">The whole door,<br>in one file.</h1>
+    <p class="subhead">Edit <code class="code">warden.yaml</code> directly. Warden validates before writing, keeps a backup in memory, and applies route changes without a restart.</p>
   </div>
   <div class="page-actions">
-    <a class="btn btn-secondary" href="/">
-      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 4 6.5 10l6 6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <a class="btn btn-ghost" href="/">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
       <span>Dashboard</span>
     </a>
   </div>
 </section>
 
-<div class="alert alert-warn" id="restart-note" role="status" hidden></div>
+<div class="panel" id="restart-note" role="status" hidden style="border-color: var(--amber); background: var(--amber-soft);">
+  <div class="panel-body" style="color: var(--amber);"></div>
+</div>
 
-<div class="config-grid">
-  <section class="editor-card" aria-label="YAML configuration editor">
-    <div class="editor-bar">
-      <span class="editor-file">
-        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.8h5l3 3v9.4H4V1.8Z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M9 2v3.2h3" fill="none" stroke="currentColor" stroke-width="1.1"/></svg>
-        <span id="editor-filename">{{ config_path or 'in-memory configuration' }}</span>
+<div style="display: grid; grid-template-columns: 1fr 340px; gap: 16px; align-items: start;">
+  <section class="panel" aria-label="YAML configuration editor">
+    <div class="panel-head">
+      <div class="flex" style="align-items: center; gap: 10px;">
+        <svg viewBox="0 0 24 24" width="16" height="16" style="color: var(--text-muted);" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        <span class="panel-title" id="editor-filename">{{ config_path or 'in-memory configuration' }}</span>
+      </div>
+      <span class="panel-title" id="editor-status" style="color: var(--text-muted); font-weight: 500;">
+        <span style="width: 6px; height: 6px; border: 2px solid var(--border); background: var(--text-muted); display: inline-block;"></span>
+        <span id="editor-status-text">unchanged</span>
       </span>
-      <span class="editor-status" id="editor-status"><span class="dot"></span><span id="editor-status-text">unchanged</span></span>
     </div>
 
-    <pre class="config-errors" id="config-errors">{% if config_error %}{{ config_error }}{% endif %}</pre>
+    <div class="panel-body" id="config-errors" role="alert" hidden style="border-bottom: 2px solid var(--border);">{% if config_error %}{{ config_error }}{% endif %}</div>
 
     <label class="visually-hidden" for="config-editor">warden.yaml</label>
-    <textarea class="editor-area" id="config-editor" spellcheck="false" autocapitalize="none" autocomplete="off" wrap="off">{{ raw_config }}</textarea>
+    <textarea class="input" id="config-editor" spellcheck="false" autocapitalize="none" autocomplete="off" wrap="off" style="font-family: var(--font); font-size: 12px; line-height: 1.6; min-height: 520px; resize: vertical; border: none; border-bottom: 2px solid var(--border); border-radius: 0; background: var(--bg-base);">{{ raw_config }}</textarea>
 
-    <div class="editor-foot">
-      <span class="editor-hint" id="editor-hint">Ctrl / ⌘ + S saves · validation runs before every write</span>
-      <div class="editor-actions">
+    <div class="flex" style="align-items: center; justify-content: space-between; padding: 12px 18px; border-top: 2px solid var(--border);">
+      <span style="font-size: 12px; color: var(--text-muted);">Ctrl / ⌘ + S saves · validation runs before every write</span>
+      <div class="flex" style="gap: 8px;">
         <button class="btn btn-ghost btn-sm" id="config-reload" type="button">Revert</button>
-        <button class="btn btn-secondary btn-sm" id="config-validate" type="button">
+        <button class="btn btn-ghost btn-sm" id="config-validate" type="button">
           <span>Validate</span>
           <span class="btn-spinner" aria-hidden="true"></span>
         </button>
@@ -49,23 +54,26 @@
   </section>
 
   <aside class="stack">
-    <section class="card">
-      <div class="card-head">
-        <h2>Live instance</h2>
-        <span class="aside">running</span>
+    <section class="panel">
+      <div class="panel-head">
+        <h2 class="panel-title">
+          <svg viewBox="0 0 24 24" width="16" height="16" style="color: var(--text-muted);" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          Live instance
+        </h2>
+        <span class="badge badge-accent">running</span>
       </div>
-      <div class="card-pad access-summary">
+      <div class="panel-body">
         <div class="access-row">
           <span class="access-label">Admin host</span>
-          <span class="access-value mono">{{ admin_host }}</span>
+          <span class="access-value" style="font-family: var(--font);">{{ admin_host }}</span>
         </div>
         <div class="access-row">
           <span class="access-label">WebAuthn RP ID</span>
-          <span class="access-value mono">{{ rp_id }}</span>
+          <span class="access-value" style="font-family: var(--font);">{{ rp_id }}</span>
         </div>
         <div class="access-row">
           <span class="access-label">Cookie scope</span>
-          <span class="access-value mono">{{ cookie_domain }}</span>
+          <span class="access-value" style="font-family: var(--font);">{{ cookie_domain }}</span>
         </div>
         <div class="access-row">
           <span class="access-label">Session lifetime</span>
@@ -78,47 +86,58 @@
       </div>
     </section>
 
-    <section class="card">
-      <div class="card-head">
-        <h2>TLS</h2>
-        <span class="aside">{% if tls.enabled %}enabled{% else %}off{% endif %}</span>
+    <section class="panel">
+      <div class="panel-head">
+        <h2 class="panel-title">
+          <svg viewBox="0 0 24 24" width="16" height="16" style="color: var(--text-muted);" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          TLS
+        </h2>
+        <span class="badge {{ 'badge-accent' if tls.enabled else 'badge-indigo' }}">{{ 'enabled' if tls.enabled else 'off' }}</span>
       </div>
-      <div class="card-pad access-summary">
+      <div class="panel-body">
         {% if tls.enabled and tls.certificate %}
-        <div class="access-row">
-          <span class="access-label">Expires</span>
-          <span class="access-value">{{ tls.certificate.not_after|absolute_time }}</span>
-        </div>
-        <div class="access-row">
-          <span class="access-label">Days left</span>
-          <span class="access-value {% if tls.certificate.days_left < 15 %}tls-warn{% endif %}">{{ tls.certificate.days_left|round|int }}</span>
-        </div>
-        <div class="access-row">
-          <span class="access-label">Renewal hook</span>
-          <span class="access-value">{% if tls.renew_command %}configured{% else %}none{% endif %}</span>
+        <div>
+          <div class="access-row">
+            <span class="access-label">Expires</span>
+            <span class="access-value">{{ tls.certificate.not_after|absolute_time }}</span>
+          </div>
+          <div class="access-row">
+            <span class="access-label">Days left</span>
+            <span class="access-value" style="{% if tls.certificate.days_left < 15 %}color: var(--red);{% endif %}">{{ tls.certificate.days_left|round|int }}</span>
+          </div>
+          <div class="access-row">
+            <span class="access-label">Renewal hook</span>
+            <span class="access-value">{% if tls.renew_command %}configured{% else %}none{% endif %}</span>
+          </div>
         </div>
         {% elif tls.enabled %}
-        <p class="card-note">{{ tls.error or 'The certificate could not be read.' }}</p>
+        <p style="font-size: 13px; color: var(--text-secondary);">{{ tls.error or 'The certificate could not be read.' }}</p>
         {% else %}
-        <p class="card-note">Plain HTTP. Add <code>server.tls</code> with a certificate and key, then restart Warden.</p>
+        <p style="font-size: 13px; color: var(--text-secondary);">Plain HTTP. Add <code class="code">server.tls</code> with a certificate and key, then restart Warden.</p>
         {% endif %}
       </div>
     </section>
 
-    <div class="side-note">
-      <h3>How saving works</h3>
-      <p>Warden parses the whole file, validates every hostname, upstream, WebAuthn origin, and cookie scope, then writes atomically with mode <code>0600</code>.</p>
-      <p>If validation fails, the file on disk is untouched and the editor keeps your draft.</p>
+    <div class="panel" style="border-left: 2px solid var(--accent);">
+      <div class="panel-body">
+        <h3 style="font-size: 13px; font-weight: 600; margin-bottom: 8px;">How saving works</h3>
+        <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.55;">Warden parses the whole file, validates every hostname, upstream, WebAuthn origin, and cookie scope, then writes atomically with mode <code class="code">0600</code>.</p>
+        <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.55; margin-top: 8px;">If validation fails, the file on disk is untouched and the editor keeps your draft.</p>
+      </div>
     </div>
 
-    <div class="side-note warn">
-      <h3>Restart-only changes</h3>
-      <p>Routes, protection, and headers apply immediately. Changes to <code>server</code>, <code>tls</code>, <code>webauthn.rp_id</code>, <code>database</code>, or <code>mesh</code> need a restart.</p>
+    <div class="panel" style="border-left: 2px solid var(--red);">
+      <div class="panel-body">
+        <h3 style="font-size: 13px; font-weight: 600; margin-bottom: 8px; color: var(--red);">Restart-only changes</h3>
+        <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.55;">Routes, protection, and headers apply immediately. Changes to <code class="code">server</code>, <code class="code">tls</code>, <code class="code">webauthn.rp_id</code>, <code class="code">database</code>, or <code class="code">mesh</code> need a restart.</p>
+      </div>
     </div>
 
-    <div class="side-note">
-      <h3>Before you edit</h3>
-      <p>Keep a copy: <code>cp warden.yaml warden.yaml.bak</code>. Every route host must be the admin host, its parent domain, or be marked <code>auth: false</code>.</p>
+    <div class="panel" style="border-left: 2px solid var(--indigo);">
+      <div class="panel-body">
+        <h3 style="font-size: 13px; font-weight: 600; margin-bottom: 8px;">Before you edit</h3>
+        <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.55;">Keep a copy: <code class="code">cp warden.yaml warden.yaml.bak</code>. Every route host must be the admin host, its parent domain, or be marked <code class="code">auth: false</code>.</p>
+      </div>
     </div>
   </aside>
 </div>

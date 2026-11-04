@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import logging
 import os
+import secrets
 import time
+from datetime import datetime, timedelta
 from typing import Any
 from urllib.parse import urlsplit
 from uuid import uuid4
@@ -18,11 +20,13 @@ from warden.auth.passkeys import hash_backup_code
 from warden.auth.sessions import clear_session_cookie
 from warden.config import (
     ConfigError,
+    EmailConfig,
     RouteConfig,
     WardenConfig,
     restart_required,
 )
 from warden.db import AlreadyExistsError, DatabaseError, Session, User
+from warden.mail import send_email
 from warden.mesh_peer import MeshError
 from warden.templating import templates
 from warden.tls import certificate_status
@@ -80,12 +84,20 @@ class PasskeyNamePayload(BaseModel):
 class UserPayload(BaseModel):
     username: str
     display_name: str
+    email: str | None = None
     is_admin: bool = False
 
 
 class UserUpdatePayload(BaseModel):
     display_name: str | None = None
+    email: str | None = None
     is_admin: bool | None = None
+
+
+class InviteCreateBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    user_id: int
+    expires_in: int = Field(default=3600, ge=60, le=24 * 3600 * 365)
 
 
 class MeshPeerPayload(BaseModel):
@@ -338,6 +350,7 @@ async def create_user(request: Request, payload: UserPayload) -> JSONResponse:
             username=payload.username,
             display_name=payload.display_name,
             webauthn_user_id=os.urandom(16),
+            email=payload.email,
             is_admin=payload.is_admin,
         )
     except (AlreadyExistsError, DatabaseError) as exc:
@@ -346,12 +359,62 @@ async def create_user(request: Request, payload: UserPayload) -> JSONResponse:
     await _audit(request, "user_created", f"{user.username} (Admin: {user.is_admin})")
     return JSONResponse({"ok": True, "user_id": user.id})
 
+
+@router.post("/_warden/api/invites")
+async def create_invite(request: Request, body: InviteCreateBody) -> JSONResponse:
+    """Create a first-login invite for a user (admin-only).
+
+    * Requires admin host access (is_admin enforced by the middleware).
+    * Generates a fresh invite token (single-use, expiring), stores it
+      hashed, and returns the plaintext token once so the admin can hand it
+      to the user (email/SMS/printed). Once the invite is used, it cannot be
+      replayed.
+    """
+    _guard_host(request)
+    db = _db(request)
+    try:
+        user = await db.get_user(body.user_id)
+        if user is None:
+            return JSONResponse({"detail": "That user does not exist."}, status_code=400)
+        if int(user.is_admin):
+            return JSONResponse(
+                {"detail": "The admin account cannot receive a first-login invite."},
+                status_code=400,
+            )
+        token = secrets.token_urlsafe(32)
+        invite_id = await db.create_invite(user.id, token, time.time() + body.expires_in)
+        await _audit(request, "invite_created", f"invite:{invite_id} user:{user.username}")
+        # Deliver the token to the user's email address (if email is configured).
+        try:
+            email_cfg = request.app.state.config.email
+            if email_cfg.enabled:
+                send_email(
+                    email_cfg,
+                    to=user.email or "",
+                    subject=f"[{email_cfg.subject_prefix}] Your first-login invite",
+                    body=(
+                        "You are invited to activate your Warden account.\n"
+                        f"Token: {token}\n"
+                        f"Expires in: {body.expires_in} seconds.\n"
+                        "Please keep this token secret. It is the only way to "
+                        "complete your first-login passkey registration."
+                    ),
+                )
+        except Exception:
+            # Email delivery failures must never block account creation.
+            logger.exception("Failed to send invite email to %s", user.email)
+    except DatabaseError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=400)
+    return JSONResponse({"ok": True, "token": token, "expires_in": body.expires_in})
+
+
 @router.patch("/_warden/api/users/{user_id}")
 async def update_user(request: Request, user_id: int, payload: UserUpdatePayload) -> JSONResponse:
     """Update user attributes (admin-only).
 
     * ``is_admin`` toggles the admin flag.
     * ``display_name`` (if provided) updates the user's display name.
+    * ``email`` (if provided) updates the user's email address.
     * Returns a simple success JSON.
     """
     _guard_host(request)
@@ -360,6 +423,8 @@ async def update_user(request: Request, user_id: int, payload: UserUpdatePayload
         await db.update_user_admin(user_id, payload.is_admin)
     if payload.display_name is not None:
         await db.update_user_display_name(user_id, payload.display_name)
+    if payload.email is not None:
+        await db.update_user_email(user_id, payload.email or None)
     return JSONResponse({"ok": True})
 
 @router.delete("/_warden/api/users/{user_id}")

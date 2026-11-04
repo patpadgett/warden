@@ -338,6 +338,20 @@
     else dialog.removeAttribute("open");
   };
 
+  W.openOverlay = (overlay) => {
+    if (!overlay) return;
+    overlay.hidden = false;
+    overlay.classList.add("open");
+    const focusable = overlay.querySelector("input:not([type=hidden]), button, select, textarea");
+    if (focusable) window.setTimeout(() => focusable.focus(), 30);
+  };
+
+  W.closeOverlay = (overlay) => {
+    if (!overlay) return;
+    overlay.classList.remove("open");
+    window.setTimeout(() => { overlay.hidden = true; }, 180);
+  };
+
   W.wireModalDismiss = () => {
     W.$$("dialog.modal").forEach((dialog) => {
       dialog.addEventListener("click", (event) => {
@@ -345,6 +359,15 @@
       });
       W.$$("[data-close-modal]", dialog).forEach((button) => {
         button.addEventListener("click", () => W.closeModal(dialog));
+      });
+    });
+
+    W.$$(".modal-overlay").forEach((overlay) => {
+      overlay.addEventListener("click", (event) => {
+        if (event.target === overlay) W.closeOverlay(overlay);
+      });
+      W.$$("[data-close-modal]", overlay).forEach((button) => {
+        button.addEventListener("click", () => W.closeOverlay(overlay));
       });
     });
   };

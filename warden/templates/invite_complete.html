@@ -1,0 +1,192 @@
+{% extends "auth_base.html" %}
+
+{% block content %}
+<section class="page-head" style="margin-bottom: 20px;">
+  <div>
+    <p class="panel-title" style="margin-bottom: 6px;">First login</p>
+    <h1 class="page-title">Complete your account.</h1>
+    <p class="subhead">Enter your invite token and register a passkey on this device. You will be signed in once it is registered.</p>
+  </div>
+</section>
+
+<div style="display: grid; grid-template-columns: 1fr 340px; gap: 16px; align-items: start;">
+  <div class="stack-lg">
+    <section class="panel" aria-labelledby="invite-card">
+      <div class="panel-head">
+        <h2 class="panel-title" id="invite-card">
+          <svg viewBox="0 0 24 24" width="16" height="16" style="color: var(--text-muted);" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+          Invite token
+        </h2>
+        <span class="badge badge-accent">single-use</span>
+      </div>
+      <div class="panel-body">
+        <form id="invite-form" novalidate class="form-stack">
+          <label class="field">
+            <span class="field-label">Invite token</span>
+            <input class="input" id="invite-token" name="token" type="text" autocomplete="off" spellcheck="false" placeholder="D7x9-...-K2m4Q" required autofocus>
+            <span class="field-hint">Has the admin emailed you a token? It is shown in full below for verification.</span>
+          </label>
+          <label class="field">
+            <span class="field-label">Name this passkey</span>
+            <input class="input" id="passkey-name" name="name" type="text" maxlength="60" placeholder="e.g. John's iPhone" required autocapitalize="words">
+          </label>
+          <label class="field">
+            <span class="field-label">Token (full)</span>
+            <input class="input input-monospace" id="invite-token-display" name="token-display" type="text" readonly required>
+            <span class="field-hint">The admin has emailed you this token. Paste it here to confirm.</span>
+          </label>
+        </form>
+        <div class="panel" id="invite-error" role="alert" hidden style="border-color: var(--red); background: var(--red-soft); margin-top: 12px;">
+          <div class="panel-body" style="color: #fca5a5; font-size: 12px;"></div>
+        </div>
+
+        <div class="form-actions">
+          <button class="btn btn-primary" id="register-btn" type="submit" form="invite-form">
+            <span>Register passkey</span>
+            <span class="btn-spinner" aria-hidden="true"></span>
+          </button>
+          <button class="btn btn-ghost" id="copy-btn" type="button">
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Copy token
+          </button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <aside class="stack">
+    <div class="panel" style="border-left: 2px solid var(--accent);">
+      <div class="panel-body">
+        <p class="panel-title" style="margin-bottom: 10px;">How this works</p>
+        <h3 style="font-size: 15px; font-weight: 600; margin-bottom: 8px;">Almost done.</h3>
+        <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.55;">Your invite token is single-use. The server will verify it, register a passkey on this device, and sign you in. Your passkey never leaves this device.</p>
+      </div>
+    </div>
+  </aside>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  "use strict";
+  var token = "{{ token|default('') }}";
+  var display = "{{ token_display|default('') }}";
+
+  var form = document.getElementById("invite-form");
+  var tokenInput = document.getElementById("invite-token");
+  var nameInput = document.getElementById("passkey-name");
+  var tokenDisplay = document.getElementById("invite-token-display");
+  var errorBox = document.getElementById("invite-error");
+  var registerBtn = document.getElementById("register-btn");
+  var copyBtn = document.getElementById("copy-btn");
+
+  if (display) { tokenDisplay.value = display; }
+  if (token) { tokenInput.value = token; tokenDisplay.value = token; }
+
+  if (copyBtn) {
+    copyBtn.addEventListener("click", function () {
+      tokenDisplay.select();
+      document.execCommand("copy");
+      var original = copyBtn.textContent;
+      copyBtn.textContent = "Copied";
+      setTimeout(function () { copyBtn.textContent = original; }, 1500);
+    });
+  }
+
+  form.addEventListener("submit", function (e) {
+    e.preventDefault();
+    errorBox.hidden = true;
+    var tokenVal = tokenInput.value.trim();
+    var nameVal = nameInput.value.trim();
+    if (!tokenVal) {
+      errorBox.querySelector(".panel-body").textContent = "Please enter your invite token.";
+      errorBox.hidden = false;
+      tokenInput.focus();
+      return;
+    }
+    if (!nameVal) {
+      errorBox.querySelector(".panel-body").textContent = "Please give this passkey a name.";
+      errorBox.hidden = false;
+      nameInput.focus();
+      return;
+    }
+    registerBtn.disabled = true;
+    registerBtn.querySelector("span:first-child").textContent = "Registering…";
+    startRegistration(tokenVal, nameVal);
+  });
+
+  function startRegistration(token, name) {
+    registerBtn.disabled = true;
+    registerBtn.querySelector("span:first-child").textContent = "Setting up…";
+
+    fetch("/_warden/auth/invite/begin", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ token: token, name: name })
+    })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+      .then(function (result) {
+        if (!result.ok) {
+          var err = result.body.detail || "Registration failed.";
+          errorBox.querySelector(".panel-body").textContent = err;
+          errorBox.hidden = false;
+          registerBtn.disabled = false;
+          registerBtn.querySelector("span:first-child").textContent = "Register passkey";
+          throw new Error(err);
+        }
+        return result.body;
+      })
+      .then(function (data) {
+        return navigator.credentials.create({ publicKey: data.publicKey })
+          .then(function (cred) {
+            return {
+              id: cred.id,
+              type: cred.type,
+              rawId: cred.rawId,
+              response: {
+                clientDataJSON: cred.response.clientDataJSON,
+                attestationObject: cred.response.attestationObject,
+                trans: cred.response.transports,
+                authenticatorData: cred.response.authenticatorData,
+                signature: cred.response.signature,
+                userHandle: cred.response.userHandle,
+                publicKeyAlgorithm: cred.response.publicKeyAlgorithm,
+                publicKey: cred.response.publicKey,
+              },
+              getClientExtensionResults: function () { return cred.getClientExtensionResults(); },
+              invite_token: token,
+            };
+          });
+      })
+      .then(function (cred) {
+        return fetch("/_warden/auth/invite/complete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ token: token, credential: cred })
+        })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+        .then(function (result) {
+          if (!result.ok) {
+            var err = result.body.detail || "Registration failed.";
+            errorBox.querySelector(".panel-body").textContent = err;
+            errorBox.hidden = false;
+            registerBtn.disabled = false;
+            registerBtn.querySelector("span:first-child").textContent = "Register passkey";
+            throw new Error(err);
+          }
+          window.location.href = result.body.redirect || "/";
+        });
+      })
+      .catch(function (err) {
+        errorBox.querySelector(".panel-body").textContent = err.message || "Registration failed.";
+        errorBox.hidden = false;
+        registerBtn.disabled = false;
+        registerBtn.querySelector("span:first-child").textContent = "Register passkey";
+      });
+  }
+})();
+</script>
+{% endblock %}

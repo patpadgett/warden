@@ -4,35 +4,52 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0a0a0a">
   <title>{{ page_title }} · Warden</title>
   <link rel="icon" href="{{ static_prefix }}/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="{{ static_prefix }}/warden.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    .error-shell { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+    .error-wrap { width: min(480px, 100%); text-align: center; }
+    .error-brand { justify-content: center; margin-bottom: 32px; display: inline-flex; }
+    .error-code { font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
+    .error-title { font-size: 28px; font-weight: 700; margin-bottom: 8px; }
+    .error-msg { font-size: 14px; color: var(--text-secondary); max-width: 36ch; margin: 0 auto 24px; line-height: 1.55; }
+    .error-actions { display: flex; gap: 10px; justify-content: center; }
+    .error-detail { margin-top: 20px; padding: 12px; background: var(--bg-surface); border: 2px solid var(--border); font-size: 11px; color: var(--text-muted); overflow-x: auto; text-align: left; }
+  </style>
 </head>
 <body>
-  <main class="center-page">
-    <div class="error-card">
-      <a class="brand" href="/">
-        <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
+  <main class="error-shell">
+    <div class="error-wrap">
+      <a class="brand error-brand" href="/">
+        <svg viewBox="0 0 32 32" width="32" height="32" aria-hidden="true" style="color: var(--accent);">
           <path d="M16 2.7 26.8 6.6v8.2c0 6.9-4.4 12.1-10.8 14.5C9.6 26.9 5.2 21.7 5.2 14.8V6.6L16 2.7Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
           <circle cx="16" cy="13.1" r="2.7" fill="none" stroke="currentColor" stroke-width="1.8"/>
           <path d="M16 15.8v5.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
         </svg>
-        <span class="brand-word">warden</span>
+        <span style="font-size: 24px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;">warden</span>
       </a>
-      <p class="error-code">{{ code }}{% if host %} · {{ host }}{% endif %}</p>
-      <h1>{{ title }}</h1>
-      <p>{{ message }}</p>
+
+      <p class="mono error-code">{{ code }}{% if host %} · {{ host }}{% endif %}</p>
+      <h1 class="error-title">{{ title }}</h1>
+      <p class="error-msg">{{ message }}</p>
+
       <div class="error-actions">
         <a class="btn btn-primary" href="{{ retry_url or '/' }}">Try again</a>
         {% if admin_url %}
-        <a class="btn btn-secondary" href="{{ admin_url }}">Open Warden</a>
+        <a class="btn btn-ghost" href="{{ admin_url }}">Open Warden</a>
         {% endif %}
       </div>
+
       {% if retry_after %}
-      <p class="retry-note">Try again in {{ retry_after }} seconds.</p>
+      <p style="margin-top: 16px; font-size: 12px; color: var(--text-muted);">Try again in {{ retry_after }} seconds.</p>
       {% endif %}
       {% if detail %}
-      <p class="error-detail">{{ detail }}</p>
+      <pre class="mono error-detail">{{ detail }}</pre>
       {% endif %}
     </div>
   </main>

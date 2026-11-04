@@ -4,50 +4,45 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <meta name="theme-color" content="#0b100d">
+  <meta name="theme-color" content="#0a0a0a">
   <title>{{ page_title }} · Warden</title>
   <link rel="icon" href="{{ static_prefix }}/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="{{ static_prefix }}/warden.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body class="auth-body" data-page="{{ page }}" data-host="{{ host }}" data-next="{{ next_path|default('/') }}">
-  <div class="auth-glow" aria-hidden="true"></div>
-  <div class="auth-shell">
-    <section class="auth-brand-panel" aria-label="Warden">
-      <div class="auth-brand-top">
-        <a class="brand brand-large" href="/">
-          <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
+  <main class="auth-main">
+    <div class="auth-brand-panel">
+      <div class="auth-brand-copy">
+        <p class="panel-title" style="margin-bottom: 10px;">Self-hosted access layer</p>
+        <h1 style="font-size: 40px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1;">One door.<br>No passwords.</h1>
+        <p class="subhead" style="margin-top: 12px;">A reverse proxy, a certificate manager, and a passkey login for everything you run at home.</p>
+        <div style="margin-top: 28px; display: flex; flex-direction: column; gap: 10px;">
+          <span class="proof-item"><strong>01</strong> No passwords, no OTPs</span>
+          <span class="proof-item"><strong>02</strong> No third-party auth</span>
+          <span class="proof-item"><strong>03</strong> No open ports to login</span>
+        </div>
+      </div>
+
+      <div class="auth-card-wrap">
+        <a class="brand brand-large" href="/" style="justify-content: center; margin-bottom: 24px; display: inline-flex;">
+          <svg viewBox="0 0 32 32" width="32" height="32" aria-hidden="true" style="color: var(--accent);">
             <path d="M16 2.7 26.8 6.6v8.2c0 6.9-4.4 12.1-10.8 14.5C9.6 26.9 5.2 21.7 5.2 14.8V6.6L16 2.7Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
             <circle cx="16" cy="13.1" r="2.7" fill="none" stroke="currentColor" stroke-width="1.8"/>
             <path d="M16 15.8v5.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
           </svg>
-          <span class="brand-word">warden</span>
+          <span style="font-size: 20px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;">warden</span>
         </a>
-        <span class="auth-host"><span class="status-dot"></span>{{ host }}</span>
-      </div>
+        <span class="host-pill" style="justify-content: center; margin-bottom: 20px;"><span class="status-dot" style="width: 6px; height: 6px;"></span> {{ host }}</span>
 
-      <div class="auth-brand-copy">
-        <p class="eyebrow">Self-hosted access layer</p>
-        <h1>One door to<br>your homelab.</h1>
-        <p class="auth-lede">A reverse proxy, a certificate manager, and a passkey login for everything you run at home.</p>
-      </div>
-
-      <div class="auth-brand-foot">
-        <div class="auth-rule"></div>
-        <div class="auth-proof">
-          <span class="proof-item"><strong>01</strong> No passwords</span>
-          <span class="proof-item"><strong>02</strong> No third parties</span>
-          <span class="proof-item"><strong>03</strong> No open ports to auth</span>
-        </div>
-      </div>
-    </section>
-
-    <main class="auth-main">
-      <div class="auth-card-wrap">
         {% block content %}{% endblock %}
-        <p class="auth-small">Protected by Warden. Your credentials never leave this device and your server.</p>
+
+        <p style="margin-top: 24px; font-size: 12px; color: var(--text-muted); text-align: center; line-height: 1.55;">Protected by Warden. Your credentials never leave this device and your server.</p>
       </div>
-    </main>
-  </div>
+    </div>
+  </main>
   <script src="{{ static_prefix }}/warden.js" defer></script>
   <script src="{{ static_prefix }}/auth.js" defer></script>
   {% block scripts %}{% endblock %}

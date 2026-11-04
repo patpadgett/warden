@@ -1,29 +1,113 @@
 {% extends "base.html" %}
+
 {% block content %}
-<section class="page-heading">
-  <h1>Metrics</h1>
-  <p class="subhead">Prometheus-compatible export and live service snapshot.</p>
+<section class="page-head">
+  <div>
+    <p class="panel-title" style="margin-bottom: 6px;">Observability</p>
+    <h1 class="page-title">Metrics.</h1>
+    <p class="subhead">Prometheus-compatible export and live service snapshot.</p>
+  </div>
 </section>
-<div class="card">
-  <h2>Prometheus endpoint</h2>
-  <p><a href="/_warden/metrics">/_warden/metrics</a> — admin-host protected, plain-text Prometheus format.</p>
-  <h2>Service snapshot</h2>
-  <table class="data-table">
-    <thead><tr><th>Host</th><th>State</th><th>Requests</th><th>Errors</th><th>Latency (ms)</th></tr></thead>
-    <tbody>
-    {% for host, s in stats.services.items() %}
-      <tr><td>{{ host }}</td><td>{{ s.state }}</td><td>{{ s.requests }}</td><td>{{ s.errors }}</td><td>{{ s.latency_ms }}</td></tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  <h2>Totals</h2>
-  <p>Requests: {{ stats.totals.requests }} | Errors: {{ stats.totals.errors }} | Online: {{ stats.totals.online }} / {{ stats.totals.enabled }}</p>
-  <h2>Traffic (last 12 events)</h2>
-  <ul>
-  {% for event in stats.traffic %}
-    <li>{{ event.timestamp }} — {{ event.host }} {{ event.method }} {{ event.path }} → {{ event.status }}</li>
-  {% endfor %}
-  </ul>
-  <p><em>Import <code>grafana/warden-dashboard.json</code> into Grafana for full visualization.</em></p>
+
+<div class="panel">
+  <div class="panel-body">
+    <div>
+      <div class="access-row">
+        <span class="access-label">Prometheus endpoint</span>
+        <span class="access-value"><a class="btn btn-ghost btn-sm" href="/_warden/metrics">/_warden/metrics</a> <span style="font-size: 12px; color: var(--text-muted);">— admin-host protected, plain-text Prometheus format</span></span>
+      </div>
+      <div class="access-row">
+        <span class="access-label">Grafana dashboard</span>
+        <span class="access-value"><span style="font-size: 13px; color: var(--text-secondary);">Import <code class="code">grafana/warden-dashboard.json</code></span></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="panel" style="margin-top: 16px;">
+  <div class="panel-head">
+    <h2 class="panel-title">
+      <svg viewBox="0 0 24 24" width="16" height="16" style="color: var(--text-muted);" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      Service snapshot
+    </h2>
+  </div>
+  <div class="panel-body" style="padding: 0; overflow-x: auto;">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Host</th>
+          <th>State</th>
+          <th class="text-right">Requests</th>
+          <th class="text-right">Errors</th>
+          <th class="text-right">Latency (ms)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for host, s in stats.services.items() %}
+        <tr>
+          <td class="mono" style="font-weight: 500;">{{ host }}</td>
+          <td><span class="badge {{ 'badge-accent' if s.state == 'online' else 'badge-indigo' }}">{{ s.state }}</span></td>
+          <td class="text-right mono">{{ s.requests }}</td>
+          <td class="text-right mono">{% if s.errors %}<span style="color: var(--red);">{{ s.errors }}</span>{% else %}0{% endif %}</td>
+          <td class="text-right mono">{{ s.latency_ms }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<section class="stat-grid" style="margin-top: 16px;" aria-label="Metrics summary">
+  <div class="panel">
+    <div class="panel-body">
+      <div class="stat-label">Total requests</div>
+      <div class="stat-value">{{ stats.totals.requests }}</div>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-body">
+      <div class="stat-label">Total errors</div>
+      <div class="stat-value" style="color: {% if stats.totals.errors %}var(--red){% else %}var(--text-primary){% endif %};">{{ stats.totals.errors }}</div>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-body">
+      <div class="stat-label">Online</div>
+      <div class="stat-value">{{ stats.totals.online }} <span class="stat-note">/ {{ stats.totals.enabled }}</span></div>
+    </div>
+  </div>
+</section>
+
+<div class="panel" style="margin-top: 16px;">
+  <div class="panel-head">
+    <h2 class="panel-title">
+      <svg viewBox="0 0 24 24" width="16" height="16" style="color: var(--text-muted);" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      Traffic (last 12 events)
+    </h2>
+  </div>
+  <div class="panel-body" style="padding: 0;">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Host</th>
+          <th>Method</th>
+          <th>Path</th>
+          <th class="text-right">Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for event in stats.traffic %}
+        <tr>
+          <td class="mono" style="font-size: 12px; color: var(--text-muted); white-space: nowrap;">{{ event.timestamp }}</td>
+          <td style="font-weight: 500;">{{ event.host }}</td>
+          <td class="mono" style="font-size: 12px;">{{ event.method }}</td>
+          <td class="mono" style="font-size: 12px; color: var(--text-secondary);">{{ event.path }}</td>
+          <td class="text-right mono" style="font-size: 12px; color: {% if event.status >= 500 %}var(--red){% elif event.status >= 400 %}var(--accent){% else %}var(--text-muted){% endif %};">{{ event.status }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </div>
 {% endblock %}

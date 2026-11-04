@@ -40,7 +40,7 @@
   // ------------------------------------------------------------------ dashboard
   const initDashboard = () => {
     const grid = W.$("#service-grid");
-    const modal = W.$("#service-modal");
+    const modal = W.$("#service-modal-overlay");
     const form = W.$("#service-form");
     const errorBox = W.$("#service-error");
     const submit = W.$("#service-submit");
@@ -53,7 +53,7 @@
       form.reset();
       editingHost = "";
       W.hide(errorBox);
-      W.closeModal(modal);
+      W.closeOverlay(modal);
       const advanced = W.$("details.advanced", modal);
       if (advanced) advanced.open = false;
     };
@@ -64,7 +64,7 @@
       title.textContent = "Add a service";
       copy.textContent = "Point a hostname at something running on your network.";
       W.hide(errorBox);
-      W.openModal(modal);
+      W.openOverlay(modal);
     };
 
     const fill = (data) => {
@@ -94,7 +94,7 @@
       title.textContent = `Edit ${data.name || editingHost}`;
       copy.textContent = "Changes are applied without dropping the listener.";
       W.hide(errorBox);
-      W.openModal(modal);
+      W.openOverlay(modal);
     };
 
     W.$("#add-service")?.addEventListener("click", openAdd);
@@ -157,7 +157,7 @@
         } else {
           await W.fetchJSON("/_warden/api/services", { method: "POST", body: payload });
         }
-        W.closeModal(modal);
+        W.closeOverlay(modal);
         W.toast(editingHost ? "Service updated." : "Service added. It is live now.", {
           title: payload.host,
         });
@@ -270,12 +270,12 @@
   // ------------------------------------------------------------------- passkeys
   const initPasskeys = () => {
     const add = W.$("#add-passkey");
-    const modal = W.$("#passkey-modal");
+    const modal = W.$("#passkey-modal-overlay");
     const form = W.$("#passkey-form");
     const submit = W.$("#passkey-submit");
     const errorBox = W.$("#passkey-error");
     const nameInput = W.$("#passkey-name");
-    const renameModal = W.$("#rename-modal");
+    const renameModal = W.$("#rename-modal-overlay");
     const renameForm = W.$("#rename-form");
     const renameInput = W.$("#rename-name");
     const renameSubmit = W.$("#rename-submit");
@@ -293,7 +293,7 @@
       }
       form.reset();
       W.hide(errorBox);
-      W.openModal(modal);
+      W.openOverlay(modal);
     });
 
     form?.addEventListener("submit", async (event) => {
@@ -320,12 +320,12 @@
         renameRow = row;
         renameInput.value = row.dataset.name || "";
         W.hide(renameError);
-        W.openModal(renameModal);
+        W.openOverlay(renameModal);
         return;
       }
       if (event.target.closest("[data-delete-passkey]")) {
         const name = row.dataset.name || "this passkey";
-        if (!window.confirm(`Remove “${name}”?\n\nYou will need another passkey to sign in.`)) return;
+        if (!window.confirm(`Remove "${name}"?\n\nYou will need another passkey to sign in.`)) return;
         const button = event.target.closest("button");
         button.disabled = true;
         W.fetchJSON(`/_warden/api/passkeys/${row.dataset.credentialId}`, { method: "DELETE" })
@@ -356,7 +356,7 @@
         renameRow.dataset.name = name;
         const label = W.$("[data-passkey-name]", renameRow);
         if (label) label.textContent = name;
-        W.closeModal(renameModal);
+        W.closeOverlay(renameModal);
         W.toast("Passkey renamed.");
       } catch (error) {
         if (handleExpiredSession(error)) return;
@@ -566,11 +566,11 @@
   const initMesh = () => {
     const add = W.$("#add-peer");
     if (!add) return;
-    const modal = W.$("#peer-modal");
+    const modal = W.$("#peer-modal-overlay");
     const form = W.$("#peer-form");
     const submit = W.$("#peer-submit");
     const errorBox = W.$("#peer-error");
-    const configModal = W.$("#peer-config-modal");
+    const configModal = W.$("#peer-config-modal-overlay");
     const configText = W.$("#peer-config-text");
     const configCopy = W.$("#peer-config-copy");
     const configDownload = W.$("#peer-config-download");
@@ -582,14 +582,14 @@
       configText.textContent = text;
       configCopy.textContent = `Import this file into the WireGuard app on ${name}.`;
       configFilename = filename;
-      W.openModal(configModal);
+      W.openOverlay(configModal);
     };
 
     add.addEventListener("click", () => {
       form.reset();
       W.$("#peer-keepalive").value = "25";
       W.hide(errorBox);
-      W.openModal(modal);
+      W.openOverlay(modal);
     });
 
     form.addEventListener("submit", async (event) => {
@@ -608,7 +608,7 @@
           method: "POST",
           body: payload,
         });
-        W.closeModal(modal);
+        W.closeOverlay(modal);
         W.toast(`${result.peer.name} added at ${result.peer.address}.`, { title: "Peer created" });
         appendPeer(result.peer, payload.endpoint);
         showConfig(result.peer.name, result.config, result.filename);
@@ -771,11 +771,206 @@
     window.setInterval(() => W.refreshTimes(), 30000);
   };
 
+  const initUsers = () => {
+    const addButton = W.$("#add-user");
+    const addModal = W.$("#user-modal-overlay");
+    const addForm = W.$("#user-form");
+    const addError = W.$("#user-error");
+    const addSubmit = W.$("#user-submit");
+
+    const editModal = W.$("#edit-user-modal-overlay");
+    const editForm = W.$("#edit-user-form");
+    const editError = W.$("#edit-user-error");
+    const editSubmit = W.$("#edit-user-submit");
+
+    const inviteModal = W.$("#invite-modal-overlay");
+    const inviteToken = W.$("#invite-token");
+    const inviteCopy = W.$("#invite-copy");
+
+    const hide = (el) => { if (el) { el.hidden = true; el.textContent = ""; } };
+
+    const openAdd = () => {
+      addForm.reset();
+      hide(addError);
+      W.openOverlay(addModal);
+      addForm.elements.username.focus();
+    };
+
+    addButton?.addEventListener("click", openAdd);
+
+    addForm?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      hide(addError);
+      if (!addForm.reportValidity()) return;
+      const payload = {
+        username: addForm.elements.username.value.trim(),
+        display_name: addForm.elements.display_name.value.trim(),
+        email: addForm.elements.email.value.trim() || null,
+        is_admin: addForm.elements.is_admin.checked,
+      };
+      W.setBusy(addSubmit, true, "Creating…");
+      try {
+        const user = await W.fetchJSON("/_warden/api/users", {
+          method: "POST",
+          body: payload,
+        });
+        const invite = await W.fetchJSON("/_warden/api/invites", {
+          method: "POST",
+          body: { user_id: user.user_id, expires_in: 3600 },
+        });
+        W.closeOverlay(addModal);
+        W.toast("User created.", { title: payload.username });
+        const row = W.$(`[data-user-id="${user.user_id}"]`);
+        if (row) {
+          row.querySelector(".user-name").textContent = payload.display_name || payload.username;
+          row.querySelector(".user-handle").textContent = `@${payload.username}`;
+          const badge = row.querySelector(".badge");
+          if (badge) {
+            badge.className = `badge ${payload.is_admin ? 'badge-accent' : 'badge-indigo'}`;
+            badge.textContent = payload.is_admin ? 'Administrator' : 'User';
+          }
+          const promoteBtn = row.querySelector(".toggle-admin");
+          if (promoteBtn) promoteBtn.textContent = payload.is_admin ? 'Demote' : 'Promote';
+        }
+        if (inviteToken) inviteToken.value = invite.token || "";
+        W.openOverlay(inviteModal);
+        inviteToken?.select();
+      } catch (error) {
+        if (handleExpiredSession(error)) return;
+        showFailure(addError, error);
+      } finally {
+        W.setBusy(addSubmit, false);
+      }
+    });
+
+    inviteCopy?.addEventListener("click", async () => {
+      if (!inviteToken?.value) return;
+      const ok = await W.copy(inviteToken.value);
+      if (ok) inviteCopy.textContent = "Copied";
+      window.setTimeout(() => { if (inviteCopy) inviteCopy.textContent = "Copy"; }, 1200);
+    });
+
+    const openEdit = (row) => {
+      const userId = row.dataset.userId;
+      const name = row.querySelector(".user-name")?.textContent || "";
+      const email = row.querySelector(".user-email")?.textContent || "";
+      const badge = row.querySelector(".badge");
+      const isAdmin = badge?.classList.contains("badge-accent");
+      editForm.elements.user_id.value = userId;
+      editForm.elements.display_name.value = name;
+      editForm.elements.email.value = email;
+      editForm.elements.is_admin.checked = isAdmin;
+      hide(editError);
+      W.openOverlay(editModal);
+      editForm.elements.display_name.focus();
+    };
+
+    W.$$(".user-row").forEach((row) => {
+      row.addEventListener("click", (event) => {
+        if (event.target.closest("button")) return;
+        openEdit(row);
+      });
+    });
+
+    editForm?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      hide(editError);
+      if (!editForm.reportValidity()) return;
+      const userId = editForm.elements.user_id.value;
+      const payload = {
+        display_name: editForm.elements.display_name.value.trim(),
+        email: editForm.elements.email.value.trim() || null,
+        is_admin: editForm.elements.is_admin.checked,
+      };
+      W.setBusy(editSubmit, true, "Saving…");
+      try {
+        await W.fetchJSON(`/_warden/api/users/${encodeURIComponent(userId)}`, {
+          method: "PATCH",
+          body: payload,
+        });
+        const row = W.$(`[data-user-id="${userId}"]`);
+        if (row) {
+          row.querySelector(".user-name").textContent = payload.display_name;
+          const emailEl = row.querySelector(".user-email");
+          if (emailEl) {
+            emailEl.textContent = payload.email || "";
+            emailEl.hidden = !payload.email;
+          }
+          const badge = row.querySelector(".badge");
+          if (badge) {
+            badge.className = `badge ${payload.is_admin ? 'badge-accent' : 'badge-indigo'}`;
+            badge.textContent = payload.is_admin ? 'Administrator' : 'User';
+          }
+          const promoteBtn = row.querySelector(".toggle-admin");
+          if (promoteBtn) promoteBtn.textContent = payload.is_admin ? 'Demote' : 'Promote';
+        }
+        W.closeOverlay(editModal);
+        W.toast("User updated.");
+      } catch (error) {
+        if (handleExpiredSession(error)) return;
+        showFailure(editError, error);
+      } finally {
+        W.setBusy(editSubmit, false);
+      }
+    });
+
+    W.$$(".toggle-admin").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const row = button.closest("tr[data-user-id]");
+        if (!row) return;
+        const userId = row.dataset.userId;
+        const badge = row.querySelector(".badge");
+        const isAdmin = badge?.classList.contains("badge-accent");
+        button.disabled = true;
+        try {
+          await W.fetchJSON(`/_warden/api/users/${encodeURIComponent(userId)}`, {
+            method: "PATCH",
+            body: { is_admin: !isAdmin },
+          });
+          if (badge) {
+            badge.className = `badge ${!isAdmin ? 'badge-accent' : 'badge-indigo'}`;
+            badge.textContent = !isAdmin ? 'Administrator' : 'User';
+          }
+          button.textContent = !isAdmin ? 'Demote' : 'Promote';
+        } catch (error) {
+          if (handleExpiredSession(error)) return;
+          W.toast(error.message, { title: "Could not update role", type: "error" });
+        } finally {
+          button.disabled = false;
+        }
+      });
+    });
+
+    W.$$(".delete-user").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const row = button.closest("tr[data-user-id]");
+        if (!row) return;
+        const userId = row.dataset.userId;
+        const name = row.querySelector(".user-name")?.textContent || "this user";
+        if (!window.confirm(`Remove ${name}?\n\nThey will lose access immediately.`)) return;
+        button.disabled = true;
+        try {
+          await W.fetchJSON(`/_warden/api/users/${encodeURIComponent(userId)}`, {
+            method: "DELETE",
+          });
+          row.remove();
+          W.toast(`${name} removed.`);
+        } catch (error) {
+          if (handleExpiredSession(error)) return;
+          W.toast(error.message, { title: "Could not remove user", type: "error" });
+        } finally {
+          button.disabled = false;
+        }
+      });
+    });
+  };
+
   document.addEventListener("DOMContentLoaded", () => {
     if (page === "dashboard") initDashboard();
     if (page === "passkeys") initPasskeys();
     if (page === "activity") initActivity();
     if (page === "config") initConfig();
     if (page === "mesh") initMesh();
+    if (page === "users") initUsers();
   });
 })();

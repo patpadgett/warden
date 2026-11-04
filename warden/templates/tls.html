@@ -1,27 +1,57 @@
 {% extends "base.html" %}
 
 {% block content %}
-<section class="page-heading">
+<section class="page-head">
   <div>
-    <h1>TLS Certificate</h1>
+    <p class="panel-title" style="margin-bottom: 6px;">Encryption</p>
+    <h1 class="page-title">TLS Certificate.</h1>
     <p class="subhead">Certificate status, expiry, issuer, and renewal hook — all in one place.</p>
   </div>
 </section>
 
-<div class="card tls-card">
-  <style>
-  .tls-card p { margin-bottom: 0.6rem; line-height: 1.4; font-family: var(--sans); }
-  .tls-card strong { display: inline-block; min-width: 7rem; font-family: var(--mono); font-weight: 600; color: var(--text); }
-  </style>
-  {% if tls.certificate %}
-    <p><strong>State:</strong> {% if tls.certificate.expired %}<span class="tls-warn">expired</span>{% else %}<strong>valid</strong>{% endif %}</p>
-    <p><strong>Expires:</strong> {{ tls.certificate.not_after|absolute_time }} ({{ tls.certificate.days_left|round|int }} days left)</p>
-    <p><strong>Issuer:</strong> {{ tls.certificate.issuer }}</p>
-    <p><strong>Renewal:</strong> {% if tls.renew_command %}auto ({{ tls.renew_command }}){% else %}manual{% endif %}</p>
-  {% elif tls.enabled %}
-    <p class="alert alert-error">{{ tls.error or 'The certificate could not be read.' }}</p>
-  {% else %}
-    <p>TLS is disabled. Enable it in the <a href="/config">configuration</a>.</p>
-  {% endif %}
+<div class="panel">
+  <div class="panel-body">
+    {% if tls.certificate %}
+    <div>
+      <div class="access-row">
+        <span class="access-label">State</span>
+        <span class="access-value">{% if tls.certificate.expired %}<span style="color: var(--red);">expired</span>{% else %}<strong style="color: var(--accent);">valid</strong>{% endif %}</span>
+      </div>
+      <div class="access-row">
+        <span class="access-label">Expires</span>
+        <span class="access-value">{{ tls.certificate.not_after|absolute_time }} <span style="color: var(--text-muted);">({{ tls.certificate.days_left|round|int }} days left)</span></span>
+      </div>
+      <div class="access-row">
+        <span class="access-label">Issuer</span>
+        <span class="access-value" style="font-family: var(--font);">{{ tls.certificate.issuer }}</span>
+      </div>
+      <div class="access-row">
+        <span class="access-label">Renewal</span>
+        <span class="access-value">{% if tls.renew_command %}auto ({{ tls.renew_command }}){% else %}manual{% endif %}</span>
+      </div>
+    </div>
+    <div style="margin-top: 12px;">
+      <div style="height: 4px; background: var(--bg-raised); border: 1px solid var(--border); overflow: hidden;">
+        <span style="display: block; height: 100%; background: var(--accent); width: {{ tls.progress }}%;"></span>
+      </div>
+      <div class="flex" style="justify-content: space-between; margin-top: 6px; font-size: 11px; color: var(--text-muted);">
+        <span>{{ tls.certificate.days_left|round|int }} days left</span>
+        <span>{% if tls.renew_command %}auto-renew hook{% else %}manual renewal{% endif %}</span>
+      </div>
+    </div>
+    {% if tls.renewal %}
+    <p style="margin-top: 12px; font-size: 13px; color: var(--text-secondary);">
+      Last renewal {{ tls.renewal.timestamp|relative_time }}:
+      {% if tls.renewal.ok %}<span style="color: var(--accent);">succeeded</span>. Restart Warden to load the new certificate.{% else %}<span style="color: var(--red);">failed</span>. Check the service log.{% endif %}
+    </p>
+    {% endif %}
+    {% elif tls.enabled %}
+    <div class="panel" style="border-color: var(--red); background: var(--red-soft); margin: 0;">
+      <div class="panel-body" style="color: #fca5a5;">{{ tls.error or 'The certificate could not be read.' }}</div>
+    </div>
+    {% else %}
+    <p style="font-size: 13px; color: var(--text-secondary);">TLS is disabled. Enable it in the <a class="btn btn-ghost btn-sm" href="/config">configuration</a>.</p>
+    {% endif %}
+  </div>
 </div>
 {% endblock %}

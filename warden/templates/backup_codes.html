@@ -1,29 +1,44 @@
 {% extends "base.html" %}
+
 {% block content %}
-<h2>Backup Codes</h2>
-<p class="help">One-time recovery codes for lost passkeys. Each code can be used once to log in via <code>/auth/login/backup</code>. Only admin users can generate new codes.</p>
-{% if codes %}
-<table>
-  <thead><tr><th>ID</th><th>Created At</th><th>Used At</th></tr></thead>
-  <tbody>
-    {% for c in codes %}
-    <tr>
-      <td>{{ c.id }}</td>
-      <td>{{ c.created_at }}</td>
-      <td>{{ c.used_at or "" }}</td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-{% else %}
-<p>No backup codes.</p>
-{% endif %}
-<form method="post" action="/backup_codes/generate">
-  <button type="submit">Generate New Backup Code</button>
-</form>
+<section class="page-head">
+  <div>
+    <p class="panel-title" style="margin-bottom: 6px;">Recovery</p>
+    <h1 class="page-title">Backup codes.</h1>
+    <p class="subhead">One-time recovery codes for lost passkeys. Each code can be used once to log in via <code class="code">/auth/login/backup</code>. Only admin users can generate new codes.</p>
+  </div>
+  <div class="page-actions">
+    <form method="post" action="/backup_codes/generate" id="backup-form">
+      <button class="btn btn-primary" type="submit">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <span>Generate code</span>
+      </button>
+    </form>
+  </div>
+</section>
+
+<div class="panel">
+  <div class="panel-body" style="padding: 0; overflow-x: auto;">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Created</th>
+          <th>Used</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in codes %}
+        <tr>
+          <td class="mono">{{ c.id }}</td>
+          <td>{{ c.created_at|absolute_time }}</td>
+          <td style="color: var(--text-muted);">{{ c.used_at|default('—', true) }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="3" style="text-align: center; padding: 32px; color: var(--text-muted);">No backup codes yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
 {% endblock %}
-<style>
-.form-stack .field { margin-bottom: 1.25rem; }
-.form-stack .input, .form-stack input[type="text"], .form-stack input[type="password"] { padding: 0.55rem 0.7rem; }
-.modal-footer { margin-top: 1.5rem; }
-</style>
