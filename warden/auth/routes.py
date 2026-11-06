@@ -99,8 +99,16 @@ def csrf_protected(func):
 # ---------------------------------------------------------------------------
 
 def _config(request: Request) -> WardenConfig:
-    """Retrieve the active Warden configuration from the app state."""
-    return request.app.state.manager.config
+    """Retrieve the active Warden configuration from the app state.
+
+    The FastAPI app is exposed on the ASGI scope by the WardenMiddleware, so
+    we try scope["app"] first and fall back to request.app (which is also the
+    FastAPI app, since FastAPI subclasses APIRouter).
+    """
+    _app = request.scope.get("app")
+    if _app is None:
+        _app = request.app
+    return _app.state.manager.config
 
 def _session(request: Request) -> Session:
     """Return the authenticated session or raise ``401``.
