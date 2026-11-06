@@ -307,6 +307,7 @@ class PasskeyService:
         name: str | None,
         origin: str,
         config: WardenConfig,
+        flow: str = "add",
     ) -> Ceremony:
         credentials = await self.db.list_credentials(user.id)
         count = len(credentials) + 1
@@ -331,7 +332,7 @@ class PasskeyService:
             challenge_id,
             "register",
             {
-                "flow": "add",
+                "flow": flow,
                 "user_id": user.id,
                 "name": passkey_name,
                 "origin": origin,
@@ -563,6 +564,122 @@ class PasskeyService:
 
     async def setup_code_help(self) -> str:
         return DEFAULT_SETUP_HELP
+
+
+    async def begin_invite_registration(
+        self,
+        *,
+        user: User,
+        name: str | None,
+        origin: str,
+        config: WardenConfig,
+        invite_token: str | None = None,
+    ) -> Ceremony:
+        credentials = await self.db.list_credentials(user.id)
+        count = len(credentials) + 1
+        passkey_name = (name or "").strip()[:60] or f"Passkey {count}"
+        options = generate_registration_options(
+            rp_id=config.webauthn.rp_id,
+            rp_name=config.webauthn.rp_name,
+            user_name=user.username,
+            user_id=user.webauthn_user_id,
+            user_display_name=user.display_name,
+            exclude_credentials=[_descriptor(credential) for credential in credentials],
+            authenticator_selection=AuthenticatorSelectionCriteria(
+                resident_key=ResidentKeyRequirement.PREFERRED,
+                user_verification=_user_verification(config),
+            ),
+            attestation=AttestationConveyancePreference.NONE,
+            timeout=min(config.webauthn.challenge_ttl_seconds, 600) * 1000,
+        )
+        challenge = _base64url_decode(json.loads(options_to_json(options))["challenge"])
+        challenge_id = self._new_challenge_id()
+        await self.db.create_challenge(
+            challenge_id,
+            "register",
+            {
+                "flow": "invite",
+                "user_id": user.id,
+                "name": passkey_name,
+                "origin": origin,
+                "invite_token_hash": hashlib.sha256(invite_token.encode("utf-8")).hexdigest() if invite_token else None,
+                "challenge": bytes_to_base64url(challenge),
+                "challenge_id": challenge_id,
+            },
+            config.webauthn.challenge_ttl_seconds,
+        )
+        return Ceremony(
+            options=json.loads(options_to_json(options)),
+            challenge_id=challenge_id,
+            expires_in=config.webauthn.challenge_ttl_seconds,
+        )
+
+    async def complete_invite_registration(
+        self,
+        *,
+        credential: dict[str, Any],
+        challenge_id: str,
+        origin: str | None,
+        config: WardenConfig,
+        invite_token: str,
+    ) -> dict[str, Any]:
+        invite_token_hash = hashlib.sha256(invite_token.encode("utf-8")).hexdigest()
+        invite = await self.db.get_invite(invite_token)
+        if invite is None or int(invite["used"]) == 1:
+            raise AuthError("That invite is invalid or has already been used.", 400, event="invite_invalid")
+        if float(invite["expires_at"]) < time.time():
+            raise AuthError("That invite has expired.", 400, event="invite_expired")
+        user = await self.db.get_user(invite["user_id"])
+        if user is None:
+            raise AuthError("That invite no longer matches an account.")
+
+        # Consume the challenge and bind the invite token to it so the token
+        # cannot be replayed against a different ceremony.
+        challenge = await self.db.consume_challenge(challenge_id, "register")
+        if challenge is None:
+            raise AuthError("That registration attempt expired. Please start again.", 400)
+        payload = challenge.payload
+        if payload.get("invite_token_hash") != invite_token_hash:
+            raise AuthError("This registration does not match the supplied invite.", 400)
+        if int(payload.get("user_id", -1)) != user.id:
+            raise AuthError("This registration belongs to a different account.", 403)
+
+        await self.db.mark_invite_used(int(invite["id"]))
+
+        challenge_bytes = _base64url_decode(payload["challenge"])
+        try:
+            verification = verify_registration_response(
+                credential=credential,
+                expected_challenge=challenge_bytes,
+                expected_rp_id=config.webauthn.rp_id,
+                expected_origin=str(payload.get("origin") or origin or ""),
+                require_user_verification=config.webauthn.require_user_verification,
+            )
+        except WebAuthnException as exc:
+            logger.info("Registration verification failed: %s", exc)
+            raise AuthError("The passkey could not be verified. Please try again.", 400) from exc
+        except Exception as exc:  # malformed client payloads
+            logger.info("Registration payload failed: %s", exc)
+            raise AuthError("The passkey response was invalid. Please try again.", 400) from exc
+
+        transports_raw = (credential.get("response") or {}).get("transports") or []
+        transports = [str(item) for item in transports_raw if isinstance(item, str)][:8]
+
+        saved = await self.db.add_credential(
+            user_id=user.id,
+            credential_id=verification.credential_id,
+            public_key=verification.credential_public_key,
+            sign_count=verification.sign_count,
+            transports=transports,
+            name=str(payload.get("name") or "Passkey"),
+            aaguid=str(verification.aaguid),
+            fmt=str(verification.fmt.value if hasattr(verification.fmt, "value") else verification.fmt),
+            user_verified=verification.user_verified,
+            backup_eligible=verification.credential_backed_up,
+            backup_state=verification.credential_backed_up,
+        )
+        return {"flow": "invite", "user": user, "credential": saved}
+
 
 
 def safe_redirect(value: Any, fallback: str) -> str:

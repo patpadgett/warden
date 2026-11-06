@@ -109,15 +109,17 @@ class MeshPeerPayload(BaseModel):
 
 
 def _config(request: Request) -> WardenConfig:
-    return request.app.state.manager.config
+    _app = request.scope.get("app")
+    if _app is None:
+        _app = request.app
+    return _app.state.manager.config
 
 
 def _guard_host(request: Request) -> WardenConfig:
-    """Validate that the request is made to the admin host.
-    
-    * Raises ``HTTPException(404)`` if the host does not match ``config.server.admin_host``.
-    """
-    config = _config(request)
+    _config = request.scope.get("app")
+    if _config is None:
+        _config = request.app
+    config = _config.state.manager.config
     if get_host(request.scope) != config.server.admin_host:
         raise HTTPException(404, "Not found")
     return config

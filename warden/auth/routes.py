@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import logging
 import os
+import time
 from functools import wraps
 from typing import Any
 
@@ -59,6 +60,10 @@ class LoginBeginBody(BaseModel):
     next: str | None = None
 
 class RegisterBeginBody(BaseModel):
+    name: str | None = None
+
+class InviteBeginBody(BaseModel):
+    token: str
     name: str | None = None
 
 class BackupCodeBody(BaseModel):
@@ -398,9 +403,119 @@ async def setup_complete(request: Request) -> JSONResponse:
     clear_challenge_cookie(response, request.scope, config)
     return response
 
-# ---------------------------------------------------------------------------
-# Login flow
-# ---------------------------------------------------------------------------
+
+@router.post("/_warden/auth/invite/begin")
+async def invite_begin(request: Request) -> JSONResponse:
+    """Begin the invite-based passkey registration ceremony.
+
+    * Rate‑limited and same‑origin enforced.
+    * Requires the caller to supply a valid, unused invite token.
+    * Returns a JSON payload with the publicKey ceremony options.
+    """
+    allowed, rate_headers = _limited(request, "invite-begin", 12)
+    if not allowed:
+        response = _error("Too many registration attempts. Wait a minute and try again.", 429)
+        response.headers.update(rate_headers)
+        return response
+    if not _origin_ok(request):
+        return _error("Cross-origin request blocked.", 403)
+    config = _config(request)
+    try:
+        body = await _body(request, InviteBeginBody)
+        assert isinstance(body, InviteBeginBody)
+        invite_token = body.token.strip()
+        if not invite_token:
+            return _error("An invite token is required.", 400)
+        invite = await _db(request).get_invite(invite_token)
+        if invite is None or int(invite["used"]) == 1 or float(invite["expires_at"]) < time.time():
+            return _error("That invite is invalid, expired, or has already been used.", 400)
+        user = await _db(request).get_user(invite["user_id"])
+        if user is None:
+            return _error("That invite no longer matches an account.", 400)
+        ceremony = await _passkeys(request).begin_invite_registration(
+            user=user,
+            name=body.name,
+            origin=current_origin(request.scope, config),
+            config=config,
+            invite_token=invite_token,
+        )
+    except AuthError as exc:
+        return await _handle_auth_error(request, exc, audit="passkey_failed")
+    response = _json_response({"publicKey": ceremony.options, "expiresIn": ceremony.expires_in})
+    set_challenge_cookie(
+        response, ceremony.challenge_id, request.scope, config, config.webauthn.challenge_ttl_seconds
+    )
+    return response
+
+
+@router.post("/_warden/auth/invite/complete")
+async def invite_complete(request: Request) -> JSONResponse:
+    """Complete the invite-based passkey registration.
+
+    * Consumes the challenge and the invite token, registers the credential,
+      creates a session and signs the user in.
+    * Returns JSON with a redirect target.
+    """
+    allowed, rate_headers = _limited(request, "invite-complete", 12)
+    if not allowed:
+        response = _error("Too many registration attempts. Wait a minute and try again.", 429)
+        response.headers.update(rate_headers)
+        return response
+    if not _origin_ok(request):
+        return _error("Cross-origin request blocked.", 403)
+    config = _config(request)
+    challenge_id = challenge_from_scope(request.scope)
+    if not challenge_id:
+        return _error("Your registration attempt expired. Reload the page and try again.", 400)
+    try:
+        body = await _body(request, CredentialBody)
+        assert isinstance(body, CredentialBody)
+        result = await _passkeys(request).complete_invite_registration(
+            credential=body.credential,
+            challenge_id=challenge_id,
+            origin=current_origin(request.scope, config),
+            config=config,
+            invite_token=body.credential.get("invite_token"),
+        )
+    except AuthError as exc:
+        return await _handle_auth_error(request, exc, audit="passkey_failed")
+    user = result["user"]
+    token, _ = await create_session(_db(request), user, request.scope, config)
+    await _db(request).audit(
+        "invite_registered",
+        user_id=user.id,
+        username=user.username,
+        ip=client_ip(request.scope),
+        user_agent=user_agent(request.scope),
+        detail="First passkey registered via invite",
+    )
+    response = _json_response({"ok": True, "redirect": admin_url(request.scope, config)})
+    set_session_cookie(response, token, request.scope, config)
+    clear_challenge_cookie(response, request.scope, config)
+    return response
+@router.get("/_warden/invite/complete")
+async def invite_complete_page(request: Request) -> Response:
+    """Render the first-login completion page.
+
+    The invite token may be supplied via the ``token`` query parameter.
+    The page is rendered with dark theme and is specific to the new user
+    completing their first passkey registration after being invited.
+    """
+    token = request.query_params.get("token", "")
+    return templates.TemplateResponse(
+        request,
+        "invite_complete.html",
+        {
+            "page": "invite_complete",
+            "page_title": "Complete your account",
+            "host": _config(request).server.admin_host,
+            "token": token,
+            "token_display": token,
+        },
+    )
+
+
+
 
 @router.post("/_warden/auth/login/begin")
 async def login_begin(request: Request) -> JSONResponse:

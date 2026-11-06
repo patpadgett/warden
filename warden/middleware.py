@@ -15,6 +15,7 @@ from collections.abc import Callable, MutableMapping
 from typing import Any
 
 from starlette.datastructures import Headers, MutableHeaders
+from starlette.routing import Match
 from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.websockets import WebSocket
 
@@ -44,6 +45,7 @@ _PUBLIC_AUTH_PREFIXES = (
     f"{INTERNAL_PREFIX}/auth/",
     f"{INTERNAL_PREFIX}/health",
     f"{INTERNAL_PREFIX}/static/",
+    f"{INTERNAL_PREFIX}/invite/complete",
 )
 _ACME_PREFIX = "/.well-known/acme-challenge/"
 
@@ -81,6 +83,18 @@ class WardenMiddleware:
         if scope["type"] not in {"http", "websocket"}:
             await self.app(scope, receive, send)
             return
+        # Expose the FastAPI app on the scope so route matching works.
+        # WardenMiddleware wraps ExceptionMiddleware -> AsyncExitStackMiddleware -> FastAPI app.
+        _scope_app = self.app
+        _depth = 0
+        while _depth < 5:
+            if hasattr(_scope_app, "routes"):
+                break
+            if not hasattr(_scope_app, "app"):
+                break
+            _scope_app = _scope_app.app
+            _depth += 1
+        scope["app"] = _scope_app
         config = self.manager.config
         host = get_host(scope)
         path = scope.get("path", "/")
@@ -195,42 +209,47 @@ class WardenMiddleware:
             )
             return
 
-        route = config.match_route(host)
+        route = self._find_route(scope, path, method)
         if route is None:
             await self._not_found(scope, receive, send, host)
             return
-        if not route.enabled:
-            await self._not_found(
-                scope,
-                receive,
-                send,
-                host,
-                title="This service is paused",
-                message="The route exists, but it is disabled in Warden's configuration.",
-            )
-            return
+        await self._call_app(scope, receive, send, config)
 
-        route_user = None
-        if route.auth and not route.is_public_path(path):
-            if session is None:
-                if await self.db.user_count() == 0:  # noqa: SIM102
-                    if method in {"GET", "HEAD"} and is_navigation(scope):
-                        response = self._redirect(
-                            f"{INTERNAL_PREFIX}/setup?next={next_from_scope(scope)}"
-                        )
-                        await response(scope, receive, send)
-                        return
-                if request_wants_json(scope) or method not in {"GET", "HEAD"}:
-                    await self._json_unauthorized(
-                        "Sign in to use this service.",
-                        extra={"login_url": login_url(scope, config, next_from_scope(scope))},
-                    )(scope, receive, send)
-                    return
-                response = self._redirect(login_url(scope, config, next_from_scope(scope)))
-                await response(scope, receive, send)
-                return
-            route_user = session.user
-        await self.proxy.handle_http(scope, receive, send, route, route_user)
+
+    def _find_route(self, scope: MutableMapping[str, Any], path: str, method: str) -> Any | None:
+        """Find the matching route from the FastAPI app's route list.
+
+        FastAPI 0.162 mounts included routers as _IncludedRouter objects whose
+        routes are NOT expanded into the top-level app.routes list. This means
+        admin/auth routes (e.g. /_warden/users, /_warden/activity) are not
+        matched by simple path comparison. We work around this by:
+          1. For APIRoute candidates, match path + method directly.
+          2. For _IncludedRouter candidates, also expand their original_router
+             and match against those routes.
+        """
+        app = scope.get("app")
+        if app is None:
+            return None
+        method = method.upper()
+        for candidate in app.routes:
+            # _IncludedRouter objects wrap an APIRouter whose routes aren't
+            # expanded at the top level. We must inspect the wrapped router.
+            if hasattr(candidate, "original_router"):
+                inner = candidate.original_router
+                for inner_route in inner.routes:
+                    if getattr(inner_route, "path", None) != path:
+                        continue
+                    candidate_methods = getattr(inner_route, "methods", set())
+                    if method in candidate_methods:
+                        return inner_route
+                continue
+            # Plain APIRoute / Mount
+            if getattr(candidate, "path", None) != path:
+                continue
+            candidate_methods = getattr(candidate, "methods", set())
+            if method in candidate_methods:
+                return candidate
+        return None
 
     async def _call_app(
         self,

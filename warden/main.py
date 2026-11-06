@@ -174,7 +174,10 @@ def _error_response(request: Request, status: int, title: str, message: str) -> 
         body = JSONResponse({"detail": message}, status_code=status)
         body.headers["Cache-Control"] = "no-store"
         return body
-    config = request.app.state.manager.config
+    _app = request.scope.get("app")
+    if _app is None:
+        _app = request.app
+    config = _app.state.manager.config
     host = get_host(request.scope)
     admin = host == config.server.admin_host
     response = templates.TemplateResponse(

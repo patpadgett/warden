@@ -143,6 +143,12 @@ class TestPostgresDatabaseInit:
             MagicMock(), MagicMock(), MagicMock(), MagicMock(), MagicMock(),
             MagicMock(), MagicMock(), MagicMock(), MagicMock(), MagicMock(),
             insert_result,  # v3 insert version
+            # v4: invites table
+            MagicMock(),  # CREATE TABLE invites
+            MagicMock(),  # CREATE INDEX idx_invites_user
+            MagicMock(),  # CREATE INDEX idx_invites_token
+            MagicMock(),  # CREATE INDEX idx_invites_used
+            insert_result,  # v4 insert version
         ]
         # Build a proper async context manager for the engine.begin() call.
         mock_cm = AsyncMock()

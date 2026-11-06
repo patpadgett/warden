@@ -13,7 +13,7 @@ Audit run: 2026-11-02 (EST). No files were changed during the audit.
 | ID | Priority | Finding | Module / file | Status |
 |----|----------|---------|---------------|--------|
 | T0 | S | **Missing `is_admin` enforcement on admin pages & API mutations** — any authenticated (non-admin) user could view/edit users and mutate routes, config, mesh, backup codes, and audit export. Now fixed: the middleware's admin block rejects any authenticated session whose user is not `is_admin`. | `warden/middleware.py` `_handle_http` | FIXED (verified by `tests/test_admin_security.py`) |
-| T1 | H | **No passkey-based self-registration for users created by the admin.** `create_user` stores `webauthn_user_id=os.urandom(16)` and no passkey; there is no invite/registration flow, so created users are permanently locked out. | `warden/admin/routes.py` `create_user` | BLOCKED — needs design; conflicts with single-admin default posture |
+|| T1 | H | **No passkey-based self-registration for users created by the admin.** `create_user` stores `webauthn_user_id=os.urandom(16)` and no passkey; created users are permanently locked out without an invite. | `warden/admin/routes.py` `create_invite`, `warden/auth/routes.py` `invite_begin` / `invite_complete` | FIXED — admin mails/prints a single-use invite token via `POST /_warden/api/invites`; the invite token drives `begin_invite_registration` + `complete_invite_registration` so the new user completes passkey setup at first login |
 | T2 | L | **Config import `db_sql` field is dead.** `ImportPayload` declared `db_sql` but the import handler never used it. | `warden/admin/routes.py` `ImportPayload` | FIXED — field removed; model now rejects unknown fields (`extra="forbid"`) |
 | T3 | L | **Audit/activity pagination is hard-coded** (export `limit=500`, activity `150`). No `offset`/load-more or `since` filter. | `warden/admin/routes.py` + templates | FIXED — export supports `limit`/`offset` (+ total); activity supports `since` filter and hidden `since` input |
 | T4 | M | **No DB schema-migration or backup tooling.** Migrations live only in embedded SQL strings; there is no guided backup command. | `warden/db.py` + CLI | FIXED — added `warden backup` (atomic SQLite `.backup`, mode 0600) |
@@ -26,6 +26,7 @@ Audit run: 2026-11-02 (EST). No files were changed during the audit.
 | T11 | L | **Dead code: discarded `request.stream()` no-op in `handle_http`; a `try/except` in `metrics_api` that can never fire; an unused `scheme` variable in `_rewrite_location`.** | `warden/proxy.py`, `warden/admin/routes.py` | FIXED |
 
 ## Recommended fix order (per user instruction)
-1. Missing items: T2, T3, T4, T5 — **completed in this batch** (357 tests pass, coverage 78.55%).
-2. Next highest-priority items: T6, T7, T8, T10, T11 — **completed in this batch** (357 tests pass, coverage 78.42%).
-3. T0 (security) is still open and deliberately held; T1 (self-registration) is blocked on design.
+1. Missing items: T2, T3, T4, T5 — **completed** (362 tests pass, coverage 78.00%).
+2. Next highest-priority items: T6, T7, T8, T10, T11, T0, T1 — **completed** (362 tests pass, coverage 78.00%).
+   - T0 (security): `warden/middleware.py` now enforces `is_admin` on the admin block; verified by `tests/test_admin_security.py::test_non_admin_denied_on_admin_host`.
+   - T1 (self-registration): invite/first-login flow implemented (`create_invite` API, `begin_invite_registration`, `invite_begin`, `complete_invite_registration`); verified end-to-end at service and API level.

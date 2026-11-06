@@ -250,3 +250,35 @@ async def test_database_init_is_idempotent(tmp_path: Path) -> None:
     uninitialized = Database(tmp_path / "other.db")
     with pytest.raises(DatabaseError):
         uninitialized._require_conn()
+
+
+async def test_invite_lifecycle(db: Database) -> None:
+    """create_invite, get_invite, and mark_invite_used round-trip."""
+    user = await db.create_user("invite-db", "Invite DB", b"i" * 16, is_admin=False)
+    token = "DB-INVITE-TOKEN"
+    invite_id = await db.create_invite(user.id, token, time.time() + 3600)
+
+    stored = await db.get_invite(token)
+    assert stored is not None
+    assert int(stored["user_id"]) == user.id
+    assert int(stored["used"]) == 0
+    assert float(stored["expires_at"]) > time.time()
+
+    ok = await db.mark_invite_used(invite_id)
+    assert ok is True
+
+    used = await db.get_invite(token)
+    assert used is not None
+    assert int(used["used"]) == 1
+
+
+async def test_get_invite_missing_token(db: Database) -> None:
+    """get_invite returns None for an unknown token."""
+    result = await db.get_invite("NONEXISTENT-TOKEN")
+    assert result is None
+
+
+async def test_mark_invite_used_missing(db: Database) -> None:
+    """mark_invite_used returns False for a non-existent invite."""
+    ok = await db.mark_invite_used(999999)
+    assert ok is False

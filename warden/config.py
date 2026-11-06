@@ -187,6 +187,26 @@ class DatabaseConfig(BaseModel):
     url: str | None = None
 
 
+class EmailConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    #: SMTP server host (if ``enabled`` is true).
+    host: str = "localhost"
+    #: SMTP server port.
+    port: int = Field(default=587, ge=1, le=65535)
+    #: SMTP username (leave None for anonymous or plaintext auth).
+    user: str | None = None
+    #: SMTP password (leave None for anonymous or plaintext auth).
+    password: str | None = None
+    #: Use STARTTLS when connecting to the SMTP server.
+    starttls: bool = True
+    #: From address used for invite emails.
+    from_address: str = "warden@localhost"
+    #: Subject prefix for invite emails.
+    subject_prefix: str = "Your first-login invite"
+
+
 class ServerConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -520,6 +540,7 @@ class WardenConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     version: int = 1
+    email: EmailConfig = Field(default_factory=EmailConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     webauthn: WebAuthnConfig = Field(default_factory=WebAuthnConfig)
@@ -1025,7 +1046,6 @@ def _preserve_restart_fields(previous: WardenConfig, incoming: WardenConfig) -> 
     this helper ensures those values are not unintentionally overwritten by a UI
     edit.
     """
-    """Build the live config, holding restart-only values at their old state."""
     old_data = previous.model_dump(mode="json")
     new_data = incoming.model_dump(mode="json")
     runtime = incoming.model_copy(deep=True)

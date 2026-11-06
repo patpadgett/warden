@@ -305,6 +305,19 @@ _MIGRATIONS: dict[int, str] = {
             created_at DOUBLE PRECISION NOT NULL
         );
         """,
+    4: """\
+        CREATE TABLE IF NOT EXISTS invites (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            token_hash TEXT NOT NULL UNIQUE,
+            expires_at DOUBLE PRECISION NOT NULL,
+            used INTEGER NOT NULL DEFAULT 0,
+            created_at DOUBLE PRECISION NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_invites_user ON invites(user_id);
+        CREATE INDEX IF NOT EXISTS idx_invites_token ON invites(token_hash);
+        CREATE INDEX IF NOT EXISTS idx_invites_used ON invites(used);
+        """,
 }  # type: ignore[assignment]
 
 
