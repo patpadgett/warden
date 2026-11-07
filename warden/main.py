@@ -156,7 +156,7 @@ def _print_banner(
                 + time.strftime("%Y-%m-%d %H:%M", time.localtime(setup_expires))
             )
         lines.append("  Set WARDEN_SETUP_TOKEN to choose your own code next time.")
-    elif os.environ.get("WARDEN_SETUP_TOKEN"):
+    elif setup_expires is not None:
         lines.append(
             f"  First-run setup is available at {base}{INTERNAL_PREFIX}/setup"
         )
@@ -177,6 +177,12 @@ def _error_response(request: Request, status: int, title: str, message: str) -> 
     _app = request.scope.get("app")
     if _app is None:
         _app = request.app
+    # Walk up the middleware chain to find the FastAPI app (APIRouter has no `.state`)
+    while not hasattr(_app, "state"):
+        if hasattr(_app, "app"):
+            _app = _app.app
+        else:
+            break
     config = _app.state.manager.config
     host = get_host(request.scope)
     admin = host == config.server.admin_host

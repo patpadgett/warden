@@ -22,6 +22,7 @@ objects regardless of backend.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import time
@@ -93,6 +94,7 @@ users = Table(
     Column("is_admin", Boolean, nullable=False, default=True),
     Column("created_at", Float, nullable=False),
     Column("recovery_token", Text, nullable=True),
+    Column("email", Text, nullable=True),
 )
 
 credentials = Table(
@@ -152,6 +154,17 @@ otp_secrets = Table(
     metadata,
     Column("user_id", BigInteger, primary_key=True),
     Column("secret", String, nullable=False),
+    Column("created_at", Float, nullable=False),
+)
+
+invites = Table(
+    "invites",
+    metadata,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column("user_id", BigInteger, ForeignKey("users.id"), nullable=False),
+    Column("token_hash", String, nullable=False, unique=True),
+    Column("expires_at", Float, nullable=False),
+    Column("used", Integer, nullable=False, default=0),
     Column("created_at", Float, nullable=False),
 )
 
@@ -318,6 +331,10 @@ _MIGRATIONS: dict[int, str] = {
         CREATE INDEX IF NOT EXISTS idx_invites_token ON invites(token_hash);
         CREATE INDEX IF NOT EXISTS idx_invites_used ON invites(used);
         """,
+    5: """\
+        -- Add user email address for invite delivery and account notices.
+        ALTER TABLE users ADD COLUMN email TEXT
+        """,
 }  # type: ignore[assignment]
 
 
@@ -328,7 +345,8 @@ SELECT s.id, s.token_hash, s.user_id, s.created_at, s.expires_at, s.last_seen_at
        s.ip, s.user_agent,
        u.id AS u_id, u.username AS u_username, u.display_name AS u_display_name,
        u.webauthn_user_id AS u_webauthn_user_id, u.is_admin AS u_is_admin,
-       u.created_at AS u_created_at, u.recovery_token AS u_recovery_token
+       u.created_at AS u_created_at, u.recovery_token AS u_recovery_token,
+       u.email AS u_email
 FROM sessions s
 JOIN users u ON u.id = s.user_id
 """
@@ -511,6 +529,7 @@ class PostgresDatabase(Database):
         display_name: str,
         webauthn_user_id: bytes,
         *,
+        email: str | None = None,
         is_admin: bool = True,
         now: float | None = None,
     ) -> User:
@@ -518,15 +537,16 @@ class PostgresDatabase(Database):
         async with self.session_factory() as session:
             try:
                 async with session.begin():
-                    await session.execute(
-                        insert(users).values(
-                            username=username,
-                            display_name=display_name,
-                            webauthn_user_id=webauthn_user_id,
-                            is_admin=bool(is_admin),
-                            created_at=created,
-                        )
-                    )
+                    values = {
+                        "username": username,
+                        "display_name": display_name,
+                        "webauthn_user_id": webauthn_user_id,
+                        "is_admin": bool(is_admin),
+                        "created_at": created,
+                    }
+                    if email is not None:
+                        values["email"] = email
+                    await session.execute(insert(users).values(**values))
             except IntegrityError:
                 raise AlreadyExistsError("That username is already registered.")
             result = await session.execute(select(users).where(users.c.username == username))
@@ -654,6 +674,58 @@ class PostgresDatabase(Database):
             await session.commit()
             return result.rowcount > 0
 
+    async def update_user_email(self, user_id: int, email: str | None) -> bool:
+        async with self.session_factory() as session:
+            result = await session.execute(
+                update(users).where(users.c.id == user_id).values(email=email)
+            )
+            await session.commit()
+            return result.rowcount > 0
+
+    # ------------------------------------------------------------------ invites
+    async def create_invite(
+        self,
+        user_id: int,
+        token: str,
+        expires_at: float,
+        *,
+        now: float | None = None,
+    ) -> int:
+        """Create an invite for ``user_id``. The raw token is stored only as a hash."""
+        created = now if now is not None else time.time()
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        async with self.session_factory() as session:
+            result = await session.execute(
+                insert(invites)
+                .values(
+                    user_id=user_id,
+                    token_hash=token_hash,
+                    expires_at=expires_at,
+                    used=0,
+                    created_at=created,
+                )
+                .returning(invites.c.id)
+            )
+            await session.commit()
+            return int(result.scalar() or 0)
+
+    async def get_invite(self, token: str) -> Any:
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        async with self.session_factory() as session:
+            result = await session.execute(
+                select(invites).where(invites.c.token_hash == token_hash)
+            )
+            row = result.fetchone()
+            return dict(row._mapping) if row else None
+
+    async def mark_invite_used(self, invite_id: int) -> bool:
+        async with self.session_factory() as session:
+            result = await session.execute(
+                update(invites).where(invites.c.id == invite_id).values(used=1)
+            )
+            await session.commit()
+            return result.rowcount > 0
+
     # ------------------------------------------------------------------ credentials
     async def add_credential(
         self,
@@ -763,10 +835,11 @@ class PostgresDatabase(Database):
             await session.commit()
             return result.rowcount > 0
 
-    # ------------------------------------------------------------------ reset / vacuum
-
-
+    async def reset_auth(self) -> None:
+        """Delete all users, credentials, sessions, challenges, backup codes,
+        OTP secrets, invites, settings, audit log, and mesh peers (auth reset)."""
         async with self.session_factory() as session:
+            await session.execute(delete(invites))
             await session.execute(delete(users))
             await session.execute(delete(credentials))
             await session.execute(delete(sessions))
@@ -777,6 +850,8 @@ class PostgresDatabase(Database):
             await session.execute(delete(audit))
             await session.execute(delete(mesh_peers))
             await session.commit()
+
+    # ------------------------------------------------------------------ reset / vacuum
 
     async def health_check(self) -> bool:
         try:

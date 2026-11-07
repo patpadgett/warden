@@ -236,7 +236,7 @@ def _user(row: aiosqlite.Row) -> User:
         is_admin=bool(row["is_admin"]),
         created_at=float(row["created_at"]),
         recovery_token=row["recovery_token"],
-        email=row["email"],
+        email=row["email"] if "email" in row.keys() else None,
     )
 
 
@@ -272,7 +272,7 @@ def _session(row: aiosqlite.Row) -> Session:
         is_admin=bool(row["u_is_admin"]),
         created_at=float(row["u_created_at"]),
         recovery_token=row["u_recovery_token"],
-        email=row["u_email"],
+        email=row["u_email"] if "u_email" in row.keys() else None,
     )
     return Session(
         id=row["id"],
@@ -623,12 +623,14 @@ class Database:
         Returns the persisted ``User`` instance. Raises ``AlreadyExistsError`` if the username is already taken.
         """
         created = now if now is not None else time.time()
+        cols = ["username", "display_name", "webauthn_user_id", "is_admin", "created_at"]
+        vals = [username, display_name, webauthn_user_id, int(is_admin), created]
+        if email is not None:
+            cols.append("email")
+            vals.append(email)
+        sql = f"INSERT INTO users ({', '.join(cols)}) VALUES ({', '.join('?' * len(vals))})"
         try:
-            user_id = await self._write(
-                "INSERT INTO users (username, display_name, webauthn_user_id, email, is_admin, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (username, display_name, webauthn_user_id, email, int(is_admin), created),
-            )
+            user_id = await self._write(sql, tuple(vals))
         except sqlite3.IntegrityError as exc:
             raise AlreadyExistsError("That username is already registered.") from exc
         user = await self.get_user(user_id)
@@ -827,18 +829,29 @@ class Database:
             await self.init()
         conn = self._require_conn()
         async with self._lock:
-            cursor = await conn.execute(
-                "UPDATE users SET email = ? WHERE id = ?", (email, user_id)
-            )
+            try:
+                cursor = await conn.execute(
+                    "UPDATE users SET email = ? WHERE id = ?", (email, user_id)
+                )
+            except sqlite3.OperationalError:
+                # Column ``email`` may not exist in older schema versions.
+                return False
             await conn.commit()
             changed = cursor.rowcount
             await cursor.close()
         return bool(changed)
 
     async def reset_auth(self) -> None:
-        """Delete all users, passkeys, sessions, settings, audit log, and mesh peers (auth reset)."""
+        """Delete all users, passkeys, sessions, settings, audit log, challenges,
+        backup codes, OTP secrets, and mesh peers (auth reset)."""
         conn = self._require_conn()
         async with self._lock:
+            await conn.execute("DELETE FROM challenges")
+            await conn.execute("DELETE FROM credentials")
+            await conn.execute("DELETE FROM sessions")
+            await conn.execute("DELETE FROM backup_codes")
+            await conn.execute("DELETE FROM otp_secrets")
+            await conn.execute("DELETE FROM invites")
             await conn.execute("DELETE FROM settings")
             await conn.execute("DELETE FROM audit")
             await conn.execute("DELETE FROM users")

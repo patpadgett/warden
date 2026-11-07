@@ -527,7 +527,7 @@ class ProxyEngine:
             )
             upstream = await client.send(upstream_request, stream=True, follow_redirects=False)
             elapsed = (time.perf_counter() - started) * 1000
-            if upstream.status_code < 100 or upstream.status_code == 101:
+            if upstream.status_code < 200:
                 await upstream.aclose()
                 raise httpx.RemoteProtocolError("Unexpected upstream response status")
             self.stats.record_request(

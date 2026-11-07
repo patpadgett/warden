@@ -10,6 +10,7 @@ from functools import wraps
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi import FastAPI
 from pydantic import BaseModel, ValidationError
 from starlette.responses import JSONResponse, Response
 
@@ -99,15 +100,7 @@ def csrf_protected(func):
 # ---------------------------------------------------------------------------
 
 def _config(request: Request) -> WardenConfig:
-    """Retrieve the active Warden configuration from the app state.
-
-    The FastAPI app is exposed on the ASGI scope by the WardenMiddleware, so
-    we try scope["app"] first and fall back to request.app (which is also the
-    FastAPI app, since FastAPI subclasses APIRouter).
-    """
-    _app = request.scope.get("app")
-    if _app is None:
-        _app = request.app
+    _app = _get_fastapi_app(request)
     return _app.state.manager.config
 
 def _session(request: Request) -> Session:
@@ -131,11 +124,27 @@ class CredentialBody(BaseModel):
     credential: dict[str, Any]
 
 def _db(request: Request):
-    """Shortcut to the SQLite ``Database`` instance attached to the app."""
-    return request.app.state.db
+    _app = request.scope.get("app")
+    if _app is None:
+        _app = request.app
+    while not hasattr(_app, "state"):
+        if hasattr(_app, "app"):
+            _app = _app.app
+        else:
+            break
+    return _app.state.db
+
 
 def _passkeys(request: Request) -> PasskeyService:
-    return request.app.state.passkeys
+    _app = request.scope.get("app")
+    if _app is None:
+        _app = request.app
+    while not hasattr(_app, "state"):
+        if hasattr(_app, "app"):
+            _app = _app.app
+        else:
+            break
+    return _app.state.passkeys
 
 def _json_response(payload: dict[str, Any], status_code: int = 200) -> JSONResponse:
     response = JSONResponse(payload, status_code=status_code)
@@ -144,6 +153,18 @@ def _json_response(payload: dict[str, Any], status_code: int = 200) -> JSONRespo
 
 def _error(message: str, status_code: int = 400) -> JSONResponse:
     return json_error(message, status_code)
+
+
+def _get_fastapi_app(request: Request) -> FastAPI:
+    _app = request.scope.get("app")
+    if _app is None:
+        _app = request.app
+    while not hasattr(_app, "state"):
+        if hasattr(_app, "app"):
+            _app = _app.app
+        else:
+            break
+    return _app
 
 async def _body(request: Request, model: type[BaseModel]) -> BaseModel:
     content_type = request.headers.get("content-type", "")
@@ -164,12 +185,13 @@ def _origin_ok(request: Request) -> bool:
     return check_origin(request.scope, _config(request))
 
 def _limited(request: Request, action: str, limit: int, window: float = 60.0) -> tuple[bool, dict[str, str]]:
-    limiter = request.app.state.rate_limiter
+    _app = _get_fastapi_app(request)
+    limiter = _app.state.rate_limiter
     allowed, remaining = limiter.allow(f"{client_ip(request.scope)}:{action}", limit, window)
     if allowed:
-        request.app.state.stats.inc_rate_limit_allowed()
+        _app.state.stats.inc_rate_limit_allowed()
     else:
-        request.app.state.stats.inc_rate_limit_blocked()
+        _app.state.stats.inc_rate_limit_blocked()
     headers = {
         "X-RateLimit-Limit": str(limit),
         "X-RateLimit-Window": str(int(window)),
@@ -198,7 +220,8 @@ async def _audit_failure(
 async def _handle_auth_error(request: Request, exc: AuthError, *, audit: str | None = None) -> JSONResponse:
     if audit:
         await _audit_failure(request, audit, exc.message)
-    request.app.state.stats.inc_auth_failure()
+    _app = _get_fastapi_app(request)
+    _app.state.stats.inc_auth_failure()
     return _error(exc.message, exc.status_code)
 
 # ---------------------------------------------------------------------------
@@ -245,10 +268,12 @@ async def otp_verify(request: Request, payload: OTPVerifyPayload) -> JSONRespons
     user = _user(request)
     ok = await _db(request).verify_otp(user.id, payload.code)
     if ok:
-        request.app.state.stats.inc_otp_success()
+        _app = _get_fastapi_app(request)
+        _app.state.stats.inc_otp_success()
         return JSONResponse({"ok": True})
     else:
-        request.app.state.stats.inc_otp_failure()
+        _app = _get_fastapi_app(request)
+        _app.state.stats.inc_otp_failure()
         await _audit_failure(request, "otp_failed", "Invalid OTP code")
         return JSONResponse({"ok": False, "detail": "Invalid OTP"}, status_code=401)
 
@@ -599,7 +624,8 @@ async def login_backup(request: Request) -> JSONResponse:
     )
     # Redirect is fixed to root after backup-code recovery; add `next` to BackupCodeBody if needed.
     response = _json_response({"ok": True, "redirect": safe_next("/", "/")})
-    request.app.state.stats.inc_backup_code_used()
+    _app = _get_fastapi_app(request)
+    _app.state.stats.inc_backup_code_used()
     set_session_cookie(response, token, request.scope, config)
     return response
 
@@ -642,9 +668,10 @@ async def login_complete(request: Request) -> JSONResponse:
         username=user.username,
         ip=client_ip(request.scope),
         user_agent=user_agent(request.scope),
-        detail="Passkey sign‑in",
+        detail="Passkey sign-in",
     )
-    request.app.state.stats.inc_auth_success()
+    _app = _get_fastapi_app(request)
+    _app.state.stats.inc_auth_success()
     response = _json_response({"ok": True, "redirect": safe_next(target, "/")})
     set_session_cookie(response, token, request.scope, config)
     clear_challenge_cookie(response, request.scope, config)

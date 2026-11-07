@@ -161,9 +161,7 @@ class WebAuthnConfig(BaseModel):
             ipaddress.ip_address(host)
         except ValueError:
             return host
-        if host not in {"127.0.0.1", "::1"}:
-            raise ValueError("WebAuthn RP IDs cannot be bare IP addresses")
-        return host
+        raise ValueError("WebAuthn RP IDs cannot be bare IP addresses")
 
     @field_validator("allowed_origins")
     @classmethod

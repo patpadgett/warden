@@ -53,6 +53,10 @@ WARDEN_SETUP_TOKEN='my-long-one-time-code' warden serve
 The code must be at least 12 characters after removing punctuation. If no code
 is active (for example after it expires), restart Warden to generate a fresh one.
 
+For a non-`localhost` hostname during development, run `warden serve --dev-tls`
+to generate a self-signed certificate under `/tmp/opencode/warden-dev-tls`
+(override with `--tls-dir`). Browsers still need to trust that certificate.
+
 ## Deployment
 
 Three methods: **host** (systemd / bare metal), **docker**, **helm** (Kubernetes). Pick one.
@@ -231,7 +235,16 @@ fast. All relative paths are resolved from the directory containing
 | `public_url` | unset | Canonical admin origin, e.g. `https://warden.home.lan`. |
 | `request_timeout_seconds` | `60` | Default upstream timeout. |
 | `health_interval_seconds` | `30` | Dashboard health-check interval. |
+| `cleanup_interval_seconds` | `3600` | How often expired sessions/challenges are pruned. Set `0` to disable. |
+| `vacuum_enabled` | `true` | Run `VACUUM` after cleanup on SQLite (ignored on PostgreSQL, which uses autovacuum). |
+| `max_vacuum_bytes` | `104857600` | Only vacuum SQLite when the database is larger than this many bytes. |
+| `max_body_size_mb` | `10` | Maximum request body size in MB (deprecated; kept for compatibility). |
+| `max_sessions_per_user` | unset | Maximum concurrent sessions per user (`null` disables). |
 | `log_level` | `info` | `debug`, `info`, `warning`, `error`, or `critical`. |
+| `log_file` | unset | Write logs to this path instead of stderr. |
+| `log_rotation` | `size` | `size` for size-based rotation or `time` for time-based rotation. |
+| `log_max_size_mb` | `10` | Rotate after this many MB (size mode). |
+| `log_backup_count` | `5` | Number of rotated log files to keep. |
 | `rate_limiter` | unset | Rate limiting: `backend` (`memory` or `redis`), `redis_url`, `ttl` (seconds). Memory is process-local; multi-worker requires Redis. |
 
 ### `server.tls`
@@ -259,6 +272,25 @@ during renewal so webroot challenges keep working.
 | `challenge_ttl_seconds` | `300` | Lifetime of a ceremony challenge. |
 | `allowed_origins` | `[]` | Extra origins allowed to run passkey ceremonies. |
 
+### `email`
+
+Optional SMTP settings. When enabled, `POST /_warden/api/invites` emails the first-login invite token to the user's address instead of only returning it to the admin.
+
+| Key | Default | Purpose |
+| --- | --- | --- |
+| `enabled` | `false` | Send invite emails through SMTP. |
+| `host` | `localhost` | SMTP server hostname. |
+| `port` | `587` | SMTP server port. |
+| `user` | unset | SMTP username (omit for anonymous/relay auth). |
+| `password` | unset | SMTP password. |
+| `starttls` | `true` | Upgrade the SMTP connection with STARTTLS. |
+| `from_address` | `warden@localhost` | `From:` address for invite mail. |
+| `subject_prefix` | `Your first-login invite` | Subject prefix for invite mail. |
+
+Keep SMTP credentials in a file readable only by the Warden service user. Invite
+tokens are single-use and expire; email delivery failure is logged but does not
+block invite creation, so the admin can still copy the token from the response.
+
 ### `database`
 
 | Key | Default | Purpose |
@@ -269,15 +301,36 @@ during renewal so webroot challenges keep working.
 
 PostgreSQL / CockroachDB adapter (`warden.db_postgres.PostgresDatabase`) is provided for production or distributed deployments. SQLite remains the default (zero-config).
 
+#### PostgreSQL setup
+
+Install the PostgreSQL extra, create a database and role, then point Warden at it:
+
+```bash
+pip install 'warden[postgres]'
+
+createuser --pwprompt warden
+createdb --owner=warden warden
+```
+
+```yaml
+database:
+  type: postgres
+  url: postgresql+asyncpg://warden:secret@localhost:5432/warden
+```
+
+The adapter uses SQLAlchemy Core with `asyncpg`; CockroachDB works over its PostgreSQL wire protocol. Warden creates and migrates the schema on startup. `warden backup` only handles SQLite — for PostgreSQL use `pg_dump` (or your managed provider's snapshot tooling).
+
 The database stores the admin account, passkey public keys, hashed sessions, mesh private keys, challenges, settings, and the audit log. Back it up and keep it private.
 
 ### Database schema and migrations
 
-Warden ships with an embedded, transactional schema-migration system so that upgrading between versions never leaves the database behind. The current schema version is defined by the `SCHEMA_VERSION` constant (currently `3`). Each upgrade step is a plain-SQL script stored in the `_MIGRATIONS` dictionary, keyed by the target version:
+Warden ships with an embedded, transactional schema-migration system so that upgrading between versions never leaves the database behind. The current schema version is defined by the `SCHEMA_VERSION` constant (currently `5`). Each upgrade step is a plain-SQL script stored in the `_MIGRATIONS` dictionary, keyed by the target version:
 
 - **v1** – Users, settings, and the audit log (initial schema).
 - **v2** – WireGuard `mesh_peers` table for peer configuration.
 - **v3** – Credentials, sessions, challenges, backup codes, and OTP secrets (passkeys and MFA).
+- **v4** – `invites` table for first-login passkey registration.
+- **v5** – `users.email` column for invite delivery and account notices.
 
 When `Database.init()` runs, it reads the highest `version` already recorded in `schema_migrations` and applies every script for versions greater than that, in order, inside a single `BEGIN IMMEDIATE` transaction. If the DB already contains a newer version than this build supports, initialization fails loudly instead of silently applying a stale schema. SQLite runs the migration inside `BEGIN IMMEDIATE`; PostgreSQL inlines the same logic with `async with self.engine.begin()` and uses PostgreSQL-native types (`BIGINT GENERATED ALWAYS AS IDENTITY`, `DOUBLE PRECISION`, `BYTEA`, `BOOLEAN`, etc.).
 
@@ -315,7 +368,91 @@ logs. The `Users` page lets administrators view users and toggle the `is_admin`
 flag. There is no second-tier "roles" system — every privileged action is gated
 on the `is_admin` flag.
 
+### Inviting a user
+
+New accounts start with no passkey and cannot sign in until they register one.
+The admin creates the account and a single-use invite:
+
+1. `POST /_warden/api/users` creates the user (optionally with `email`). The
+   account is locked until it has a passkey.
+2. `POST /_warden/api/invites` with `{"user_id": 2, "expires_in": 86400}`
+   returns a one-time token. If `email.enabled` is true, the token is also
+   emailed to the user's address.
+3. The user opens `/_warden/invite/complete?token=...`, which runs
+   `POST /_warden/auth/invite/begin` and registers a passkey via
+   `POST /_warden/auth/invite/complete`. The invite is consumed only after the
+   passkey verifies successfully, so a failed ceremony can be retried with the
+   same token until it expires.
+
+Invites are hashed at rest, expire (default `86400` seconds), and are marked
+used exactly once.
+
 ---
+
+## API reference
+
+All mutations require an authenticated admin session, the admin `Host`, and the
+`X-Warden-Request: 1` header. The live OpenAPI schema is served at
+`/_warden/openapi.json` (Swagger UI at `/_warden/docs`).
+
+### Authentication and setup
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/_warden/health` | Public liveness/version/setup status. |
+| `POST` | `/_warden/auth/setup/begin` | Start first-run admin passkey registration. |
+| `POST` | `/_warden/auth/setup/complete` | Finish first-run registration and create the admin session. |
+| `POST` | `/_warden/auth/login/begin` | Start passkey sign-in. |
+| `POST` | `/_warden/auth/login/complete` | Finish passkey sign-in. |
+| `POST` | `/_warden/auth/login/backup` | Sign in with a backup code. |
+| `POST` | `/_warden/auth/logout` | Revoke the current session. |
+| `POST` | `/_warden/auth/invite/begin` | Start invited-user passkey registration. |
+| `POST` | `/_warden/auth/invite/complete` | Finish invited-user registration. |
+| `POST` | `/_warden/auth/otp/setup` | Provision TOTP for the current user. |
+| `POST` | `/_warden/auth/otp/verify` | Verify a TOTP code. |
+| `POST` | `/_warden/auth/register/begin` | Add another passkey for the current user. |
+| `POST` | `/_warden/auth/register/complete` | Finish adding a passkey. |
+
+### Admin API
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/_warden/api/status` | Instance status snapshot. |
+| `GET` | `/_warden/api/database/health` | Database health. |
+| `POST` | `/_warden/api/users` | Create a user (optionally with `email`). |
+| `PATCH` | `/_warden/api/users/{id}` | Update display name, email, or `is_admin`. |
+| `DELETE` | `/_warden/api/users/{id}` | Delete a user and their credentials/sessions. |
+| `POST` | `/_warden/api/invites` | Create a single-use first-login invite. |
+| `POST` | `/_warden/api/services` | Add a route. |
+| `PUT` | `/_warden/api/services/{host}` | Replace a route. |
+| `DELETE` | `/_warden/api/services/{host}` | Delete a route. |
+| `GET` | `/_warden/api/config` | Export the effective YAML. |
+| `GET` | `/_warden/api/config/export` | Download the YAML file. |
+| `POST` | `/_warden/api/config/import` | Import YAML (validated). |
+| `POST` | `/_warden/api/config/validate` | Validate YAML without saving. |
+| `POST` | `/_warden/api/config` | Save YAML changes. |
+| `PATCH` | `/_warden/api/passkeys/{id}` | Rename a passkey. |
+| `DELETE` | `/_warden/api/passkeys/{id}` | Remove a passkey. |
+| `DELETE` | `/_warden/api/sessions/{id}` | Revoke one session. |
+| `POST` | `/_warden/api/sessions/revoke-others` | Revoke all other sessions. |
+| `GET` | `/_warden/api/backup_codes` | List backup codes. |
+| `POST` | `/_warden/api/backup_codes` | Generate a backup code. |
+| `GET` | `/_warden/api/audit/export` | Export audit events (`limit`, `offset`). |
+| `POST` | `/_warden/api/mesh/peers` | Add a WireGuard peer. |
+| `GET` | `/_warden/api/mesh/peers/{id}/config` | Download a peer config. |
+| `DELETE` | `/_warden/api/mesh/peers/{id}` | Remove a peer. |
+| `POST` | `/_warden/api/mesh/apply` | Write and apply the hub config. |
+| `GET` | `/_warden/api/mesh/status` | Interface and peer status. |
+| `POST` | `/_warden/api/mesh/rotate-hub-key` | Rotate the hub key. |
+| `POST` | `/_warden/api/proxy/reset-clients` | Drop pooled upstream clients. |
+
+### Metrics
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/_warden/metrics` | Prometheus metrics (admin host/session). |
+| `GET` | `/metrics` | Alias for the metrics endpoint. |
+| `GET` | `/metrics/view` | HTML metrics snapshot. |
 
 ## Monitoring & Metrics
 
@@ -490,6 +627,8 @@ serve                 run the proxy and dashboard
   --host ADDR         bind override
   --port PORT         HTTP port override
   --https-port PORT   HTTPS port override
+  --dev-tls           generate/use a self-signed cert and force HTTPS
+  --tls-dir PATH      directory for --dev-tls cert/key (default: /tmp/opencode/warden-dev-tls)
   --no-access-log     hide per-request logs
 
 init                  write a starter warden.yaml
@@ -508,6 +647,8 @@ config show            print effective warden.yaml
 
 certs status [--json]
 certs renew [--dry-run]
+
+backup                write a timestamped, mode-0600 SQLite backup next to the DB
 
 auth reset [--yes]    delete the account, passkeys, sessions, settings, audit log, and mesh peers
                       (restart to generate a new setup code)
@@ -627,9 +768,12 @@ The metric `warden_backup_code_used_total` records each successful backup‑code
 Back up your configuration, database, and TLS certificates.
 
 - the YAML config (contains secrets such as mesh settings and renewal hooks),
-- the SQLite database (use `sqlite3 warden.db ".backup backup.db"` or stop Warden
-  first),
+- the SQLite database — run `warden backup` for an atomic, mode-0600 copy, or
+  stop Warden and copy the file,
 - TLS certificates and keys if not managed by certbot.
+
+`warden backup` writes `warden.db.backup-YYYYMMDD-HHMMSS` next to the configured
+database. It is SQLite-only; use `pg_dump` for PostgreSQL.
 
 To recover access when every passkey is lost:
 

@@ -149,6 +149,9 @@ class TestPostgresDatabaseInit:
             MagicMock(),  # CREATE INDEX idx_invites_token
             MagicMock(),  # CREATE INDEX idx_invites_used
             insert_result,  # v4 insert version
+            # v5: add users.email
+            MagicMock(),  # ALTER TABLE users ADD COLUMN email
+            insert_result,  # v5 insert version
         ]
         # Build a proper async context manager for the engine.begin() call.
         mock_cm = AsyncMock()
@@ -378,6 +381,66 @@ class TestPostgresDatabaseUsers:
         assert updated is True
         session.execute.assert_called_once()
         session.commit.assert_called_once()
+
+    async def test_update_user_email(self) -> None:
+        session = _MockSession()
+        session.execute.return_value.rowcount = 1
+        db, _ = await self._make_db(session=session)
+        updated = await db.update_user_email(1, "pat@example.com")
+        assert updated is True
+        session.execute.assert_called_once()
+        session.commit.assert_called_once()
+
+    # ---------------------------------------------------------------- invites
+    async def test_create_invite(self) -> None:
+        session = _MockSession()
+        session.execute.return_value = _Result(scalar=7)
+        db, _ = await self._make_db(session=session)
+        invite_id = await db.create_invite(1, "invite-token", NOW + 3600, now=NOW)
+        assert invite_id == 7
+        session.commit.assert_called_once()
+        statement = session.execute.call_args[0][0]
+        params = statement.compile().params
+        assert params["user_id"] == 1
+        assert params["expires_at"] == NOW + 3600
+        assert params["used"] == 0
+        assert params["token_hash"] != "invite-token"
+        assert len(params["token_hash"]) == 64
+
+    async def test_get_invite_found(self) -> None:
+        row = _row(
+            id=7, user_id=1, token_hash="h", expires_at=NOW + 3600,
+            used=0, created_at=NOW,
+        )
+        session, result = _MockSession(), MagicMock()
+        result.fetchone.return_value = row
+        session.execute.return_value = result
+        db, _ = await self._make_db(session=session)
+        invite = await db.get_invite("invite-token")
+        assert invite is not None
+        assert invite["id"] == 7
+        assert invite["user_id"] == 1
+        assert invite["used"] == 0
+
+    async def test_get_invite_not_found(self) -> None:
+        session, result = _MockSession(), MagicMock()
+        result.fetchone.return_value = None
+        session.execute.return_value = result
+        db, _ = await self._make_db(session=session)
+        assert await db.get_invite("missing") is None
+
+    async def test_mark_invite_used(self) -> None:
+        session = _MockSession()
+        session.execute.return_value.rowcount = 1
+        db, _ = await self._make_db(session=session)
+        assert await db.mark_invite_used(7) is True
+        session.commit.assert_called_once()
+
+    async def test_mark_invite_used_not_found(self) -> None:
+        session = _MockSession()
+        session.execute.return_value.rowcount = 0
+        db, _ = await self._make_db(session=session)
+        assert await db.mark_invite_used(99) is False
 
 
 # ---------------------------------------------------------------------------

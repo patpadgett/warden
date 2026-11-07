@@ -26,7 +26,7 @@ Audit run: 2026-11-02 (EST). No files were changed during the audit.
 | T11 | L | **Dead code: discarded `request.stream()` no-op in `handle_http`; a `try/except` in `metrics_api` that can never fire; an unused `scheme` variable in `_rewrite_location`.** | `warden/proxy.py`, `warden/admin/routes.py` | FIXED |
 
 ## Recommended fix order (per user instruction)
-1. Missing items: T2, T3, T4, T5 — **completed** (362 tests pass, coverage 78.00%).
-2. Next highest-priority items: T6, T7, T8, T10, T11, T0, T1 — **completed** (362 tests pass, coverage 78.00%).
+1. Missing items: T2, T3, T4, T5 — **completed** (389 tests pass, coverage 78.12%).
+2. Next highest-priority items: T6, T7, T8, T10, T11, T0, T1 — **completed** (389 tests pass, coverage 78.12%).
    - T0 (security): `warden/middleware.py` now enforces `is_admin` on the admin block; verified by `tests/test_admin_security.py::test_non_admin_denied_on_admin_host`.
    - T1 (self-registration): invite/first-login flow implemented (`create_invite` API, `begin_invite_registration`, `invite_begin`, `complete_invite_registration`); verified end-to-end at service and API level.

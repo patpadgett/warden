@@ -83,18 +83,28 @@ class WardenMiddleware:
         if scope["type"] not in {"http", "websocket"}:
             await self.app(scope, receive, send)
             return
-        # Expose the FastAPI app on the scope so route matching works.
-        # WardenMiddleware wraps ExceptionMiddleware -> AsyncExitStackMiddleware -> FastAPI app.
-        _scope_app = self.app
-        _depth = 0
-        while _depth < 5:
-            if hasattr(_scope_app, "routes"):
-                break
-            if not hasattr(_scope_app, "app"):
-                break
-            _scope_app = _scope_app.app
-            _depth += 1
-        scope["app"] = _scope_app
+        # FastAPI/Starlette set scope["app"] to the application instance before
+        # calling the middleware stack. Keep that reference (it exposes
+        # ``state``); only fall back to walking the chain if it is missing.
+        if not hasattr(scope.get("app"), "state"):
+            _scope_app = self.app
+            _depth = 0
+            while _depth < 10:
+                if hasattr(_scope_app, "state"):
+                    break
+                if not hasattr(_scope_app, "app"):
+                    break
+                _scope_app = _scope_app.app
+                _depth += 1
+            scope["app"] = _scope_app
+        import logging
+        logger = logging.getLogger("warden.middleware")
+        logger.debug(
+            "WardenMiddleware: scope['app'] type=%s, routes=%s, state=%s",
+            type(scope.get("app")).__name__,
+            hasattr(scope.get("app"), "routes"),
+            hasattr(scope.get("app"), "state"),
+        )
         config = self.manager.config
         host = get_host(scope)
         path = scope.get("path", "/")
@@ -209,11 +219,45 @@ class WardenMiddleware:
             )
             return
 
-        route = self._find_route(scope, path, method)
+        route = config.match_route(host)
         if route is None:
             await self._not_found(scope, receive, send, host)
             return
-        await self._call_app(scope, receive, send, config)
+        if not route.enabled:
+            await self._not_found(
+                scope,
+                receive,
+                send,
+                host,
+                title="This service is paused",
+                message=(
+                    "This service is paused in Warden. Enable it in the dashboard "
+                    "to restore access."
+                ),
+            )
+            return
+
+        if route.auth and not route.is_public_path(path):
+            if session is None:
+                target = login_url(scope, config, next_from_scope(scope))
+                if request_wants_json(scope):
+                    await self._json_unauthorized(
+                        "Sign in to continue.", extra={"login_url": target}
+                    )(scope, receive, send)
+                    return
+                if method in {"GET", "HEAD"}:
+                    response = self._redirect(target)
+                    await response(scope, receive, send)
+                    return
+                await self._json_unauthorized(
+                    "Sign in to continue.", extra={"login_url": target}
+                )(scope, receive, send)
+                return
+            user = session.user
+        else:
+            user = None
+
+        await self.proxy.handle_http(scope, receive, send, route, user)
 
 
     def _find_route(self, scope: MutableMapping[str, Any], path: str, method: str) -> Any | None:

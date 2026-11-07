@@ -41,7 +41,20 @@ server:
 
   # request_timeout_seconds: 60
   # health_interval_seconds: 30
+
+  # Cleanup and maintenance. cleanup_interval_seconds: 0 disables the loop.
+  # cleanup_interval_seconds: 3600
+  # vacuum_enabled: true
+  # max_vacuum_bytes: 104857600
+  # max_body_size_mb: 10
+  # max_sessions_per_user: 10
+
+  # Logging. log_rotation is "size" or "time".
   # log_level: info
+  # log_file: /var/log/warden/warden.log
+  # log_rotation: size
+  # log_max_size_mb: 10
+  # log_backup_count: 5
 
   # TLS is required for passkeys on anything other than localhost. Provide a
   # PEM certificate and key. Warden serves HTTPS on https_port and runs a small
@@ -73,6 +86,18 @@ webauthn:
   # allowed_origins:
   #   - https://warden.home.lan
   #   - https://warden.home.lan:8443
+
+# Optional SMTP delivery for first-login invite emails. If disabled, the invite
+# token is returned by POST /_warden/api/invites for the admin to copy.
+# email:
+#   enabled: true
+#   host: smtp.example.com
+#   port: 587
+#   user: warden
+#   password: secret
+#   starttls: true
+#   from_address: warden@example.com
+#   subject_prefix: Your first-login invite
 
 mesh:
   # Optional WireGuard hub. Requires wireguard-tools (wg, wg-quick) and enough

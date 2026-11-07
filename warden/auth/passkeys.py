@@ -644,8 +644,6 @@ class PasskeyService:
         if int(payload.get("user_id", -1)) != user.id:
             raise AuthError("This registration belongs to a different account.", 403)
 
-        await self.db.mark_invite_used(int(invite["id"]))
-
         challenge_bytes = _base64url_decode(payload["challenge"])
         try:
             verification = verify_registration_response(
@@ -678,6 +676,7 @@ class PasskeyService:
             backup_eligible=verification.credential_backed_up,
             backup_state=verification.credential_backed_up,
         )
+        await self.db.mark_invite_used(int(invite["id"]))
         return {"flow": "invite", "user": user, "credential": saved}
 
 

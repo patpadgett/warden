@@ -367,13 +367,13 @@ def cmd_serve(args: argparse.Namespace) -> int:
     config = manager.config
     # Dev TLS mode: generate a temporary self‑signed certificate if requested.
     if getattr(args, "dev_tls", False):
-        # Use a deterministic location under /tmp/opencode for dev files.
-        dev_dir = Path("/tmp/opencode/warden-dev-tls")
+        # Use a deterministic location under --tls-dir for dev files.
+        dev_dir = Path(args.tls_dir)
         dev_dir.mkdir(parents=True, exist_ok=True)
         cert_path = dev_dir / "cert.pem"
         key_path = dev_dir / "key.pem"
         if not cert_path.is_file() or not key_path.is_file():
-            # Generate a self‑signed cert using the admin host as the CN.
+            # Generate a self-signed cert using the admin host as the CN.
             from warden.tls import generate_self_signed_cert
 
             generate_self_signed_cert(cert_path, key_path, common_name=config.server.admin_host)
@@ -836,6 +836,7 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--port", type=int, default=None, help="HTTP port override")
     serve.add_argument("--https-port", type=int, default=None, help="HTTPS port override")
     serve.add_argument("--dev-tls", action="store_true", help="Generate a temporary self‑signed certificate and enable TLS for local development")
+    serve.add_argument("--tls-dir", default="/tmp/opencode/warden-dev-tls", help="Directory for dev TLS certificates (default: /tmp/opencode/warden-dev-tls)")
     serve.add_argument("--no-access-log", action="store_true", help="disable uvicorn access log")
     serve.set_defaults(func=cmd_serve)
 
