@@ -93,13 +93,26 @@ If you want WireGuard mesh, install `wireguard-tools`, set `mesh.enabled: true`,
 Best for quick trials or container hosts. Uses `deploy/docker/docker-compose.yml`.
 
 ```bash
-mkdir -p config
+mkdir -p config certs
 cp warden.yaml.example config/warden.yaml
-# edit config/warden.yaml
+# edit config/warden.yaml: admin_host, rp_id, routes, TLS paths
+chown -R 10001:10001 config   # the image runs as the unprivileged "warden" user
 
-docker compose up -d --build
-docker compose logs -f warden
+docker compose -f deploy/docker/docker-compose.yml up -d --build
+docker compose -f deploy/docker/docker-compose.yml logs -f warden
 ```
+
+The compose file builds from the repository root (`context: ../..`) and bind-mounts
+`config/` and `certs/` from the repository root. The image runs Warden as an
+unprivileged user, keeps the database in a named volume, and expects
+`WARDEN_CONFIG=/config/warden.yaml`. Edit the port mappings and `public_url` if
+you want standard ports. Mount certificates read-only and point
+`certfile`/`keyfile` at the mounted paths.
+
+WireGuard is not container-friendly by default. The example keeps it disabled. If
+you enable it in Docker, the container needs host networking, `/dev/net/tun`,
+`NET_ADMIN`, the WireGuard tools, and a writable config path. Running the mesh on
+the host (or in a privileged sidecar) is usually simpler.
 
 The compose file builds from source, maps ports `8080`/`8443`, and keeps the DB in a named volume. Mesh is disabled by default; enable only with host-network privileges.
 
@@ -111,21 +124,30 @@ Best for clusters. Uses `deploy/helm/` chart.
 # From repo root
 helm install warden deploy/helm/ \
   --set image.tag=latest \
+  --set config.adminHost=warden.home.lan \
+  --set webauthn.rpId=home.lan \
   --set database.type=sqlite
 ```
+
+The chart seeds `/config/warden.yaml` from the chart's ConfigMap on first start.
+Set `persistence.enabled=true` to keep the config, database, and mesh keys on a
+PVC across restarts; otherwise they live in an `emptyDir`. After first start,
+prefer editing the ConfigMap through `helm upgrade` (or delete the persisted
+`warden.yaml` to re-seed it) so Helm remains the source of truth. `webauthn.rpId`
+must be the parent domain of `config.adminHost` and every protected route.
 
 For mesh in Kubernetes, apply the DaemonSet (privileged, `hostNetwork`, `/etc/wireguard` hostPath):
 
 ```bash
+# Edit the ConfigMap in the manifest first (interface, address, endpoint).
 kubectl apply -f deploy/helm/warden-mesh-daemonset.yaml
 ```
 
-Then expose via a standard Kubernetes Service for ports 8080/8443.
+The DaemonSet runs a standalone Warden instance to manage the host's WireGuard
+interface; do not run it alongside the chart's Deployment on the same node, since
+both bind ports 8080/8443. Expose the Deployment through the chart's Service.
 
-## Observability
-
-- **OpenAPI documentation**: The admin API OpenAPI schema is available at `/_warden/openapi.json` and an interactive Swagger UI is served at `/_warden/docs`. Both endpoints are protected by admin‑host authentication.
-- **Prometheus metrics**: Request metrics, authentication counters, OTP counters, role changes, backup code usage, and service latency are exposed at `/_warden/metrics` and also at `/metrics`. These endpoints require an authenticated admin session and the correct host.
+### First production setup
 
 1. **Give Warden a name.** `warden.home.lan` is the dashboard; `home.lan` is the
    WebAuthn RP ID. Create DNS records (or `/etc/hosts` entries) for the admin host
@@ -238,7 +260,7 @@ fast. All relative paths are resolved from the directory containing
 | `cleanup_interval_seconds` | `3600` | How often expired sessions/challenges are pruned. Set `0` to disable. |
 | `vacuum_enabled` | `true` | Run `VACUUM` after cleanup on SQLite (ignored on PostgreSQL, which uses autovacuum). |
 | `max_vacuum_bytes` | `104857600` | Only vacuum SQLite when the database is larger than this many bytes. |
-| `max_body_size_mb` | `10` | Maximum request body size in MB (deprecated; kept for compatibility). |
+| `max_body_size_mb` | `10` | Maximum request body size in MB, enforced for both `Content-Length` and chunked uploads. |
 | `max_sessions_per_user` | unset | Maximum concurrent sessions per user (`null` disables). |
 | `log_level` | `info` | `debug`, `info`, `warning`, `error`, or `critical`. |
 | `log_file` | unset | Write logs to this path instead of stderr. |
@@ -359,6 +381,11 @@ See the fully commented example in
 | `health_path` | `/` | Path used by the health monitor. |
 | `icon` | unset | Emoji or short label for the dashboard. |
 | `websocket_subprotocols` | `[]` | Allowed WebSocket subprotocols (e.g., `graphql-ws`). Empty = allow all. |
+| `websocket_max_size` | `16777216` | Maximum size in bytes of a single incoming WebSocket message. |
+| `allowed_ips` | `[]` | CIDR networks allowed to access this route. Unparseable client IPs are denied when this is set. |
+| `denied_ips` | `[]` | CIDR networks explicitly blocked from this route. Checked before `allowed_ips`. |
+| `blocked_user_agents` | `[]` | Substrings matched case-insensitively against `User-Agent`; matches get `403`. |
+| `blocked_paths` | `[]` | Exact paths or `prefix/*` patterns blocked with `403`. |
 
 ## User Access Control
 
@@ -412,6 +439,29 @@ All mutations require an authenticated admin session, the admin `Host`, and the
 | `POST` | `/_warden/auth/otp/verify` | Verify a TOTP code. |
 | `POST` | `/_warden/auth/register/begin` | Add another passkey for the current user. |
 | `POST` | `/_warden/auth/register/complete` | Finish adding a passkey. |
+| `GET` | `/_warden/auth/unsupported` | Explain that a browser lacks WebAuthn/secure-context support. |
+| `GET` | `/_warden/login` | Sign-in page (redirects an existing session). |
+| `GET` | `/_warden/setup` | First-run registration page. |
+| `GET` | `/_warden/invite/complete` | Invited-user registration page (`?token=...`). |
+| `GET` | `/_warden/openapi.json` | OpenAPI schema (admin host). |
+| `GET` | `/_warden/docs` | Swagger UI (admin host). |
+
+### Dashboard pages
+
+These HTML pages are served only on the admin host and require an admin session
+(except during first-run setup).
+
+| Path | Purpose |
+| --- | --- |
+| `/` | Overview dashboard. |
+| `/activity` | Audit log, with JSON/CSV export. |
+| `/backup_codes` | Recovery codes and one-time code generation. |
+| `/config` | YAML editor, validation, import/export. |
+| `/mesh` | WireGuard peers, hub key, apply/status. |
+| `/passkeys` | Registered passkeys and active sessions. |
+| `/tls` | Certificate status and renewal. |
+| `/users` | User list, invites, admin flag. |
+| `/metrics/view` | In-app metrics snapshot. |
 
 ### Admin API
 
@@ -436,8 +486,9 @@ All mutations require an authenticated admin session, the admin `Host`, and the
 | `DELETE` | `/_warden/api/sessions/{id}` | Revoke one session. |
 | `POST` | `/_warden/api/sessions/revoke-others` | Revoke all other sessions. |
 | `GET` | `/_warden/api/backup_codes` | List backup codes. |
-| `POST` | `/_warden/api/backup_codes` | Generate a backup code. |
-| `GET` | `/_warden/api/audit/export` | Export audit events (`limit`, `offset`). |
+| `POST` | `/_warden/api/backup_codes` | Generate a backup code and return its plaintext once. |
+| `POST` | `/backup_codes/generate` | Dashboard form: generate a code and render it once. |
+| `GET` | `/_warden/api/audit/export` | Export audit events (`limit`, `offset`; JSON or `format=csv`). |
 | `POST` | `/_warden/api/mesh/peers` | Add a WireGuard peer. |
 | `GET` | `/_warden/api/mesh/peers/{id}/config` | Download a peer config. |
 | `DELETE` | `/_warden/api/mesh/peers/{id}` | Remove a peer. |
@@ -456,14 +507,17 @@ All mutations require an authenticated admin session, the admin `Host`, and the
 
 ## Monitoring & Metrics
 
+The admin API OpenAPI schema is available at `GET /_warden/openapi.json` and an
+interactive Swagger UI is served at `GET /_warden/docs`. Both require the admin
+`Host` and an authenticated admin session.
+
 Warden exposes a rich set of Prometheus metrics at `GET /_warden/metrics`:
 
 * `warden_uptime_seconds` – process uptime.
 * Per‑host request, error, latency, and authenticated request counters (`warden_route_*`).
 * Authentication counters: `warden_auth_success_total` and `warden_auth_failure_total`.
 * OTP counters: `warden_otp_success_total` and `warden_otp_failure_total`.
-* Admin and authentication counters: `warden_auth_success_total`, `warden_auth_failure_total`, `warden_otp_success_total`, `warden_otp_failure_total`.
-* Backup‑code counters: `warden_backup_code_used_total` – total times a backup code was used for login.
+* Backup‑code counter: `warden_backup_code_used_total` – total times a backup code was used for login.
 
 A starter Grafana dashboard is provided in `grafana/warden-dashboard.json`. Import it into Grafana (Config → Dashboards → Import) with a `Prometheus` datasource.
 
@@ -500,7 +554,9 @@ The live snapshot is viewable inside the app at `/metrics/view` (admin-host prot
 3. The dashboard queries `warden_uptime_seconds`, `sum(warden_route_requests_total)`, `warden_auth_success_total`, etc., from the Prometheus server.
 4. No additional Grafana plugin is needed (plain Prometheus expressions).
 
----
+## Dashboard
+
+The admin dashboard has these pages:
 
 - **Services** — add, edit, pause, and remove routes; open services; see latency,
   status, and traffic.
@@ -668,50 +724,11 @@ mesh peer remove NAME [--yes]
 
 ## Docker
 
-The image runs Warden as an unprivileged user and installs it from the local
-source tree.
-
-```bash
-mkdir -p config
-cp warden.yaml.example config/warden.yaml
-# edit config/warden.yaml: admin_host, rp_id, routes, TLS paths
-docker compose up -d --build
-docker compose logs -f warden
-```
-
-The compose file maps host `8080`/`8443` to the container's default ports and
-keeps the database in a named volume. Edit the mappings and `public_url` if you
-want standard ports. Mount certificates read-only and point `certfile`/`keyfile`
-at the mounted paths.
-
-WireGuard is not container-friendly by default. The example keeps it disabled. If
-you enable it in Docker, the container needs host networking, `/dev/net/tun`,
-`NET_ADMIN`, the WireGuard tools, and a writable config path. Running the mesh on
-the host (or in a privileged sidecar) is usually simpler.
+See the [Docker deployment section](#docker) above for build/run instructions.
 
 ## systemd
 
-[`deploy/warden.service`](deploy/warden.service) is a starting point for a
-non-mesh deployment. A typical install:
-
-```bash
-sudo useradd --system --home /var/lib/warden --shell /usr/sbin/nologin warden
-sudo install -d -o warden -g warden -m 750 /var/lib/warden /etc/warden
-sudo install -d -o warden -g warden -m 755 /var/www/warden-acme
-
-sudo python3 -m venv /opt/warden
-sudo /opt/warden/bin/pip install /path/to/warden
-sudo install -m 644 deploy/warden.service /etc/systemd/system/warden.service
-
-sudo systemctl daemon-reload
-sudo systemctl enable --now warden
-sudo journalctl -u warden -f
-```
-
-The unit grants `CAP_NET_BIND_SERVICE` for ports below 1024 and uses systemd
-sandboxing. Adjust `ExecStart`, the config path, and `ReadWritePaths` to match
-your install. The unit deliberately targets proxy mode; a process that manages a
-WireGuard interface needs broader privileges than the sandbox allows.
+See the [host deployment section](#host-systemd--bare-metal) above for install instructions.
 
 ## Security notes
 
@@ -752,16 +769,17 @@ Warden supports optional TOTP‑based two‑factor authentication.
 
 ## Backup codes UI
 
-The admin dashboard now includes a **Backup Codes** page at ``/backup_codes``. It lists all backup codes belonging to the current admin user, showing when each code was created and whether it has been used. A **Generate New Backup Code** button creates a fresh code via the ``POST /_warden/api/backup_codes`` endpoint and redirects back to the list.
+The admin dashboard includes a **Backup Codes** page at `/backup_codes`. It lists
+the current admin user's recovery codes with creation and usage timestamps. The
+**Generate New Backup Code** button creates one 16-character code (64 bits), stores
+only its hash, and shows the plaintext once so it can be copied. Backup codes are
+single-use and log in through `POST /_warden/auth/login/backup`.
 
-Warden supports one‑time backup codes for account recovery. An admin can generate a code via the API and a user can log in with it.
-
-- `POST /_warden/api/backup_codes` – creates a new backup code (requires an authenticated admin session).
+- `POST /_warden/api/backup_codes` – creates a backup code and returns the plaintext once.
+- `POST /backup_codes/generate` – dashboard form that renders the plaintext once.
 - `POST /_warden/auth/login/backup` – logs in using a backup code.
 
 The metric `warden_backup_code_used_total` records each successful backup‑code login.
-
-- `GET /_warden/api/audit/export` — export the audit trail as JSON (authenticated admin session).
 
 ## Backup and recovery
 
@@ -785,6 +803,32 @@ warden auth reset --yes
 This deletes the admin account, all passkeys, sessions, settings, audit log, and
 mesh peers (complete system reset). To start the whole instance over, remove the
 database as well.
+
+## Versioning and releases
+
+Warden uses [setuptools-scm](https://setuptools-scm.readthedocs.io/): the version is
+derived from git tags, so there is no hard-coded version number in `pyproject.toml`.
+
+- **Tagged release**: create an annotated tag such as `v1.2.3` on `main` and push it:
+
+  ```bash
+  git tag -a v1.2.3 -m "Warden 1.2.3"
+  git push origin v1.2.3
+  ```
+
+  The `Release` workflow builds the sdist/wheel, publishes them to PyPI via
+  trusted publishing (OIDC), and creates a GitHub release with the artifacts.
+
+- **Development checkout**: an untagged commit on `main` reports a development
+  version such as `1.2.4.dev5` (commits since the last tag). `warden --version`
+  prints whatever setuptools-scm resolves.
+
+- **PyPI setup (one-time)**: create the `warden-mesh` project on PyPI and add
+  this repository as a trusted publisher (GitHub Actions, environment `pypi`).
+  Until that is configured, the `publish-pypi` job will fail; the GitHub release
+  job still runs.
+
+PyPI trusted publishing requires no API token secret.
 
 ## Development
 

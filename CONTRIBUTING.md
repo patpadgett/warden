@@ -25,7 +25,7 @@ We welcome contributions! This guide will help you get started.
    - Add type hints where appropriate.
    - Update or add unit tests under `tests/`.
    - Ensure `pytest` passes (`pytest -q`).
-   - Verify coverage is tracked (`pytest --cov=warden`); 100% is the goal, current baseline 75.75%.
+   - Verify coverage is tracked (`pytest --cov=warden`); current baseline ~78% (fail-under 75).
    - Note: docstrings are kept concise and single; `ConfigManager` duplicate was cleaned.
 
 5. **Run the test suite**:
@@ -52,7 +52,10 @@ We welcome contributions! This guide will help you get started.
 - Use `black`/`ruff` formatting.  The project uses `ruff` as the primary formatter.
 - Write docstrings in Google style.
 
-## Reporting Issues
+## Versioning
+
+Versions come from git tags via setuptools-scm; do not edit a version string in
+`pyproject.toml`. To cut a release, tag `main` with `vX.Y.Z` and push the tag.
 
 If you encounter a bug or have a feature request, please open an issue on GitHub with:
 - A clear description.

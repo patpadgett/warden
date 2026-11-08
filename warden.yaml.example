@@ -70,7 +70,11 @@ server:
 
 database:
   # Contains the admin account, passkeys, sessions, mesh keys, and audit log.
+  # type: sqlite (default) or postgres.
+  type: sqlite
   path: /var/lib/warden/warden.db
+  # Only used when type: postgres. The adapter creates and migrates the schema.
+  # url: postgresql+asyncpg://warden:secret@localhost:5432/warden
 
 webauthn:
   # Passkeys are scoped to this domain. Changing it invalidates existing
@@ -81,6 +85,8 @@ webauthn:
   # optional. Some platform passkeys only support user verification, so the
   # default works everywhere.
   require_user_verification: false
+  # Lifetime of a passkey ceremony challenge, in seconds.
+  challenge_ttl_seconds: 300
   # Extra browser origins allowed to complete passkey ceremonies, e.g. when
   # the dashboard is reached through another hostname or port.
   # allowed_origins:
@@ -137,6 +143,11 @@ routes:
   #   enabled: true              pause routing without deleting the route
   #   websocket: true            allow WebSocket upgrades
   #   websocket_subprotocols:    allowed subprotocols (e.g., graphql-ws, wss)
+  #   websocket_max_size:        max bytes per WebSocket message
+  #   allowed_ips:              CIDR networks allowed to access the route
+  #   denied_ips:               CIDR networks blocked from the route
+  #   blocked_user_agents:      User-Agent substrings that return 403
+  #   blocked_paths:            exact paths or prefix/* patterns that return 403
   #   preserve_host: false       forward the public Host instead of the upstream
   #   verify_tls: true           verify an https upstream certificate
   #   rewrite_redirects: true    rewrite upstream Locations to the public host
