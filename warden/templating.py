@@ -10,8 +10,8 @@ from pathlib import Path
 
 from starlette.templating import Jinja2Templates
 
-from warden.i18n import _
 from warden import __version__
+from warden.i18n import _
 from warden.utils import (
     absolute_time,
     humanize_bytes,
