@@ -70,6 +70,32 @@ _STRIP_REQUEST_HEADERS = HOP_BY_HOP | {
 }
 
 
+class _BodyTooLarge(Exception):
+    """Raised when a request body exceeds ``server.max_body_size_mb``."""
+
+
+class _BoundedReceive:
+    """ASGI ``receive`` wrapper that rejects bodies above a byte limit.
+
+    Enforcing only ``Content-Length`` is insufficient because chunked requests
+    do not carry one. This wrapper counts bytes as Starlette reads them, so the
+    limit also applies to chunked uploads.
+    """
+
+    def __init__(self, receive: Any, max_bytes: int) -> None:
+        self._receive = receive
+        self._max_bytes = max_bytes
+        self._total = 0
+
+    async def __call__(self) -> Any:
+        message = await self._receive()
+        if message.get("type") == "http.request":
+            self._total += len(message.get("body", b""))
+            if self._total > self._max_bytes:
+                raise _BodyTooLarge
+        return message
+
+
 class ProxyEngine:
     """Reverse‑proxy engine handling HTTP and WebSocket streams.
 
@@ -485,13 +511,14 @@ class ProxyEngine:
         # Enforce max request body size.
         # Per RFC 7230, Transfer-Encoding (e.g. chunked) takes precedence over
         # Content-Length; when it is present, ignore Content-Length for the size
-        # check instead of rejecting the request.
+        # check instead of rejecting the request. The actual read below is
+        # bounded as well so chunked bodies cannot bypass the limit.
+        max_bytes = config.server.max_body_size_mb * 1024 * 1024
         content_length = headers.get("content-length")
         transfer_encoding = headers.get("transfer-encoding")
         if content_length and not transfer_encoding:
             try:
                 length_bytes = int(content_length)
-                max_bytes = config.server.max_body_size_mb * 1024 * 1024
                 if length_bytes > max_bytes:
                     response = self._error_response(
                         scope,
@@ -503,13 +530,19 @@ class ProxyEngine:
                     return
             except ValueError:
                 pass
-        request = Request(scope, receive)
-        content_length = headers.get("content-length")
-        has_body = bool(
-            (content_length and content_length != "0") or "transfer-encoding" in headers
-        )
+        request = Request(scope, _BoundedReceive(receive, max_bytes))
+        try:
+            request_body = await request.body()
+        except _BodyTooLarge:
+            response = self._error_response(
+                scope,
+                status=413,
+                title="Request entity too large",
+                message=f"Request body exceeds the maximum limit of {config.server.max_body_size_mb} MB.",
+            )
+            await self._send(response, scope, receive, send)
+            return
         url = upstream_url(route, scope.get("raw_path"), scope.get("query_string", b""))
-        config = self.manager.config
         timeout_seconds = route.timeout_seconds or config.server.request_timeout_seconds
         timeout = httpx.Timeout(timeout_seconds, connect=min(10.0, timeout_seconds))
         started = time.perf_counter()
@@ -522,7 +555,7 @@ class ProxyEngine:
                 method,
                 url,
                 headers=request_headers,
-                content=await request.body(),
+                content=request_body,
                 timeout=timeout,
             )
             upstream = await client.send(upstream_request, stream=True, follow_redirects=False)

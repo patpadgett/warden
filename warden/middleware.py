@@ -15,7 +15,6 @@ from collections.abc import Callable, MutableMapping
 from typing import Any
 
 from starlette.datastructures import Headers, MutableHeaders
-from starlette.routing import Match
 from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.websockets import WebSocket
 
@@ -205,6 +204,15 @@ class WardenMiddleware:
                     response.headers["Cache-Control"] = "no-store"
                     await response(scope, receive, send)
                     return
+            elif method not in {"GET", "HEAD", "OPTIONS"} and not check_origin(scope, config):
+                # Admin UI forms post without the API header, so apply the
+                # origin check to every other state-changing admin request.
+                response = JSONResponse(
+                    {"detail": "Cross-origin request blocked."}, status_code=403
+                )
+                response.headers["Cache-Control"] = "no-store"
+                await response(scope, receive, send)
+                return
             await self._call_app(scope, receive, send, config)
             return
 
