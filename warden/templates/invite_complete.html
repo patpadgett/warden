@@ -20,7 +20,7 @@
         <span class="badge badge-accent">single-use</span>
       </div>
       <div class="panel-body">
-        <form id="invite-form" novalidate class="form-stack">
+        <form id="invite-form" novalidate class="form-stack" data-token="{{ token|default('') }}" data-token-display="{{ token_display|default('') }}">
           <label class="field">
             <span class="field-label">Invite token</span>
             <input class="input" id="invite-token" name="token" type="text" autocomplete="off" spellcheck="false" placeholder="D7x9-...-K2m4Q" required autofocus>
@@ -67,126 +67,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
-(function () {
-  "use strict";
-  var token = "{{ token|default('') }}";
-  var display = "{{ token_display|default('') }}";
-
-  var form = document.getElementById("invite-form");
-  var tokenInput = document.getElementById("invite-token");
-  var nameInput = document.getElementById("passkey-name");
-  var tokenDisplay = document.getElementById("invite-token-display");
-  var errorBox = document.getElementById("invite-error");
-  var registerBtn = document.getElementById("register-btn");
-  var copyBtn = document.getElementById("copy-btn");
-
-  if (display) { tokenDisplay.value = display; }
-  if (token) { tokenInput.value = token; tokenDisplay.value = token; }
-
-  if (copyBtn) {
-    copyBtn.addEventListener("click", function () {
-      tokenDisplay.select();
-      document.execCommand("copy");
-      var original = copyBtn.textContent;
-      copyBtn.textContent = "Copied";
-      setTimeout(function () { copyBtn.textContent = original; }, 1500);
-    });
-  }
-
-  form.addEventListener("submit", function (e) {
-    e.preventDefault();
-    errorBox.hidden = true;
-    var tokenVal = tokenInput.value.trim();
-    var nameVal = nameInput.value.trim();
-    if (!tokenVal) {
-      errorBox.querySelector(".panel-body").textContent = "Please enter your invite token.";
-      errorBox.hidden = false;
-      tokenInput.focus();
-      return;
-    }
-    if (!nameVal) {
-      errorBox.querySelector(".panel-body").textContent = "Please give this passkey a name.";
-      errorBox.hidden = false;
-      nameInput.focus();
-      return;
-    }
-    registerBtn.disabled = true;
-    registerBtn.querySelector("span:first-child").textContent = "Registering…";
-    startRegistration(tokenVal, nameVal);
-  });
-
-  function startRegistration(token, name) {
-    registerBtn.disabled = true;
-    registerBtn.querySelector("span:first-child").textContent = "Setting up…";
-
-    fetch("/_warden/auth/invite/begin", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ token: token, name: name })
-    })
-      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
-      .then(function (result) {
-        if (!result.ok) {
-          var err = result.body.detail || "Registration failed.";
-          errorBox.querySelector(".panel-body").textContent = err;
-          errorBox.hidden = false;
-          registerBtn.disabled = false;
-          registerBtn.querySelector("span:first-child").textContent = "Register passkey";
-          throw new Error(err);
-        }
-        return result.body;
-      })
-      .then(function (data) {
-        return navigator.credentials.create({ publicKey: data.publicKey })
-          .then(function (cred) {
-            return {
-              id: cred.id,
-              type: cred.type,
-              rawId: cred.rawId,
-              response: {
-                clientDataJSON: cred.response.clientDataJSON,
-                attestationObject: cred.response.attestationObject,
-                trans: cred.response.transports,
-                authenticatorData: cred.response.authenticatorData,
-                signature: cred.response.signature,
-                userHandle: cred.response.userHandle,
-                publicKeyAlgorithm: cred.response.publicKeyAlgorithm,
-                publicKey: cred.response.publicKey,
-              },
-              getClientExtensionResults: function () { return cred.getClientExtensionResults(); },
-              invite_token: token,
-            };
-          });
-      })
-      .then(function (cred) {
-        return fetch("/_warden/auth/invite/complete", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          credentials: "include",
-          body: JSON.stringify({ token: token, credential: cred })
-        })
-        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
-        .then(function (result) {
-          if (!result.ok) {
-            var err = result.body.detail || "Registration failed.";
-            errorBox.querySelector(".panel-body").textContent = err;
-            errorBox.hidden = false;
-            registerBtn.disabled = false;
-            registerBtn.querySelector("span:first-child").textContent = "Register passkey";
-            throw new Error(err);
-          }
-          window.location.href = result.body.redirect || "/";
-        });
-      })
-      .catch(function (err) {
-        errorBox.querySelector(".panel-body").textContent = err.message || "Registration failed.";
-        errorBox.hidden = false;
-        registerBtn.disabled = false;
-        registerBtn.querySelector("span:first-child").textContent = "Register passkey";
-      });
-  }
-})();
-</script>
+<script src="{{ static_prefix }}/invite.js" defer></script>
 {% endblock %}

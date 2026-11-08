@@ -6,12 +6,10 @@ import logging
 import os
 import secrets
 import time
-from datetime import datetime, timedelta
 from typing import Any
 from urllib.parse import urlsplit
-from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.openapi.docs import get_swagger_ui_html
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.responses import JSONResponse, Response
@@ -20,7 +18,6 @@ from warden.auth.passkeys import hash_backup_code
 from warden.auth.sessions import clear_session_cookie
 from warden.config import (
     ConfigError,
-    EmailConfig,
     RouteConfig,
     WardenConfig,
     restart_required,
@@ -36,12 +33,10 @@ from warden.utils import (
     external_url,
     get_host,
     login_url,
-    redirect,
     relative_time,
     route_color,
     route_initials,
 )
-from fastapi import FastAPI
 
 logger = logging.getLogger("warden.admin")
 router = APIRouter()
@@ -495,7 +490,7 @@ async def dashboard(request: Request) -> Response:
     ]
     credentials = await db.list_credentials(user.id)
     sessions = await db.list_sessions(user.id, current_token_hash=session.token_hash)
-    audit = await db.list_audit(60)
+    await db.list_audit(60)
     last_login_row = await db.list_audit(1, event="login_succeeded")
     last_login = last_login_row[0] if last_login_row else None
     since = time.time() - 86400
@@ -715,27 +710,29 @@ async def backup_codes_page(request: Request) -> Response:
 
 @router.post("/backup_codes/generate")
 async def generate_backup_code_page(request: Request) -> Response:
-    """Generate a new backup code for the logged‑in admin user.
+    """Generate a new backup code for the logged-in admin user.
 
     * Protected by ``_guard_host`` (admin host only).
-    * Creates a unique 10‑character code, stores it in the DB, and redirects back
-      to the backup‑code list page.
-    * If a unique code cannot be generated after several attempts, a 500 error is
-      raised.
+    * Creates a unique 16-character code (64 bits of entropy), stores only its
+      hash, and renders the list page with the plaintext code shown once.
     """
     _guard_host(request)
     user = _user(request)
     db = _db(request)
     for _ in range(10):
-        code = uuid4().hex[:10]
+        code = secrets.token_hex(8)
         try:
-            await db.add_backup_code(user.id, code)
+            await db.add_backup_code(user.id, hash_backup_code(code))
             break
         except AlreadyExistsError:
             continue
     else:
         raise HTTPException(status_code=500, detail="Could not generate unique backup code")
-    return redirect("/backup_codes")
+    await _audit(request, "backup_code_created", "Generated a recovery code")
+    codes = await db.list_backup_codes(user.id)
+    context = _base_context(request, page="backup_codes", title="Backup Codes")
+    context.update({"codes": codes, "new_code": code})
+    return _render(request, "backup_codes.html", context)
 
 @router.get("/_warden/api/backup_codes")
 async def list_backup_codes(request: Request) -> JSONResponse:
@@ -756,7 +753,7 @@ async def create_backup_code(request: Request) -> JSONResponse:
     user = _user(request)
     db = _db(request)
     for _ in range(10):
-        code = uuid4().hex[:10]
+        code = secrets.token_hex(8)
         try:
             await db.add_backup_code(user.id, hash_backup_code(code))
             break
@@ -764,6 +761,7 @@ async def create_backup_code(request: Request) -> JSONResponse:
             continue
     else:
         raise HTTPException(status_code=500, detail="Could not generate unique backup code")
+    await _audit(request, "backup_code_created", "Generated a recovery code")
     return JSONResponse({"ok": True, "code": code})
 
 
@@ -1107,23 +1105,3 @@ async def audit_export(request: Request, limit: int = 500, offset: int = 0, even
         writer.writerows(result)
         return Response(buf.getvalue(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=audit.csv"})
     return JSONResponse({"count": total, "offset": offset, "limit": limit, "events": result})
-
-@router.post("/api/backup_codes/bulk")
-async def backup_codes_bulk(request: Request, count: int = 5) -> JSONResponse:
-    """Generate multiple backup codes at once (admin)."""
-    _guard_host(request)
-    user = _user(request)
-    db = _db(request)
-    codes = []
-    for _ in range(min(count, 20)):
-        for attempt in range(10):
-            code = uuid4().hex[:10]
-            try:
-                await db.add_backup_code(user.id, code)
-                codes.append(code)
-                break
-            except AlreadyExistsError:
-                continue
-        else:
-            return JSONResponse({"ok": False, "detail": "Could not generate unique code"}, status_code=500)
-    return JSONResponse({"created": len(codes), "codes": codes})

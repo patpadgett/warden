@@ -5,7 +5,7 @@
   <div>
     <p class="panel-title" style="margin-bottom: 6px;">Recovery</p>
     <h1 class="page-title">Backup codes.</h1>
-    <p class="subhead">One-time recovery codes for lost passkeys. Each code can be used once to log in via <code class="code">/auth/login/backup</code>. Only admin users can generate new codes.</p>
+    <p class="subhead">One-time recovery codes for lost passkeys. Each code can be used once to log in via <code class="code">/_warden/auth/login/backup</code>. Only admin users can generate new codes.</p>
   </div>
   <div class="page-actions">
     <form method="post" action="/backup_codes/generate" id="backup-form">
@@ -16,6 +16,20 @@
     </form>
   </div>
 </section>
+
+{% if new_code %}
+<div class="panel" style="border-color: var(--accent); background: var(--accent-soft); margin-bottom: 16px;">
+  <div class="panel-body">
+    <p class="panel-title" style="margin-bottom: 8px;">New backup code</p>
+    <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 10px;">Copy this code now. It will not be shown again.</p>
+    <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+      <code class="code mono" id="new-backup-code" style="font-size: 18px; letter-spacing: 0.08em;">{{ new_code }}</code>
+      <button class="btn" type="button" id="copy-backup-code">Copy</button>
+    </div>
+  </div>
+</div>
+<script src="{{ static_prefix }}/backup_codes.js" defer></script>
+{% endif %}
 
 <div class="panel">
   <div class="panel-body" style="padding: 0; overflow-x: auto;">
@@ -32,7 +46,7 @@
         <tr>
           <td class="mono">{{ c.id }}</td>
           <td>{{ c.created_at|absolute_time }}</td>
-          <td style="color: var(--text-muted);">{{ c.used_at|default('—', true) }}</td>
+          <td style="color: var(--text-muted);">{% if c.used_at %}{{ c.used_at|absolute_time }}{% else %}—{% endif %}</td>
         </tr>
         {% else %}
         <tr><td colspan="3" style="text-align: center; padding: 32px; color: var(--text-muted);">No backup codes yet.</td></tr>

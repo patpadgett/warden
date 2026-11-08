@@ -9,8 +9,7 @@ import time
 from functools import wraps
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI, HTTPException, Request
 from pydantic import BaseModel, ValidationError
 from starlette.responses import JSONResponse, Response
 
@@ -287,9 +286,7 @@ async def login_page(request: Request) -> Response:
     """
     _config(request)
     next_path = safe_next(request.query_params.get("next"), "/")
-    session = None
-    if request.cookies.get("warden_session"):
-        session = await authenticate_scope(request.scope, _db(request))
+    session = await authenticate_scope(request.scope, _db(request))
     if session is not None:
         target = next_path if next_path != "/" else "/"
         return redirect(target)
@@ -779,12 +776,9 @@ async def logout(request: Request) -> JSONResponse:
     if not _origin_ok(request):
         return _error("Cross-origin request blocked.", 403)
     config = _config(request)
-    token = request.cookies.get("warden_session")
     session = await authenticate_scope(request.scope, _db(request))
-    if token:
-        from warden.auth.sessions import hash_token
-        await _db(request).revoke_session_by_hash(hash_token(token))
     if session:
+        await _db(request).revoke_session_by_hash(session.token_hash)
         await _db(request).audit(
             "logout",
             user_id=session.user_id,

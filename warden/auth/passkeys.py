@@ -404,8 +404,6 @@ class PasskeyService:
                     backup_state=verification.credential_backed_up,
                     setup_mode=True,
                 )
-                # Generate initial backup codes for the first user
-                await self.generate_backup_codes(user.id)
             except AlreadyExistsError as exc:
                 raise AuthError("This Warden instance has already been set up.", 409) from exc
             return {
