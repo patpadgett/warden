@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 import time
 from unittest.mock import patch
 
-import hashlib
 import pytest
+
 from warden.auth.sessions import hash_token
 from warden.db import Database
 
@@ -110,10 +111,6 @@ async def test_create_invite_api(app_and_path, client) -> None:
     missing = api(payload={"user_id": 999999})
     assert missing.status_code == 400
     assert "does not exist" in missing.json()["detail"]
-
-
-def hash_token(token: str) -> str:
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 @pytest.mark.asyncio

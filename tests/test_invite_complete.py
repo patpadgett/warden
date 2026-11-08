@@ -1,6 +1,5 @@
 """Tests for the first-login completion UI route."""
 
-import pytest
 
 
 class TestInviteCompleteRoute:

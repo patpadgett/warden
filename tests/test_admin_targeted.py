@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import pytest
-from pydantic import ValidationError
 from unittest.mock import MagicMock
 
+import pytest
 from fastapi import Request
+from pydantic import ValidationError
 
 from warden.admin.routes import (
     ConfigPayload,

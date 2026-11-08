@@ -6,8 +6,6 @@ import time
 
 import pytest
 
-from warden.db import Database
-
 
 class TestInviteBeginRoute:
     """Exercise error branches in POST /_warden/auth/invite/begin."""

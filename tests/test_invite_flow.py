@@ -1,10 +1,8 @@
 import hashlib
 import time
-
-import pytest
 from unittest.mock import patch
 
-from warden.auth.passkeys import PasskeyService
+import pytest
 
 # Verifier stub used to isolate the invite flow from WebAuthn response
 # verification. The trust boundary is: invite validation, challenge
@@ -112,15 +110,14 @@ async def test_invite_expired(app_and_path):
     token = "INVITE-EXPIRED-9999"
     await db.create_invite(user.id, token, time.time() - 3600)
 
-    with patch("warden.auth.passkeys.verify_registration_response"):
-        with pytest.raises(Exception):
-            await pk.complete_invite_registration(
-                credential=_credential(),
-                challenge_id="dead",
-                origin="http://admin.home.lan",
-                config=app.state.config,
-                invite_token=token,
-            )
+    with patch("warden.auth.passkeys.verify_registration_response"), pytest.raises(Exception):
+        await pk.complete_invite_registration(
+            credential=_credential(),
+            challenge_id="dead",
+            origin="http://admin.home.lan",
+            config=app.state.config,
+            invite_token=token,
+        )
 
 
 @pytest.mark.asyncio
