@@ -12,14 +12,39 @@ service:
   meshPort: 51820
 
 config:
-  adminHost: localhost
+  # Hostname of the dashboard. Must be the WebAuthn RP ID or a subdomain of it.
+  adminHost: warden.home.lan
   tlsEnabled: false
   meshEnabled: false
   meshInterface: wg0
+
+webauthn:
+  # Parent domain shared by the admin host and every protected route.
+  # Example: adminHost=warden.home.lan -> rpId=home.lan
+  rpId: home.lan
 
 database:
   type: sqlite
   url: ""
 
+# Extra environment variables for the container.
 env: {}
+
+persistence:
+  enabled: false
+  size: 1Gi
+  storageClass: ""
+  existingClaim: ""
+
 resources: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL

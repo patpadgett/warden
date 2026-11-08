@@ -3,7 +3,7 @@ name: warden
 description: Self-hosted reverse proxy and home dashboard (passkey-protected)
 type: application
 version: 0.1.0
-appVersion: "0.1.14"
+appVersion: "0.1.1"
 keywords:
   - reverse-proxy
   - dashboard

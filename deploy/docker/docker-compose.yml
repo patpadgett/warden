@@ -1,6 +1,8 @@
 services:
   warden:
-    build: .
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
     image: warden:local
     container_name: warden
     restart: unless-stopped
@@ -21,11 +23,11 @@ services:
     volumes:
       # Mount the directory, not just the file: Warden replaces the YAML
       # atomically when you save config from the dashboard.
-      - ./config:/config
+      - ../../config:/config
       - warden-data:/var/lib/warden
       # Certificates are read-only. Point server.tls.certfile/keyfile at these
       # paths, or mount your own certificate directory.
-      - ./certs:/etc/letsencrypt:ro
+      - ../../certs:/etc/letsencrypt:ro
     # cap_add:
     #   - NET_ADMIN
     # devices:

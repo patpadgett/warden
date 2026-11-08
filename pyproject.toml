@@ -80,3 +80,8 @@ target-version = "py311"
 
 [tool.setuptools_scm]
 write_to = "warden/_version.py"
+version_scheme = "guess-next-dev"
+local_scheme = "no-local-version"
+# Docker builds do not include .git, so fall back to a static version
+# instead of failing when no SCM metadata is available.
+fallback_version = "0.1.0"

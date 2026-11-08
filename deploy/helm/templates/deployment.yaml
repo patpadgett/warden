@@ -14,25 +14,75 @@ spec:
       labels:
         app: warden
     spec:
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      initContainers:
+        - name: seed-config
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - sh
+            - -c
+            - |
+              if [ ! -f /config/warden.yaml ]; then
+                cp /config-template/warden.yaml /config/warden.yaml
+              fi
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: config-template
+              mountPath: /config-template
+              readOnly: true
+            - name: data
+              mountPath: /config
       containers:
       - name: warden
         image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 10 }}
         ports:
         - containerPort: 8080
+          name: admin
         - containerPort: 8443
+          name: https
         - containerPort: 51820
+          name: mesh-udp
           protocol: UDP
         env:
         - name: WARDEN_CONFIG
-          value: /etc/warden/warden.yaml
+          value: /config/warden.yaml
+        {{- range $name, $value := .Values.env }}
+        - name: {{ $name }}
+          value: {{ $value | quote }}
+        {{- end }}
+        livenessProbe:
+          httpGet:
+            path: /_warden/health
+            port: admin
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /_warden/health
+            port: admin
+          initialDelaySeconds: 5
+          periodSeconds: 10
         volumeMounts:
-        - name: config
-          mountPath: /etc/warden
+        - name: data
+          mountPath: /config
         - name: data
           mountPath: /var/lib/warden
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
       volumes:
-      - name: config
+      - name: config-template
         configMap:
           name: {{ include "warden.fullname" . }}-config
       - name: data
+        {{- if .Values.persistence.enabled }}
+        persistentVolumeClaim:
+          claimName: {{ .Values.persistence.existingClaim | default (include "warden.fullname" .) }}
+        {{- else }}
         emptyDir: {}
+        {{- end }}

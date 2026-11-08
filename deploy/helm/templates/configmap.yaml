@@ -5,9 +5,11 @@ metadata:
 data:
   warden.yaml: |
     server:
-      admin_host: {{ .Values.config.adminHost }}
+      admin_host: {{ .Values.config.adminHost | quote }}
       tls:
         enabled: {{ .Values.config.tlsEnabled }}
+    webauthn:
+      rp_id: {{ .Values.webauthn.rpId | quote }}
     mesh:
       enabled: {{ .Values.config.meshEnabled }}
       interface: {{ .Values.config.meshInterface }}

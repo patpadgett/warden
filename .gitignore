@@ -15,8 +15,9 @@ warden.yaml
 state/
 certs/
 
-# Tooling
-.pytest_cache/
+# Scratch
+tmp/
+
 .ruff_cache/
 .coverage
 htmlcov/

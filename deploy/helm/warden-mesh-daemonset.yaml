@@ -1,28 +1,55 @@
+# Standalone WireGuard mesh node for Kubernetes.
+#
+# This manifest runs a privileged Warden instance with host networking so it can
+# manage the host's WireGuard interface. It is intended as the Warden workload on
+# a node that needs mesh connectivity. If you already run the Helm chart, do not
+# deploy this alongside it on the same node: both bind ports 8080/8443.
+#
+# Edit the ConfigMap values (interface, address, listen_port, endpoint) before
+# applying. The database is stored on the host so hub/peer keys survive restarts.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: warden-mesh-config
+  labels:
+    app: warden-mesh
+data:
+  warden.yaml: |
+    server:
+      admin_host: localhost
+    database:
+      path: /var/lib/warden-mesh/warden.db
+      type: sqlite
+    mesh:
+      enabled: true
+      interface: wg0
+      address: 10.44.0.1/24
+      listen_port: 51820
+      config_path: /etc/wireguard/wg0.conf
+---
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   name: warden-mesh
   labels:
-    app: warden
+    app: warden-mesh
 spec:
   selector:
     matchLabels:
-      app: warden
+      app: warden-mesh
   template:
     metadata:
       labels:
-        app: warden
+        app: warden-mesh
     spec:
       hostNetwork: true
-      hostPID: true
       containers:
       - name: warden
         image: warden:latest
+        imagePullPolicy: IfNotPresent
         securityContext:
           privileged: true
-          capabilities:
-            add:
-              - NET_ADMIN
+          runAsUser: 0
         ports:
         - containerPort: 8080
           name: admin
@@ -37,16 +64,19 @@ spec:
         volumeMounts:
         - name: warden-config
           mountPath: /etc/warden
+          readOnly: true
         - name: warden-data
-          mountPath: /var/lib/warden
+          mountPath: /var/lib/warden-mesh
         - name: wireguard-config
           mountPath: /etc/wireguard
       volumes:
       - name: warden-config
         configMap:
-          name: warden-config
+          name: warden-mesh-config
       - name: warden-data
-        emptyDir: {}
+        hostPath:
+          path: /var/lib/warden-mesh
+          type: DirectoryOrCreate
       - name: wireguard-config
         hostPath:
           path: /etc/wireguard
