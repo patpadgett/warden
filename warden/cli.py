@@ -491,14 +491,18 @@ def cmd_check(args: argparse.Namespace) -> int:
         validate_runtime_files(config)
     except TLSError as exc:
         problems.append(str(exc))
-    db_path = config.database_path
+    db_path = config.database_path if config.database.type != "postgres" else None
+    db_display = (
+        config.database.url if config.database.type == "postgres" else str(db_path)
+    )
     mesh_path = config.mesh_config_path
     report = {
         "ok": not problems,
         "version": __version__,
         "config": str(manager.path),
         "admin_host": config.server.admin_host,
-        "database": str(db_path),
+        "database": db_display,
+        "database_type": config.database.type,
         "routes": len(config.routes),
         "tls": tls,
         "webauthn_rp_id": config.webauthn.rp_id,
@@ -513,7 +517,7 @@ def cmd_check(args: argparse.Namespace) -> int:
     print(f"Warden {__version__}")
     print(f"  config      {manager.path}")
     print(f"  admin       {config.server.admin_host}")
-    print(f"  database    {db_path}")
+    print(f"  database    {db_display}")
     print(f"  routes      {len(config.routes)}")
     print(f"  rp id       {config.webauthn.rp_id}")
     print(f"  cookie      {config.server.cookie_domain or 'host-only'}")
@@ -624,13 +628,35 @@ async def _renew_now(manager: ConfigManager, command: str) -> int:
     return 0
 
 
-# ----------------------------------------------------------------------- backup
+# ------------------------------------------------------------------------ database
+def _open_database(config: WardenConfig) -> Database:
+    """Open the configured database backend (SQLite or PostgreSQL)."""
+    if config.database.type == "postgres":
+        try:
+            from warden.db_postgres import PostgresDatabase
+        except ImportError as exc:  # pragma: no cover - depends on optional extra
+            raise DatabaseError(
+                "PostgreSQL support requires the optional dependencies. "
+                "Install Warden with: pip install 'warden-mesh[postgres]'"
+            ) from exc
+        url = config.database.url or "postgresql+asyncpg://localhost/warden"
+        return PostgresDatabase(url)
+    return Database(config.database_path)
+
+
+# ------------------------------------------------------------------------ backup
 def cmd_backup(args: argparse.Namespace) -> int:
     """Back up the SQLite database to a timestamped file."""
     try:
         manager = _load_manager(args)
     except ConfigError as exc:
         _print_error(exc.pretty())
+        return 1
+    if manager.config.database.type == "postgres":
+        _print_error(
+            "warden backup only supports SQLite. Use pg_dump against "
+            "database.url for PostgreSQL backups."
+        )
         return 1
     db_path = manager.config.database_path
     if not db_path.exists():
@@ -658,22 +684,30 @@ def cmd_auth_reset(args: argparse.Namespace) -> int:
     except ConfigError as exc:
         _print_error(exc.pretty())
         return 1
-    db_path = manager.config.database_path
-    if not db_path.exists():
-        _print_error(f"database not found: {db_path}")
+    target = (
+        manager.config.database.url
+        if manager.config.database.type == "postgres"
+        else str(manager.config.database_path)
+    )
+    if manager.config.database.type != "postgres" and not manager.config.database_path.exists():
+        _print_error(f"database not found: {manager.config.database_path}")
         return 1
     if not asyncio.run(
         _confirm(
-            f"Delete every user, passkey, and session from {db_path}? This cannot be undone.",
+            f"Delete every user, passkey, and session from {target}? This cannot be undone.",
             args.yes,
         )
     ):
         return 1
-    return asyncio.run(_reset_auth(db_path))
+    return asyncio.run(_reset_auth(manager.config))
 
 
-async def _reset_auth(db_path: Path) -> int:
-    db = Database(db_path)
+async def _reset_auth(config: WardenConfig) -> int:
+    try:
+        db = _open_database(config)
+    except DatabaseError as exc:
+        _print_error(str(exc))
+        return 1
     try:
         await db.init()
         users = await db.user_count()
@@ -694,7 +728,7 @@ def _mesh_manager(args: argparse.Namespace) -> tuple[ConfigManager, Database, Me
     manager = _load_manager(args)
     if not manager.config.mesh.enabled and args.mesh_action != "status":
         raise MeshError("WireGuard mesh is disabled in warden.yaml.")
-    db = Database(manager.config.database_path)
+    db = _open_database(manager.config)
     return manager, db, MeshManager(db, manager)
 
 

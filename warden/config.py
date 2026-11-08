@@ -241,7 +241,7 @@ class ServerConfig(BaseModel):
     #: larger than this many megabytes, to avoid a long-running exclusive lock
     #: on a small database.
     max_vacuum_bytes: int = Field(default=100 * 1024 * 1024, ge=0)
-    #: Maximum request body size in MB (deprecated in favor of max_vacuum_bytes).
+    #: Maximum request body size in MB.
     max_body_size_mb: int = Field(default=10, ge=1, le=1024)
     log_level: str = "info"
     #: Maximum concurrent sessions per user. ``None`` disables the limit.
