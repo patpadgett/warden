@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from pathlib import Path
 
@@ -78,6 +79,7 @@ def generate_self_signed_cert(cert_path: Path, key_path: Path, common_name: str)
             encryption_algorithm=serialization.NoEncryption(),
         )
     )
+    os.chmod(key_path, 0o600)
 
 
 class TLSError(Exception):
@@ -117,7 +119,7 @@ class ACMEManager:
         config = self.manager.config
         path = config.base_dir() / ".warden" / "acme_account.key"
         if not path.exists():
-            path.parent.mkdir(parents=True, exist_ok=True)
+            path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
             with open(path, "wb") as f:
                 f.write(key.private_bytes(
@@ -125,6 +127,7 @@ class ACMEManager:
                     format=serialization.PrivateFormat.TraditionalOpenSSL,
                     encryption_algorithm=serialization.NoEncryption(),
                 ))
+            os.chmod(path, 0o600)
         return path
 
     async def request_certificate(self, domain: str, acme_url: str) -> tuple[Path, Path]:
@@ -229,6 +232,7 @@ class ACMEManager:
                 encryption_algorithm=serialization.NoEncryption(),
             ).decode("utf-8")
         )
+        os.chmod(key_path, 0o600)
         logger.info("Obtained ACME certificate for %s", domain)
         return cert_path, key_path
 
