@@ -9,12 +9,12 @@ concurrent access.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
 import sqlite3
 import time
-import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -24,107 +24,27 @@ logger = logging.getLogger(__name__)
 
 import aiosqlite
 
-SCHEMA_VERSION = 3
 
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-    display_name TEXT NOT NULL,
-    webauthn_user_id BLOB NOT NULL UNIQUE,
-    is_admin INTEGER NOT NULL DEFAULT 1,
-    created_at REAL NOT NULL,
-    recovery_token TEXT
-);
+def _sql_statements(script: str) -> list[str]:
+    """Split a migration script into individual SQLite statements.
 
-CREATE TABLE IF NOT EXISTS credentials (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    credential_id BLOB NOT NULL UNIQUE,
-    public_key BLOB NOT NULL,
-    sign_count INTEGER NOT NULL DEFAULT 0,
-    transports TEXT NOT NULL DEFAULT '[]',
-    name TEXT NOT NULL,
-    aaguid TEXT,
-    fmt TEXT,
-    user_verified INTEGER NOT NULL DEFAULT 0,
-    backup_eligible INTEGER NOT NULL DEFAULT 0,
-    backup_state INTEGER NOT NULL DEFAULT 0,
-    created_at REAL NOT NULL,
-    last_used_at REAL
-);
-CREATE INDEX IF NOT EXISTS idx_credentials_user ON credentials(user_id);
+    ``Connection.executescript`` issues an implicit ``COMMIT`` before running,
+    which would break the per-migration transaction. Splitting the script lets
+    each step run inside an explicit ``BEGIN IMMEDIATE`` block instead.
 
-CREATE TABLE IF NOT EXISTS sessions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    token_hash TEXT NOT NULL UNIQUE,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    created_at REAL NOT NULL,
-    expires_at REAL NOT NULL,
-    last_seen_at REAL NOT NULL,
-    ip TEXT,
-    user_agent TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
-CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at);
-
-CREATE TABLE IF NOT EXISTS challenges (
-    id TEXT PRIMARY KEY,
-    kind TEXT NOT NULL,
-    payload TEXT NOT NULL,
-    created_at REAL NOT NULL,
-    expires_at REAL NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_challenges_expiry ON challenges(expires_at);
-
-CREATE TABLE IF NOT EXISTS backup_codes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    code_hash TEXT NOT NULL UNIQUE,
-    created_at REAL NOT NULL,
-    used_at REAL
-);
-CREATE INDEX IF NOT EXISTS idx_backup_codes_user ON backup_codes(user_id);
-
-CREATE TABLE IF NOT EXISTS otp_secrets (
-    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-    secret TEXT NOT NULL,
-    created_at REAL NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS audit (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    created_at REAL NOT NULL,
-    event TEXT NOT NULL,
-    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    username TEXT,
-    ip TEXT,
-    user_agent TEXT,
-    detail TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_audit_created ON audit(created_at);
-
-CREATE TABLE IF NOT EXISTS mesh_peers (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
-    public_key TEXT NOT NULL UNIQUE,
-    private_key TEXT,
-    preshared_key TEXT NOT NULL,
-    address TEXT NOT NULL UNIQUE,
-    endpoint TEXT,
-    keepalive INTEGER NOT NULL DEFAULT 25,
-    enabled INTEGER NOT NULL DEFAULT 1,
-    created_at REAL NOT NULL,
-    last_handshake REAL
-);
-
--- users table carries is_admin flag
-"""
+    Migration scripts in this module contain only plain DDL with ``;``
+    terminators and ``--`` line comments; no string literal contains a
+    semicolon, so this simple splitter is sufficient.
+    """
+    statements: list[str] = []
+    without_comments = "\n".join(
+        line.split("--", 1)[0] for line in script.splitlines()
+    )
+    for chunk in without_comments.split(";"):
+        sql = chunk.strip()
+        if sql:
+            statements.append(sql)
+    return statements
 
 
 class DatabaseError(Exception):
@@ -236,7 +156,7 @@ def _user(row: aiosqlite.Row) -> User:
         is_admin=bool(row["is_admin"]),
         created_at=float(row["created_at"]),
         recovery_token=row["recovery_token"],
-        email=row["email"] if "email" in row.keys() else None,
+        email=row["email"] if "email" in row.keys() else None,  # noqa: SIM118
     )
 
 
@@ -272,7 +192,7 @@ def _session(row: aiosqlite.Row) -> Session:
         is_admin=bool(row["u_is_admin"]),
         created_at=float(row["u_created_at"]),
         recovery_token=row["u_recovery_token"],
-        email=row["u_email"] if "u_email" in row.keys() else None,
+        email=row["u_email"] if "u_email" in row.keys() else None,  # noqa: SIM118
     )
     return Session(
         id=row["id"],
@@ -556,13 +476,30 @@ class Database:
                 raise DatabaseError(
                     f"No migration script defined for schema version {target_version}."
                 )
-            async with conn.execute("BEGIN IMMEDIATE") as _:
-                await conn.executescript(migration)
-                # Record the migration so future upgrades skip it.
+            statements = _sql_statements(migration)
+            # Version 5 only adds the ``email`` column. Databases created by
+            # older development builds may already have it, so skip the ALTER
+            # rather than failing the whole upgrade.
+            if target_version == 5:
+                async with conn.execute("PRAGMA table_info(users)") as cursor:
+                    columns = {row["name"] for row in await cursor.fetchall()}
+                if "email" in columns:
+                    statements = []
+            # ``executescript`` would implicitly commit before running, so run
+            # each statement inside an explicit transaction and record the
+            # version in the same transaction.
+            await conn.execute("BEGIN IMMEDIATE")
+            try:
+                for statement in statements:
+                    await conn.execute(statement)
                 await conn.execute(
                     "INSERT INTO schema_migrations (version, applied_on) VALUES (?, ?)",
                     (target_version, time.time()),
                 )
+                await conn.execute("COMMIT")
+            except Exception:
+                await conn.execute("ROLLBACK")
+                raise
         self._secure_files()
 
     def _require_conn(self) -> aiosqlite.Connection:
@@ -664,9 +601,11 @@ class Database:
             return await cursor.fetchone()
 
     async def mark_invite_used(self, invite_id: int) -> bool:
+        if self._conn is None:
+            await self.init()
         conn = self._require_conn()
-        async with conn.execute(
-            "UPDATE invites SET used = 1 WHERE id = ?", (invite_id,)
+        async with self._lock, conn.execute(
+            "UPDATE invites SET used = 1 WHERE id = ? AND used = 0", (invite_id,)
         ) as cursor:
             await conn.commit()
             return cursor.rowcount > 0
@@ -1065,10 +1004,13 @@ class Database:
     async def list_sessions(
         self, user_id: int, *, current_token_hash: str | None = None
     ) -> list[Session]:
-        rows = await self._fetchall(
-            f"{_SESSION_JOIN} WHERE s.user_id = ? AND s.expires_at > ? ORDER BY s.last_seen_at DESC",
-            (user_id, time.time()),
-        )
+        sql = f"{_SESSION_JOIN} WHERE s.user_id = ? AND s.expires_at > ?"
+        params: tuple[Any, ...] = (user_id, time.time())
+        if current_token_hash is not None:
+            sql += " AND s.token_hash <> ?"
+            params += (current_token_hash,)
+        sql += " ORDER BY s.last_seen_at DESC"
+        rows = await self._fetchall(sql, params)
         return [_session(row) for row in rows]
 
     async def revoke_session(self, user_id: int, session_id: int) -> bool:

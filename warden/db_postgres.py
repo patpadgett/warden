@@ -333,7 +333,7 @@ _MIGRATIONS: dict[int, str] = {
         """,
     5: """\
         -- Add user email address for invite delivery and account notices.
-        ALTER TABLE users ADD COLUMN email TEXT
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT
         """,
 }  # type: ignore[assignment]
 
@@ -399,11 +399,14 @@ class PostgresDatabase(Database):
     async def init(self) -> None:
         await self._ensure_database_exists()
         async with self.engine.begin() as conn:
-            # One-shot schema creation first: this guarantees the
-            # ``schema_migrations`` tracking table exists before the version
-            # query below. The SQLite backend in warden/db.py creates that
-            # table immediately, so this matches that ordering.
-            await conn.run_sync(lambda sync_conn: metadata.create_all(sync_conn))
+            # Only create the migration-tracking table here. The actual
+            # application schema is created by the numbered migrations below,
+            # so a fresh database does not get a ``metadata.create_all()``
+            # schema that later conflicts with ``ALTER TABLE`` steps (for
+            # example, v5 adding ``users.email``).
+            await conn.run_sync(
+                lambda sync_conn: schema_migrations.create(sync_conn, checkfirst=True)
+            )
             # Per-step schema migrations, tracking versions in
             # ``schema_migrations`` (mirrors the SQLite backend in db.py).
             result = await conn.execute(
@@ -654,6 +657,23 @@ class PostgresDatabase(Database):
 
     async def delete_user(self, user_id: int) -> bool:
         async with self.session_factory() as session:
+            # Databases created by older versions used ``metadata.create_all``
+            # without ``ON DELETE CASCADE``, so remove child rows explicitly
+            # before deleting the user.
+            await session.execute(delete(invites).where(invites.c.user_id == user_id))
+            await session.execute(
+                delete(backup_codes).where(backup_codes.c.user_id == user_id)
+            )
+            await session.execute(
+                delete(otp_secrets).where(otp_secrets.c.user_id == user_id)
+            )
+            await session.execute(delete(sessions).where(sessions.c.user_id == user_id))
+            await session.execute(
+                delete(credentials).where(credentials.c.user_id == user_id)
+            )
+            await session.execute(
+                update(audit).where(audit.c.user_id == user_id).values(user_id=None)
+            )
             result = await session.execute(delete(users).where(users.c.id == user_id))
             await session.commit()
             return result.rowcount > 0
@@ -721,7 +741,9 @@ class PostgresDatabase(Database):
     async def mark_invite_used(self, invite_id: int) -> bool:
         async with self.session_factory() as session:
             result = await session.execute(
-                update(invites).where(invites.c.id == invite_id).values(used=1)
+                update(invites)
+                .where(invites.c.id == invite_id, invites.c.used == 0)
+                .values(used=1)
             )
             await session.commit()
             return result.rowcount > 0
@@ -839,16 +861,17 @@ class PostgresDatabase(Database):
         """Delete all users, credentials, sessions, challenges, backup codes,
         OTP secrets, invites, settings, audit log, and mesh peers (auth reset)."""
         async with self.session_factory() as session:
+            # Child rows first: older databases may lack ON DELETE CASCADE.
             await session.execute(delete(invites))
-            await session.execute(delete(users))
-            await session.execute(delete(credentials))
-            await session.execute(delete(sessions))
-            await session.execute(delete(challenges))
             await session.execute(delete(backup_codes))
             await session.execute(delete(otp_secrets))
+            await session.execute(delete(sessions))
+            await session.execute(delete(credentials))
+            await session.execute(delete(challenges))
             await session.execute(delete(settings))
             await session.execute(delete(audit))
             await session.execute(delete(mesh_peers))
+            await session.execute(delete(users))
             await session.commit()
 
     # ------------------------------------------------------------------ reset / vacuum
@@ -889,8 +912,7 @@ class PostgresDatabase(Database):
                 result = await session.execute(
                     select(sessions.c.id)
                     .where(sessions.c.user_id == user_id, sessions.c.expires_at > created)
-                    .order_by(sessions.c.created_at.asc())
-                    .limit(max_sessions),
+                    .order_by(sessions.c.created_at.asc()),
                 )
                 current = [row[0] for row in result.fetchall()]
                 if len(current) >= max_sessions:
@@ -937,8 +959,12 @@ class PostgresDatabase(Database):
 
     async def list_sessions(self, user_id: int, *, current_token_hash: str | None = None) -> list[Session]:
         async with self.session_factory() as session:
-            sql = _SESSION_JOIN + "WHERE s.user_id = :uid ORDER BY s.last_seen_at DESC"
-            params: dict[str, Any] = {"uid": user_id}
+            sql = (
+                _SESSION_JOIN
+                + "WHERE s.user_id = :uid AND s.expires_at > :now "
+                + "ORDER BY s.last_seen_at DESC"
+            )
+            params: dict[str, Any] = {"uid": user_id, "now": time.time()}
             if current_token_hash is not None:
                 sql += " AND s.token_hash <> :h"
                 params["h"] = current_token_hash
@@ -1015,15 +1041,25 @@ class PostgresDatabase(Database):
             )
 
     async def consume_challenge(self, challenge_id: str, kind: str, *, now: float | None = None) -> Challenge | None:
-        now if now is not None else time.time()
+        current = now if now is not None else time.time()
         async with self.session_factory() as session:
             result = await session.execute(
                 select(challenges).where(
-                    and_(challenges.c.id == challenge_id, challenges.c.kind == kind)
+                    and_(
+                        challenges.c.id == challenge_id,
+                        challenges.c.kind == kind,
+                        challenges.c.expires_at > current,
+                    )
                 )
             )
             row = result.fetchone()
             if row is None:
+                # Remove an expired or wrong-kind challenge so it cannot be
+                # replayed later.
+                await session.execute(
+                    delete(challenges).where(challenges.c.id == challenge_id)
+                )
+                await session.commit()
                 return None
             row_data = dict(row._mapping)
             raw_payload = row_data["payload"]  # stored as JSON text; always a str at runtime
@@ -1140,7 +1176,12 @@ class PostgresDatabase(Database):
     async def use_backup_code(self, code_hash: str) -> int | None:
         async with self.session_factory() as session, session.begin():
             result = await session.execute(
-                update(backup_codes).where(backup_codes.c.code_hash == code_hash).values(used_at=time.time())
+                update(backup_codes)
+                .where(
+                    backup_codes.c.code_hash == code_hash,
+                    backup_codes.c.used_at.is_(None),
+                )
+                .values(used_at=time.time())
             )
             if result.rowcount == 0:
                 await session.commit()
