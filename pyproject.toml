@@ -79,6 +79,9 @@ filterwarnings = [
 line-length = 100
 target-version = "py311"
 
+[tool.ruff.lint.per-file-ignores]
+"warden/_version.py" = ["RUF022"]
+
 [tool.setuptools_scm]
 write_to = "warden/_version.py"
 version_scheme = "guess-next-dev"
