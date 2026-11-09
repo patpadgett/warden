@@ -194,6 +194,9 @@ class MetricsModule:
 
     def prometheus_metrics(self) -> str:
         """Export metrics in Prometheus text format."""
+        def _escape(value: str) -> str:
+            return str(value).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
         lines = []
         now = time.time()
         
@@ -204,19 +207,20 @@ class MetricsModule:
         
         # Route metrics
         for host, m in self.metrics.items():
+            host_label = _escape(host)
             lines.append(f'# HELP warden_route_requests_total Total requests for {host}')
             lines.append('# TYPE warden_route_requests_total counter')
-            lines.append(f'warden_route_requests_total{{host="{host}"}} {m.requests}')
+            lines.append(f'warden_route_requests_total{{host="{host_label}"}} {m.requests}')
             lines.append(f'# HELP warden_route_errors_total Total errors for {host}')
             lines.append('# TYPE warden_route_errors_total counter')
-            lines.append(f'warden_route_errors_total{{host="{host}"}} {m.errors}')
+            lines.append(f'warden_route_errors_total{{host="{host_label}"}} {m.errors}')
             if m.last_latency_ms is not None:
                 lines.append(f'# HELP warden_route_latency_ms Last request latency for {host}')
                 lines.append('# TYPE warden_route_latency_ms gauge')
-                lines.append(f'warden_route_latency_ms{{host="{host}"}} {m.last_latency_ms}')
+                lines.append(f'warden_route_latency_ms{{host="{host_label}"}} {m.last_latency_ms}')
             lines.append(f'# HELP warden_route_authenticated_requests_total Total authenticated requests for {host}')
             lines.append('# TYPE warden_route_authenticated_requests_total counter')
-            lines.append(f'warden_route_authenticated_requests_total{{host="{host}"}} {m.authenticated}')
+            lines.append(f'warden_route_authenticated_requests_total{{host="{host_label}"}} {m.authenticated}')
         # Auth and access metrics
         lines.append('# HELP warden_auth_success_total Total successful authentication attempts')
         lines.append('# TYPE warden_auth_success_total counter')

@@ -728,6 +728,11 @@ class Database:
             await self.init()
         conn = self._require_conn()
         async with self._lock:
+            await conn.execute("DELETE FROM credentials WHERE user_id = ?", (user_id,))
+            await conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+            await conn.execute("DELETE FROM backup_codes WHERE user_id = ?", (user_id,))
+            await conn.execute("DELETE FROM otp_secrets WHERE user_id = ?", (user_id,))
+            await conn.execute("DELETE FROM invites WHERE user_id = ?", (user_id,))
             cursor = await conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
             await conn.commit()
             changed = cursor.rowcount
