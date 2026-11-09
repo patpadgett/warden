@@ -458,6 +458,9 @@ async def update_user(request: Request, user_id: int, payload: UserUpdatePayload
     """
     _guard_host(request)
     db = _db(request)
+    user = await db.get_user(user_id)
+    if user is None:
+        return JSONResponse({"detail": "User not found."}, status_code=404)
     if payload.is_admin is not None:
         await db.update_user_admin(user_id, payload.is_admin)
     if payload.display_name is not None:
