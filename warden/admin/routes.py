@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import secrets
@@ -424,12 +425,13 @@ async def create_invite(request: Request, body: InviteCreateBody) -> JSONRespons
         # Deliver the token to the user's email address (if email is configured).
         try:
             email_cfg = _get_fastapi_app(request).state.config.email
-            if email_cfg.enabled:
-                send_email(
+            if email_cfg.enabled and user.email:
+                await asyncio.to_thread(
+                    send_email,
                     email_cfg,
-                    to=user.email or "",
-                    subject=f"[{email_cfg.subject_prefix}] Your first-login invite",
-                    body=(
+                    user.email,
+                    f"[{email_cfg.subject_prefix}] Your first-login invite",
+                    (
                         "You are invited to activate your Warden account.\n"
                         f"Token: {token}\n"
                         f"Expires in: {body.expires_in} seconds.\n"

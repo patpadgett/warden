@@ -56,6 +56,8 @@ def send_email(email: EmailConfig, to: str, subject: str, body: str) -> None:
     """
     if not email.enabled:
         raise RuntimeError("Email is not enabled in the configuration.")
+    if not to or not to.strip():
+        raise ValueError("A recipient address is required.")
     msg = _build_message(email, to, subject, body)
     with _connect(email) as client:
         client.send_message(msg)
