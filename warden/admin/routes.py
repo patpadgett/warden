@@ -61,11 +61,22 @@ class ServicePayload(BaseModel):
     auth: bool = True
     enabled: bool = True
     websocket: bool = True
+    websocket_subprotocols: list[str] = Field(default_factory=list)
+    websocket_max_size: int = 16 * 1024 * 1024
     preserve_host: bool = False
     verify_tls: bool = True
+    rewrite_redirects: bool = True
+    rewrite_cookies: bool = True
     health_path: str = "/"
+    timeout_seconds: float | None = None
     public_paths: list[str] = Field(default_factory=list)
+    headers: dict[str, str] = Field(default_factory=dict)
     icon: str | None = None
+    allowed_ips: list[str] = Field(default_factory=list)
+    denied_ips: list[str] = Field(default_factory=list)
+    rate_limit: int | None = None
+    blocked_user_agents: list[str] = Field(default_factory=list)
+    blocked_paths: list[str] = Field(default_factory=list)
 
 
 class ServiceUpdatePayload(ServicePayload):
