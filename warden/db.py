@@ -966,7 +966,8 @@ class Database:
     ) -> int:
         created = now if now is not None else time.time()
         config = getattr(self, "config", None)
-        max_sessions = getattr(getattr(config, "server", None), "max_sessions_per_user", None) if config else None
+        server_cfg = config.server if hasattr(config, "server") else config
+        max_sessions = getattr(server_cfg, "max_sessions_per_user", None) if server_cfg is not None else None
         if max_sessions is not None and max_sessions > 0:
             rows = await self._fetchall(
                 "SELECT id FROM sessions WHERE user_id = ? AND expires_at > ? ORDER BY created_at ASC",

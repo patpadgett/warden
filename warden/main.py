@@ -274,6 +274,18 @@ def create_app(
         _print_banner(manager, setup_code, setup_expires)
 
         app.state.config = manager.config
+        # Verify Redis connectivity for the rate limiter; fall back to the
+        # in-process limiter if Redis is unavailable at startup.
+        if isinstance(app.state.rate_limiter, RedisRateLimiter):
+            try:
+                if not await app.state.rate_limiter.health_check():
+                    raise RuntimeError("Redis health check returned false")
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "Redis rate limiter unavailable at startup; "
+                    "falling back to in-process RateLimiter"
+                )
+                app.state.rate_limiter = RateLimiter()
         monitor = HealthMonitor(metrics, manager)
         app.state.health_monitor = monitor
         await monitor.start()

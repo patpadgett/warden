@@ -542,7 +542,28 @@ class _InMemoryPipeline:
             elif op == "zremrangebyscore":
                 zset, min_score, max_score = cmd[1], cmd[2], cmd[3]
                 current = self._store.get(zset, {})
-                self._store[zset] = {k: v for k, v in current.items() if not (min_score <= v <= max_score)}
+                def _score_in_min(value):
+                    if isinstance(min_score, str):
+                        if min_score == "-inf":
+                            return True
+                        try:
+                            return float(min_score) <= value
+                        except ValueError:
+                            return False
+                    return min_score <= value
+                def _score_in_max(value):
+                    if isinstance(max_score, str):
+                        if max_score == "+inf":
+                            return True
+                        try:
+                            return value <= float(max_score)
+                        except ValueError:
+                            return False
+                    return value <= max_score
+                self._store[zset] = {
+                    k: v for k, v in current.items()
+                    if not (_score_in_min(v) and _score_in_max(v))
+                }
                 results.append(0)
             elif op == "zcard":
                 results.append(len(self._store.get(cmd[1], {})))
@@ -596,3 +617,16 @@ class RedisRateLimiter:
         pipe.expire(zset, max(int(window_seconds) + 60, self._default_ttl))
         await pipe.execute()
         return True, max(0, limit - (count + 1))
+
+    async def health_check(self) -> bool:
+        """Return ``True`` if the backing store is reachable."""
+        try:
+            ping = getattr(self._redis, "ping", None)
+            if ping is None:
+                return True
+            result = ping()
+            if hasattr(result, "__await__"):
+                result = await result
+            return bool(result) if result is not None else True
+        except Exception:  # noqa: BLE001
+            return False

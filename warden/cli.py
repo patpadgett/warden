@@ -666,10 +666,15 @@ def cmd_backup(args: argparse.Namespace) -> int:
     backup_path = db_path.with_name(f"{db_path.name}.backup-{timestamp}")
     try:
         import sqlite3
-        with sqlite3.connect(str(db_path)) as src:
-            src.backup(sqlite3.connect(str(backup_path)))
+        src = sqlite3.connect(str(db_path))
+        dst = sqlite3.connect(str(backup_path))
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+            src.close()
         os.chmod(backup_path, 0o600)
-    except OSError as exc:
+    except (OSError, sqlite3.Error) as exc:
         _print_error(f"could not write backup {backup_path}: {exc}")
         return 1
     print(f"backup written to {backup_path}")

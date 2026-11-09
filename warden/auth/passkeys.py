@@ -621,6 +621,9 @@ class PasskeyService:
         config: WardenConfig,
         invite_token: str,
     ) -> dict[str, Any]:
+        if not isinstance(invite_token, str) or not invite_token.strip():
+            raise AuthError("Missing invite token.", 400)
+        invite_token = invite_token.strip()
         invite_token_hash = hashlib.sha256(invite_token.encode("utf-8")).hexdigest()
         invite = await self.db.get_invite(invite_token)
         if invite is None or int(invite["used"]) == 1:
