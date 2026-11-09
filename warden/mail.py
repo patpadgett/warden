@@ -59,5 +59,14 @@ def send_email(email: EmailConfig, to: str, subject: str, body: str) -> None:
     if not to or not to.strip():
         raise ValueError("A recipient address is required.")
     msg = _build_message(email, to, subject, body)
-    with _connect(email) as client:
+    client = _connect(email)
+    try:
         client.send_message(msg)
+    finally:
+        try:
+            client.quit()
+        except Exception:  # noqa: BLE001
+            try:
+                client.close()
+            except Exception:  # noqa: BLE001
+                pass

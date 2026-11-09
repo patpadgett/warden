@@ -166,6 +166,7 @@ def _get_fastapi_app(request: Request) -> FastAPI:
     return _app
 
 async def _body(request: Request, model: type[BaseModel]) -> BaseModel:
+    """Parse and validate a JSON request body into *model*."""
     content_type = request.headers.get("content-type", "")
     if not content_type.lower().startswith("application/json"):
         raise AuthError("Expected an application/json request.", 415)
@@ -184,6 +185,7 @@ def _origin_ok(request: Request) -> bool:
     return check_origin(request.scope, _config(request))
 
 def _limited(request: Request, action: str, limit: int, window: float = 60.0) -> tuple[bool, dict[str, str]]:
+    """Apply the configured rate limiter and return (allowed, headers)."""
     _app = _get_fastapi_app(request)
     limiter = _app.state.rate_limiter
     allowed, remaining = limiter.allow(f"{client_ip(request.scope)}:{action}", limit, window)
@@ -247,6 +249,7 @@ class OTPVerifyPayload(BaseModel):
     code: str
 
 @router.post("/_warden/auth/otp/verify")
+@csrf_protected
 async def otp_verify(request: Request, payload: OTPVerifyPayload) -> JSONResponse:
     """Validate a TOTP code for the authenticated user.
 
@@ -500,12 +503,15 @@ async def invite_complete(request: Request) -> JSONResponse:
     try:
         body = await _body(request, CredentialBody)
         assert isinstance(body, CredentialBody)
+        invite_token = body.credential.get("invite_token")
+        if not isinstance(invite_token, str) or not invite_token.strip():
+            return _error("Missing invite token.", 400)
         result = await _passkeys(request).complete_invite_registration(
             credential=body.credential,
             challenge_id=challenge_id,
             origin=current_origin(request.scope, config),
             config=config,
-            invite_token=body.credential.get("invite_token"),
+            invite_token=invite_token.strip(),
         )
     except AuthError as exc:
         return await _handle_auth_error(request, exc, audit="passkey_failed")

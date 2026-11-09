@@ -140,6 +140,10 @@ class ProxyEngine:
         if len(window) >= limit:
             return True
         window.append(now)
+        # Prune empty windows to avoid unbounded growth.
+        empty = [key for key, w in self._rate_windows.items() if not w]
+        for key in empty:
+            self._rate_windows.pop(key, None)
         return False
 
     def _client(self, verify: bool) -> httpx.AsyncClient:

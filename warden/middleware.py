@@ -96,14 +96,6 @@ class WardenMiddleware:
                 _scope_app = _scope_app.app
                 _depth += 1
             scope["app"] = _scope_app
-        import logging
-        logger = logging.getLogger("warden.middleware")
-        logger.debug(
-            "WardenMiddleware: scope['app'] type=%s, routes=%s, state=%s",
-            type(scope.get("app")).__name__,
-            hasattr(scope.get("app"), "routes"),
-            hasattr(scope.get("app"), "state"),
-        )
         config = self.manager.config
         host = get_host(scope)
         path = scope.get("path", "/")
@@ -267,41 +259,6 @@ class WardenMiddleware:
 
         await self.proxy.handle_http(scope, receive, send, route, user)
 
-
-    def _find_route(self, scope: MutableMapping[str, Any], path: str, method: str) -> Any | None:
-        """Find the matching route from the FastAPI app's route list.
-
-        FastAPI 0.162 mounts included routers as _IncludedRouter objects whose
-        routes are NOT expanded into the top-level app.routes list. This means
-        admin/auth routes (e.g. /_warden/users, /_warden/activity) are not
-        matched by simple path comparison. We work around this by:
-          1. For APIRoute candidates, match path + method directly.
-          2. For _IncludedRouter candidates, also expand their original_router
-             and match against those routes.
-        """
-        app = scope.get("app")
-        if app is None:
-            return None
-        method = method.upper()
-        for candidate in app.routes:
-            # _IncludedRouter objects wrap an APIRouter whose routes aren't
-            # expanded at the top level. We must inspect the wrapped router.
-            if hasattr(candidate, "original_router"):
-                inner = candidate.original_router
-                for inner_route in inner.routes:
-                    if getattr(inner_route, "path", None) != path:
-                        continue
-                    candidate_methods = getattr(inner_route, "methods", set())
-                    if method in candidate_methods:
-                        return inner_route
-                continue
-            # Plain APIRoute / Mount
-            if getattr(candidate, "path", None) != path:
-                continue
-            candidate_methods = getattr(candidate, "methods", set())
-            if method in candidate_methods:
-                return candidate
-        return None
 
     async def _call_app(
         self,
