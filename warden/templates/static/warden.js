@@ -340,6 +340,7 @@
 
   W.openOverlay = (overlay) => {
     if (!overlay) return;
+    overlay._trigger = document.activeElement;
     overlay.hidden = false;
     overlay.classList.add("open");
     const focusable = overlay.querySelector("input:not([type=hidden]), button, select, textarea");
@@ -349,8 +350,20 @@
   W.closeOverlay = (overlay) => {
     if (!overlay) return;
     overlay.classList.remove("open");
-    window.setTimeout(() => { overlay.hidden = true; }, 180);
+    const trigger = overlay._trigger;
+    window.setTimeout(() => {
+      overlay.hidden = true;
+      if (trigger && typeof trigger.focus === "function") trigger.focus();
+    }, 180);
   };
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    const openOverlay = document.querySelector(".modal-overlay.open:not([hidden])");
+    if (openOverlay) { W.closeOverlay(openOverlay); return; }
+    const openDialog = document.querySelector("dialog.modal[open]");
+    if (openDialog) W.closeModal(openDialog);
+  });
 
   W.wireModalDismiss = () => {
     W.$$("dialog.modal").forEach((dialog) => {

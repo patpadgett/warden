@@ -8,25 +8,19 @@
   }
 
   const token = form.dataset.token || "";
-  const display = form.dataset.tokenDisplay || "";
   const tokenInput = document.getElementById("invite-token");
   const nameInput = document.getElementById("passkey-name");
-  const tokenDisplay = document.getElementById("invite-token-display");
   const errorBox = document.getElementById("invite-error");
   const registerBtn = document.getElementById("register-btn");
   const copyBtn = document.getElementById("copy-btn");
 
-  if (display) {
-    tokenDisplay.value = display;
-  }
   if (token) {
     tokenInput.value = token;
-    tokenDisplay.value = token;
   }
 
   if (copyBtn) {
     copyBtn.addEventListener("click", () => {
-      const text = tokenDisplay.value.trim();
+      const text = tokenInput.value.trim();
       if (text && window.Warden && window.Warden.copy) {
         window.Warden.copy(text);
       }

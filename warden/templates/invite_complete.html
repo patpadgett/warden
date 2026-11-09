@@ -24,16 +24,11 @@
           <label class="field">
             <span class="field-label">Invite token</span>
             <input class="input" id="invite-token" name="token" type="text" autocomplete="off" spellcheck="false" placeholder="D7x9-...-K2m4Q" required autofocus>
-            <span class="field-hint">Has the admin emailed you a token? It is shown in full below for verification.</span>
+            <span class="field-hint">Paste the token you received from the admin. It is single-use.</span>
           </label>
           <label class="field">
             <span class="field-label">Name this passkey</span>
             <input class="input" id="passkey-name" name="name" type="text" maxlength="60" placeholder="e.g. John's iPhone" required autocapitalize="words">
-          </label>
-          <label class="field">
-            <span class="field-label">Token (full)</span>
-            <input class="input input-monospace" id="invite-token-display" name="token-display" type="text" readonly required>
-            <span class="field-hint">The admin has emailed you this token. Paste it here to confirm.</span>
           </label>
         </form>
         <div class="panel" id="invite-error" role="alert" hidden style="border-color: var(--red); background: var(--red-soft); margin-top: 12px;">
