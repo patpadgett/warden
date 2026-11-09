@@ -364,6 +364,24 @@
     if (openDialog) W.closeModal(openDialog);
   });
 
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Tab") return;
+    const openOverlay = document.querySelector(".modal-overlay.open:not([hidden])");
+    if (!openOverlay) return;
+    const focusables = Array.from(openOverlay.querySelectorAll("input:not([type=hidden]), button, select, textarea, a[href]"))
+      .filter((el) => !el.disabled && el.offsetParent !== null);
+    if (!focusables.length) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  });
+
   W.wireModalDismiss = () => {
     W.$$("dialog.modal").forEach((dialog) => {
       dialog.addEventListener("click", (event) => {
