@@ -87,6 +87,9 @@ async def _cleanup_loop(
     """Delete expired sessions/challenges and checkpoint SQLite once an hour."""
     await asyncio.sleep(45)
     interval = config.server.cleanup_interval_seconds
+    if interval <= 0:
+        logger.info("Periodic cleanup disabled (cleanup_interval_seconds=0).")
+        return
     while True:
         try:
             await app.state.db.delete_expired_sessions()
