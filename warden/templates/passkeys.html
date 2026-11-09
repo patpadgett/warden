@@ -79,7 +79,7 @@
         </h2>
         <span style="font-size: 12px; color: var(--text-muted);">{{ session_ttl_hours }}h lifetime</span>
       </div>
-      <div class="panel-body" style="padding: 0;">
+      <div class="panel-body" style="padding: 0; overflow-x: auto;">
         <table class="table">
           <thead>
             <tr>
@@ -180,7 +180,7 @@
     </div>
     <div class="modal-body">
       <div class="panel" id="passkey-error" role="alert" hidden style="border-color: var(--red); background: var(--red-soft);">
-        <div class="panel-body" style="color: #fca5a5; font-size: 12px;"></div>
+        <div class="panel-body" style="color: var(--red-text); font-size: 12px;"></div>
       </div>
       <form id="passkey-form" novalidate>
         <label class="field">
@@ -213,7 +213,7 @@
     </div>
     <div class="modal-body">
       <div class="panel" id="rename-error" role="alert" hidden style="border-color: var(--red); background: var(--red-soft);">
-        <div class="panel-body" style="color: #fca5a5; font-size: 12px;"></div>
+        <div class="panel-body" style="color: var(--red-text); font-size: 12px;"></div>
       </div>
       <form id="rename-form" novalidate>
         <label class="field">
