@@ -353,6 +353,7 @@ JOIN users u ON u.id = s.user_id
 
 
 def _challenge(mapping: dict[str, Any]) -> Challenge:
+    """_challenge."""
     return Challenge(
         id=mapping["id"],
         kind=mapping["kind"],
@@ -366,6 +367,7 @@ class PostgresDatabase(Database):
     """SQLAlchemy-based PostgreSQL adapter (works with CockroachDB wire)."""
 
     def __init__(self, url: str = "postgresql+asyncpg://localhost/warden") -> None:
+        """__init__."""
         self.url = url
         self.engine = create_async_engine(url, echo=False, future=True)
         self.session_factory = sessionmaker(
@@ -373,6 +375,7 @@ class PostgresDatabase(Database):
         )
 
     async def _ensure_database_exists(self) -> None:
+        """_ensure_database_exists."""
         if asyncpg is None:
             raise DatabaseError(
                 "asyncpg is required for PostgreSQL auto-create support. "
@@ -397,6 +400,7 @@ class PostgresDatabase(Database):
             await conn.close()
 
     async def init(self) -> None:
+        """init."""
         await self._ensure_database_exists()
         async with self.engine.begin() as conn:
             # Only create the migration-tracking table here. The actual
@@ -443,6 +447,7 @@ class PostgresDatabase(Database):
                 )
 
     async def close(self) -> None:
+        """close."""
         await self.engine.dispose()
 
     #: PostgreSQL-native schema migrations. This mirrors the SQLite backend's
@@ -454,6 +459,7 @@ class PostgresDatabase(Database):
 
     # ------------------------------------------------------------------ mesh
     async def list_mesh_peers(self) -> list[MeshPeer]:
+        """list_mesh_peers."""
         async with self.session_factory() as session:
             result = await session.execute(select(mesh_peers))
             return [MeshPeer(**dict(r._mapping)) for r in result.fetchall()]
@@ -470,6 +476,7 @@ class PostgresDatabase(Database):
         keepalive: int = 25,
         now: float | None = None,
     ) -> MeshPeer:
+        """add_mesh_peer."""
         created = now if now is not None else time.time()
         async with self.session_factory() as session:
             try:
@@ -499,6 +506,7 @@ class PostgresDatabase(Database):
             return MeshPeer(**dict(row._mapping))
 
     async def get_mesh_peer(self, peer_id: int) -> MeshPeer | None:
+        """get_mesh_peer."""
         async with self.session_factory() as session:
             result = await session.execute(
                 select(mesh_peers).where(mesh_peers.c.id == peer_id)
@@ -507,12 +515,14 @@ class PostgresDatabase(Database):
             return MeshPeer(**dict(row._mapping)) if row else None
 
     async def delete_mesh_peer(self, peer_id: int) -> bool:
+        """delete_mesh_peer."""
         async with self.session_factory() as session:
             result = await session.execute(delete(mesh_peers).where(mesh_peers.c.id == peer_id))
             await session.commit()
             return result.rowcount > 0
 
     async def set_mesh_handshake(self, peer_id: int, timestamp: float | None) -> bool:
+        """set_mesh_handshake."""
         async with self.session_factory() as session:
             result = await session.execute(
                 update(mesh_peers).where(mesh_peers.c.id == peer_id).values(last_handshake=timestamp)
@@ -522,6 +532,7 @@ class PostgresDatabase(Database):
 
     # ------------------------------------------------------------------ users
     async def user_count(self) -> int:
+        """user_count."""
         async with self.session_factory() as session:
             result = await session.execute(select(func.count(users.c.id)).select_from(users))
             return int(result.scalar() or 0)
@@ -536,6 +547,7 @@ class PostgresDatabase(Database):
         is_admin: bool = True,
         now: float | None = None,
     ) -> User:
+        """create_user."""
         created = now if now is not None else time.time()
         async with self.session_factory() as session:
             try:
@@ -577,6 +589,7 @@ class PostgresDatabase(Database):
         setup_mode: bool = False,
         now: float | None = None,
     ) -> tuple[User, Credential]:
+        """create_user_with_credential."""
         created = now if now is not None else time.time()
         async with self.session_factory() as session:
             async with session.begin():
@@ -631,23 +644,27 @@ class PostgresDatabase(Database):
             return user, _credential(dict(cred_row._mapping))
 
     async def get_user(self, user_id: int) -> User | None:
+        """get_user."""
         async with self.session_factory() as session:
             result = await session.execute(select(users).where(users.c.id == user_id))
             row = result.fetchone()
             return _user(row._mapping) if row else None
 
     async def get_user_by_username(self, username: str) -> User | None:
+        """get_user_by_username."""
         async with self.session_factory() as session:
             result = await session.execute(select(users).where(users.c.username == username))
             row = result.fetchone()
             return _user(row._mapping) if row else None
 
     async def list_users(self) -> list[User]:
+        """list_users."""
         async with self.session_factory() as session:
             result = await session.execute(select(users).order_by(users.c.created_at))
             return [_user(r._mapping) for r in result.fetchall()]
 
     async def get_user_by_webauthn_id(self, webauthn_user_id: bytes) -> User | None:
+        """get_user_by_webauthn_id."""
         async with self.session_factory() as session:
             result = await session.execute(
                 select(users).where(users.c.webauthn_user_id == webauthn_user_id)
@@ -656,6 +673,7 @@ class PostgresDatabase(Database):
             return _user(row._mapping) if row else None
 
     async def delete_user(self, user_id: int) -> bool:
+        """delete_user."""
         async with self.session_factory() as session:
             # Databases created by older versions used ``metadata.create_all``
             # without ``ON DELETE CASCADE``, so remove child rows explicitly
@@ -679,6 +697,7 @@ class PostgresDatabase(Database):
             return result.rowcount > 0
 
     async def update_user_admin(self, user_id: int, is_admin: bool) -> bool:
+        """update_user_admin."""
         async with self.session_factory() as session:
             result = await session.execute(
                 update(users).where(users.c.id == user_id).values(is_admin=bool(is_admin))
@@ -687,6 +706,7 @@ class PostgresDatabase(Database):
             return result.rowcount > 0
 
     async def update_user_display_name(self, user_id: int, display_name: str) -> bool:
+        """update_user_display_name."""
         async with self.session_factory() as session:
             result = await session.execute(
                 update(users).where(users.c.id == user_id).values(display_name=display_name)
@@ -695,6 +715,7 @@ class PostgresDatabase(Database):
             return result.rowcount > 0
 
     async def update_user_email(self, user_id: int, email: str | None) -> bool:
+        """update_user_email."""
         async with self.session_factory() as session:
             result = await session.execute(
                 update(users).where(users.c.id == user_id).values(email=email)
@@ -730,6 +751,7 @@ class PostgresDatabase(Database):
             return int(result.scalar() or 0)
 
     async def get_invite(self, token: str) -> Any:
+        """get_invite."""
         token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
         async with self.session_factory() as session:
             result = await session.execute(
@@ -739,6 +761,7 @@ class PostgresDatabase(Database):
             return dict(row._mapping) if row else None
 
     async def mark_invite_used(self, invite_id: int) -> bool:
+        """mark_invite_used."""
         async with self.session_factory() as session:
             result = await session.execute(
                 update(invites)
@@ -765,6 +788,7 @@ class PostgresDatabase(Database):
         backup_state: bool,
         now: float | None = None,
     ) -> Credential:
+        """add_credential."""
         created = now if now is not None else time.time()
         async with self.session_factory() as session:
             try:
@@ -793,6 +817,7 @@ class PostgresDatabase(Database):
         return credential
 
     async def get_credential(self, credential_row_id: int) -> Credential | None:
+        """get_credential."""
         async with self.session_factory() as session:
             result = await session.execute(
                 select(credentials).where(credentials.c.id == credential_row_id)
@@ -801,6 +826,7 @@ class PostgresDatabase(Database):
             return _credential(row._mapping) if row else None
 
     async def get_credential_by_id(self, credential_id: bytes) -> Credential | None:
+        """get_credential_by_id."""
         async with self.session_factory() as session:
             result = await session.execute(
                 select(credentials).where(credentials.c.credential_id == credential_id)
@@ -809,6 +835,7 @@ class PostgresDatabase(Database):
             return _credential(row._mapping) if row else None
 
     async def list_credentials(self, user_id: int | None = None) -> list[Credential]:
+        """list_credentials."""
         async with self.session_factory() as session:
             if user_id is None:
                 result = await session.execute(select(credentials).order_by(credentials.c.created_at))
@@ -821,6 +848,7 @@ class PostgresDatabase(Database):
             return [_credential(r._mapping) for r in result.fetchall()]
 
     async def count_credentials(self, user_id: int | None = None) -> int:
+        """count_credentials."""
         async with self.session_factory() as session:
             stmt = select(func.count(credentials.c.id))
             if user_id is not None:
@@ -829,6 +857,7 @@ class PostgresDatabase(Database):
             return int(result.scalar() or 0)
 
     async def update_credential_use(self, credential_row_id: int, sign_count: int, *, now: float | None = None) -> None:
+        """update_credential_use."""
         used = now if now is not None else time.time()
         async with self.session_factory() as session:
             await session.execute(
@@ -839,6 +868,7 @@ class PostgresDatabase(Database):
             await session.commit()
 
     async def rename_credential(self, user_id: int, credential_row_id: int, name: str) -> bool:
+        """rename_credential."""
         async with self.session_factory() as session:
             result = await session.execute(
                 update(credentials)
@@ -849,6 +879,7 @@ class PostgresDatabase(Database):
             return result.rowcount > 0
 
     async def delete_credential(self, user_id: int, credential_row_id: int) -> bool:
+        """delete_credential."""
         async with self.session_factory() as session:
             result = await session.execute(
                 delete(credentials)
@@ -877,6 +908,7 @@ class PostgresDatabase(Database):
     # ------------------------------------------------------------------ reset / vacuum
 
     async def health_check(self) -> bool:
+        """health_check."""
         try:
             async with self.session_factory() as session:
                 await session.execute(text("SELECT 1"))
@@ -889,6 +921,7 @@ class PostgresDatabase(Database):
         # dead tuples and keep bloat under control. Manual ``VACUUM`` holds a
         # pooled connection for the duration of the checkpoint, which can
         # starve other requests; rely on autovacuum instead.
+        """vacuum."""
         logger.debug(
             "Skipping manual VACUUM on Postgres (relying on autovacuum)"
         )
@@ -904,6 +937,7 @@ class PostgresDatabase(Database):
         user_agent: str | None = None,
         now: float | None = None,
     ) -> int:
+        """create_session."""
         created = now if now is not None else time.time()
         config = getattr(self, "config", None)
         server_cfg = config.server if hasattr(config, "server") else config
@@ -939,6 +973,7 @@ class PostgresDatabase(Database):
     async def get_session(
         self, token_hash: str, *, now: float | None = None, touch: bool = True
     ) -> Session | None:
+        """get_session."""
         current = now if now is not None else time.time()
         async with self.session_factory() as session:
             result = await session.execute(
@@ -959,6 +994,7 @@ class PostgresDatabase(Database):
             return s
 
     async def list_sessions(self, user_id: int, *, current_token_hash: str | None = None) -> list[Session]:
+        """list_sessions."""
         async with self.session_factory() as session:
             sql = (
                 _SESSION_JOIN
@@ -973,6 +1009,7 @@ class PostgresDatabase(Database):
             return [_session(r._mapping) for r in result.fetchall()]
 
     async def revoke_session(self, user_id: int, session_id: int) -> bool:
+        """revoke_session."""
         async with self.session_factory() as session:
             result = await session.execute(
                 delete(sessions).where(
@@ -983,11 +1020,13 @@ class PostgresDatabase(Database):
             return result.rowcount > 0
 
     async def revoke_session_by_hash(self, token_hash: str) -> None:
+        """revoke_session_by_hash."""
         async with self.session_factory() as session:
             await session.execute(delete(sessions).where(sessions.c.token_hash == token_hash))
             await session.commit()
 
     async def revoke_other_sessions(self, user_id: int, keep_token_hash: str) -> int:
+        """revoke_other_sessions."""
         async with self.session_factory() as session:
             result = await session.execute(
                 delete(sessions).where(
@@ -998,6 +1037,7 @@ class PostgresDatabase(Database):
             return int(result.rowcount or 0)
 
     async def delete_expired_sessions(self) -> int:
+        """delete_expired_sessions."""
         async with self.session_factory() as session:
             result = await session.execute(
                 delete(sessions).where(sessions.c.expires_at < time.time())
@@ -1009,6 +1049,7 @@ class PostgresDatabase(Database):
     async def create_challenge(
         self, challenge_id: str, kind: str, payload: dict, ttl_seconds: int, *, now: float | None = None
     ) -> Challenge:
+        """create_challenge."""
         created = now if now is not None else time.time()
         expires_at = created + ttl_seconds
         async with self.session_factory() as session:
@@ -1042,6 +1083,7 @@ class PostgresDatabase(Database):
             )
 
     async def consume_challenge(self, challenge_id: str, kind: str, *, now: float | None = None) -> Challenge | None:
+        """consume_challenge."""
         current = now if now is not None else time.time()
         async with self.session_factory() as session:
             result = await session.execute(
@@ -1081,6 +1123,7 @@ class PostgresDatabase(Database):
             )
 
     async def delete_expired_challenges(self) -> int:
+        """delete_expired_challenges."""
         async with self.session_factory() as session:
             result = await session.execute(
                 delete(challenges).where(challenges.c.expires_at < time.time())
@@ -1090,12 +1133,14 @@ class PostgresDatabase(Database):
 
     # ------------------------------------------------------------------ settings
     async def get_setting(self, key: str) -> str | None:
+        """get_setting."""
         async with self.session_factory() as session:
             result = await session.execute(select(settings.c.value).where(settings.c.key == key))
             row = result.fetchone()
             return row._mapping["value"] if row else None
 
     async def set_setting(self, key: str, value: str) -> None:
+        """set_setting."""
         async with self.session_factory() as session:
             await session.execute(
                 text(
@@ -1107,6 +1152,7 @@ class PostgresDatabase(Database):
             await session.commit()
 
     async def delete_setting(self, key: str) -> None:
+        """delete_setting."""
         async with self.session_factory() as session:
             await session.execute(delete(settings).where(settings.c.key == key))
             await session.commit()
@@ -1123,6 +1169,7 @@ class PostgresDatabase(Database):
         detail: str | dict[str, Any] | None = None,
         now: float | None = None,
     ) -> None:
+        """audit."""
         async with self.session_factory() as session:
             await session.execute(
                 insert(audit).values(
@@ -1138,6 +1185,7 @@ class PostgresDatabase(Database):
             await session.commit()
 
     async def list_audit(self, limit: int = 50, event: str | None = None) -> list[AuditEvent]:
+        """list_audit."""
         async with self.session_factory() as session:
             stmt = select(audit)
             if event is not None:
@@ -1146,6 +1194,7 @@ class PostgresDatabase(Database):
             return [_audit(r._mapping) for r in result.fetchall()]
 
     async def count_audit(self, *, event: str | None = None, since: float | None = None) -> int:
+        """count_audit."""
         async with self.session_factory() as session:
             stmt = select(func.count(audit.c.id))
             if event is not None:
@@ -1157,6 +1206,7 @@ class PostgresDatabase(Database):
 
     # ------------------------------------------------------------------ backup codes
     async def add_backup_code(self, user_id: int, code_hash: str, now: float | None = None) -> int:
+        """add_backup_code."""
         created = now if now is not None else time.time()
         async with self.session_factory() as session:
             try:
@@ -1175,6 +1225,7 @@ class PostgresDatabase(Database):
             return int(result.scalar() or 0)
 
     async def use_backup_code(self, code_hash: str) -> int | None:
+        """use_backup_code."""
         async with self.session_factory() as session, session.begin():
             result = await session.execute(
                 update(backup_codes)
@@ -1194,6 +1245,7 @@ class PostgresDatabase(Database):
             return int(row.scalar() or 0)
 
     async def list_backup_codes(self, user_id: int) -> list[BackupCode]:
+        """list_backup_codes."""
         async with self.session_factory() as session:
             result = await session.execute(
                 select(backup_codes).where(backup_codes.c.user_id == user_id).order_by(backup_codes.c.id)
@@ -1207,12 +1259,14 @@ class PostgresDatabase(Database):
             ]
 
     async def clear_backup_codes(self, user_id: int) -> None:
+        """clear_backup_codes."""
         async with self.session_factory() as session:
             await session.execute(delete(backup_codes).where(backup_codes.c.user_id == user_id))
             await session.commit()
 
     # ------------------------------------------------------------------ OTP
     async def set_otp_secret(self, user_id: int, secret: str, now: float | None = None) -> None:
+        """set_otp_secret."""
         created = now if now is not None else time.time()
         async with self.session_factory() as session:
             await session.execute(
@@ -1229,6 +1283,7 @@ class PostgresDatabase(Database):
             await session.commit()
 
     async def get_otp_secret(self, user_id: int) -> str | None:
+        """get_otp_secret."""
         async with self.session_factory() as session:
             result = await session.execute(
                 select(otp_secrets.c.secret).where(otp_secrets.c.user_id == user_id)
@@ -1237,6 +1292,7 @@ class PostgresDatabase(Database):
             return row._mapping["secret"] if row else None
 
     async def verify_otp(self, user_id: int, code: str, *, window: int = 1) -> bool:
+        """verify_otp."""
         secret = await self.get_otp_secret(user_id)
         if not secret:
             return False
@@ -1263,6 +1319,7 @@ class PostgresDatabase(Database):
 
     # ------------------------------------------------------------------ mesh (extra)
     async def get_mesh_peer(self, peer_id: int) -> MeshPeer | None:  # noqa: F811
+        """get_mesh_peer."""
         async with self.session_factory() as session:
             result = await session.execute(
                 select(mesh_peers).where(mesh_peers.c.id == peer_id)
@@ -1271,12 +1328,14 @@ class PostgresDatabase(Database):
             return MeshPeer(**dict(row._mapping)) if row else None
 
     async def delete_mesh_peer(self, peer_id: int) -> bool:  # noqa: F811
+        """delete_mesh_peer."""
         async with self.session_factory() as session:
             result = await session.execute(delete(mesh_peers).where(mesh_peers.c.id == peer_id))
             await session.commit()
             return result.rowcount > 0
 
     async def set_mesh_handshake(self, peer_id: int, timestamp: float | None) -> bool:  # noqa: F811
+        """set_mesh_handshake."""
         async with self.session_factory() as session:
             result = await session.execute(
                 update(mesh_peers).where(mesh_peers.c.id == peer_id).values(last_handshake=timestamp)

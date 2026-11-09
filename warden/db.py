@@ -57,6 +57,7 @@ class AlreadyExistsError(DatabaseError):
 
 @dataclass(slots=True)
 class User:
+    """User."""
     id: int
     username: str
     display_name: str
@@ -69,6 +70,7 @@ class User:
 
 @dataclass(slots=True)
 class Credential:
+    """Credential."""
     id: int
     user_id: int
     credential_id: bytes
@@ -87,6 +89,7 @@ class Credential:
 
 @dataclass(slots=True)
 class Session:
+    """Session."""
     id: int
     token_hash: str
     user_id: int
@@ -100,6 +103,7 @@ class Session:
 
 @dataclass(slots=True)
 class Challenge:
+    """Challenge."""
     id: str
     kind: str
     payload: dict[str, Any]
@@ -109,6 +113,7 @@ class Challenge:
 
 @dataclass(slots=True)
 class AuditEvent:
+    """AuditEvent."""
     id: int
     created_at: float
     event: str
@@ -123,6 +128,7 @@ class AuditEvent:
 
 @dataclass(slots=True)
 class BackupCode:
+    """BackupCode."""
     id: int
     user_id: int
     code_hash: str
@@ -132,6 +138,7 @@ class BackupCode:
 
 @dataclass(slots=True)
 class MeshPeer:
+    """MeshPeer."""
     id: int
     name: str
     public_key: str
@@ -148,6 +155,7 @@ class MeshPeer:
 
 
 def _user(row: aiosqlite.Row) -> User:
+    """_user."""
     return User(
         id=row["id"],
         username=row["username"],
@@ -161,6 +169,7 @@ def _user(row: aiosqlite.Row) -> User:
 
 
 def _credential(row: aiosqlite.Row) -> Credential:
+    """_credential."""
     try:
         transports = json.loads(row["transports"] or "[]")
     except (TypeError, ValueError):
@@ -184,6 +193,7 @@ def _credential(row: aiosqlite.Row) -> Credential:
 
 
 def _session(row: aiosqlite.Row) -> Session:
+    """_session."""
     user = User(
         id=row["u_id"],
         username=row["u_username"],
@@ -208,6 +218,7 @@ def _session(row: aiosqlite.Row) -> Session:
 
 
 def _audit(row: aiosqlite.Row) -> AuditEvent:
+    """_audit."""
     return AuditEvent(
         id=row["id"],
         created_at=float(row["created_at"]),
@@ -221,6 +232,7 @@ def _audit(row: aiosqlite.Row) -> AuditEvent:
 
 
 def _peer(row: aiosqlite.Row) -> MeshPeer:
+    """_peer."""
     return MeshPeer(
         id=row["id"],
         name=row["name"],
@@ -277,9 +289,11 @@ class Database:
 
     @property
     def is_memory(self) -> bool:
+        """is_memory."""
         return str(self.path) == ":memory:"
 
     async def init(self) -> None:
+        """init."""
         async with self._init_lock:
             if self._conn is not None:
                 return
@@ -319,6 +333,7 @@ class Database:
                 self._secure_files()
 
     def _secure_files(self) -> None:
+        """_secure_files."""
         for candidate in (self.path, Path(f"{self.path}-wal"), Path(f"{self.path}-shm")):
             try:
                 if candidate.exists():
@@ -457,6 +472,7 @@ class Database:
 })  # type: ignore[assignment]
 
     async def _migrate(self) -> None:
+        """_migrate."""
         conn = self._require_conn()
         # Read the current schema version from the tracking table (backend-agnostic).
         async with conn.execute(
@@ -503,11 +519,13 @@ class Database:
         self._secure_files()
 
     def _require_conn(self) -> aiosqlite.Connection:
+        """_require_conn."""
         if self._conn is None:
             raise DatabaseError("Database is not initialized")
         return self._conn
 
     async def close(self) -> None:
+        """close."""
         async with self._init_lock:
             if self._conn is not None:
                 await self._conn.close()
@@ -517,6 +535,7 @@ class Database:
 
     # ------------------------------------------------------------------ helpers
     async def _fetchone(self, sql: str, params: tuple[Any, ...] = ()) -> aiosqlite.Row | None:
+        """_fetchone."""
         if self._conn is None:
             await self.init()
         conn = self._require_conn()
@@ -524,6 +543,7 @@ class Database:
             return await cursor.fetchone()
 
     async def _fetchall(self, sql: str, params: tuple[Any, ...] = ()) -> list[aiosqlite.Row]:
+        """_fetchall."""
         if self._conn is None:
             await self.init()
         conn = self._require_conn()
@@ -531,6 +551,7 @@ class Database:
             return list(await cursor.fetchall())
 
     async def _write(self, sql: str, params: tuple[Any, ...] = ()) -> int:
+        """_write."""
         if self._conn is None:
             await self.init()
         conn = self._require_conn()
@@ -543,6 +564,7 @@ class Database:
 
     # ------------------------------------------------------------------- users
     async def user_count(self) -> int:
+        """user_count."""
         row = await self._fetchone("SELECT COUNT(*) AS count FROM users")
         return int(row["count"]) if row else 0
 
@@ -593,6 +615,7 @@ class Database:
         )
 
     async def get_invite(self, token: str) -> Any:
+        """get_invite."""
         conn = self._require_conn()
         async with conn.execute(
             "SELECT * FROM invites WHERE token_hash = ?",
@@ -601,6 +624,7 @@ class Database:
             return await cursor.fetchone()
 
     async def mark_invite_used(self, invite_id: int) -> bool:
+        """mark_invite_used."""
         if self._conn is None:
             await self.init()
         conn = self._require_conn()
@@ -803,6 +827,7 @@ class Database:
             await conn.commit()
 
     async def health_check(self) -> bool:
+        """health_check."""
         try:
             conn = self._require_conn()
             await conn.execute("SELECT 1")
@@ -811,6 +836,7 @@ class Database:
             return False
 
     async def vacuum(self) -> None:
+        """vacuum."""
         conn = self._require_conn()
         config = getattr(self, "config", None)
         if config is not None:
@@ -931,6 +957,7 @@ class Database:
         )
 
     async def rename_credential(self, user_id: int, credential_row_id: int, name: str) -> bool:
+        """rename_credential."""
         if self._conn is None:
             await self.init()
         conn = self._require_conn()
@@ -945,6 +972,7 @@ class Database:
         return bool(changed)
 
     async def delete_credential(self, user_id: int, credential_row_id: int) -> bool:
+        """delete_credential."""
         if self._conn is None:
             await self.init()
         conn = self._require_conn()
@@ -969,6 +997,7 @@ class Database:
         user_agent: str | None = None,
         now: float | None = None,
     ) -> int:
+        """create_session."""
         created = now if now is not None else time.time()
         config = getattr(self, "config", None)
         server_cfg = config.server if hasattr(config, "server") else config
@@ -992,6 +1021,7 @@ class Database:
     async def get_session(
         self, token_hash: str, *, now: float | None = None, touch: bool = True
     ) -> Session | None:
+        """get_session."""
         current = now if now is not None else time.time()
         row = await self._fetchone(f"{_SESSION_JOIN} WHERE s.token_hash = ?", (token_hash,))
         if row is None:
@@ -1010,6 +1040,7 @@ class Database:
     async def list_sessions(
         self, user_id: int, *, current_token_hash: str | None = None
     ) -> list[Session]:
+        """list_sessions."""
         sql = f"{_SESSION_JOIN} WHERE s.user_id = ? AND s.expires_at > ?"
         params: tuple[Any, ...] = (user_id, time.time())
         if current_token_hash is not None:
@@ -1020,6 +1051,7 @@ class Database:
         return [_session(row) for row in rows]
 
     async def revoke_session(self, user_id: int, session_id: int) -> bool:
+        """revoke_session."""
         if self._conn is None:
             await self.init()
         conn = self._require_conn()
@@ -1033,9 +1065,11 @@ class Database:
         return bool(changed)
 
     async def revoke_session_by_hash(self, token_hash: str) -> None:
+        """revoke_session_by_hash."""
         await self._write("DELETE FROM sessions WHERE token_hash = ?", (token_hash,))
 
     async def revoke_other_sessions(self, user_id: int, keep_token_hash: str) -> int:
+        """revoke_other_sessions."""
         if self._conn is None:
             await self.init()
         conn = self._require_conn()
@@ -1050,6 +1084,7 @@ class Database:
         return int(changed or 0)
 
     async def delete_expired_sessions(self) -> int:
+        """delete_expired_sessions."""
         if self._conn is None:
             await self.init()
         conn = self._require_conn()
@@ -1072,6 +1107,7 @@ class Database:
         *,
         now: float | None = None,
     ) -> Challenge:
+        """create_challenge."""
         created = now if now is not None else time.time()
         expires = created + ttl_seconds
         await self._write(
@@ -1083,6 +1119,7 @@ class Database:
     async def consume_challenge(
         self, challenge_id: str, kind: str, *, now: float | None = None
     ) -> Challenge | None:
+        """consume_challenge."""
         current = now if now is not None else time.time()
         if self._conn is None:
             await self.init()
@@ -1113,6 +1150,7 @@ class Database:
         )
 
     async def delete_expired_challenges(self) -> int:
+        """delete_expired_challenges."""
         if self._conn is None:
             await self.init()
         conn = self._require_conn()
@@ -1127,10 +1165,12 @@ class Database:
 
     # ---------------------------------------------------------------- settings
     async def get_setting(self, key: str) -> str | None:
+        """get_setting."""
         row = await self._fetchone("SELECT value FROM settings WHERE key = ?", (key,))
         return row["value"] if row else None
 
     async def set_setting(self, key: str, value: str) -> None:
+        """set_setting."""
         await self._write(
             "INSERT INTO settings (key, value) VALUES (?, ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -1138,6 +1178,7 @@ class Database:
         )
 
     async def delete_setting(self, key: str) -> None:
+        """delete_setting."""
         await self._write("DELETE FROM settings WHERE key = ?", (key,))
 
     # ------------------------------------------------------------------- audit
@@ -1152,6 +1193,7 @@ class Database:
         detail: str | dict[str, Any] | None = None,
         now: float | None = None,
     ) -> None:
+        """audit."""
         if isinstance(detail, dict):
             detail = json.dumps(detail)
         await self._write(
@@ -1169,6 +1211,7 @@ class Database:
         )
 
     async def list_audit(self, limit: int = 50, event: str | None = None, offset: int = 0) -> list[AuditEvent]:
+        """list_audit."""
         query = "SELECT * FROM audit"
         params: list[Any] = []
         if event:
@@ -1181,6 +1224,7 @@ class Database:
         return [_audit(row) for row in rows]
 
     async def count_audit(self, *, event: str | None = None, since: float | None = None) -> int:
+        """count_audit."""
         clauses: list[str] = []
         params: list[Any] = []
         if event:
@@ -1195,10 +1239,12 @@ class Database:
 
     # -------------------------------------------------------------------- mesh
     async def list_mesh_peers(self) -> list[MeshPeer]:
+        """list_mesh_peers."""
         rows = await self._fetchall("SELECT * FROM mesh_peers ORDER BY created_at")
         return [_peer(row) for row in rows]
 
     async def set_mesh_handshake(self, peer_id: int, timestamp: float | None) -> bool:
+        """set_mesh_handshake."""
         conn = self._require_conn()
         async with self._lock:
             cursor = await conn.execute(
@@ -1210,6 +1256,7 @@ class Database:
             return bool(cursor.rowcount)
 
     async def get_mesh_peer(self, peer_id: int) -> MeshPeer | None:
+        """get_mesh_peer."""
         row = await self._fetchone("SELECT * FROM mesh_peers WHERE id = ?", (peer_id,))
         return _peer(row) if row else None
 
@@ -1225,6 +1272,7 @@ class Database:
         keepalive: int = 25,
         now: float | None = None,
     ) -> MeshPeer:
+        """add_mesh_peer."""
         try:
             peer_id = await self._write(
                 "INSERT INTO mesh_peers "
@@ -1249,6 +1297,7 @@ class Database:
         return peer
 
     async def delete_mesh_peer(self, peer_id: int) -> bool:
+        """delete_mesh_peer."""
         if self._conn is None:
             await self.init()
         conn = self._require_conn()
@@ -1260,6 +1309,7 @@ class Database:
         return bool(changed)
 
     async def add_backup_code(self, user_id: int, code_hash: str, now: float | None = None) -> int:
+        """add_backup_code."""
         created = now if now is not None else time.time()
         return await self._write(
             "INSERT INTO backup_codes (user_id, code_hash, created_at) VALUES (?, ?, ?)",
@@ -1267,6 +1317,7 @@ class Database:
         )
 
     async def use_backup_code(self, code_hash: str) -> int | None:
+        """use_backup_code."""
         if self._conn is None:
             await self.init()
         conn = self._require_conn()
@@ -1285,6 +1336,7 @@ class Database:
             return None
 
     async def list_backup_codes(self, user_id: int) -> list[BackupCode]:
+        """list_backup_codes."""
         rows = await self._fetchall(
             "SELECT * FROM backup_codes WHERE user_id = ? ORDER BY created_at DESC", (user_id,)
         )
@@ -1300,10 +1352,12 @@ class Database:
         ]
 
     async def clear_backup_codes(self, user_id: int) -> None:
+        """clear_backup_codes."""
         await self._write("DELETE FROM backup_codes WHERE user_id = ?", (user_id,))
 
     # OTP secret management
     async def set_otp_secret(self, user_id: int, secret: str, now: float | None = None) -> None:
+        """set_otp_secret."""
         created = now if now is not None else time.time()
         await self._write(
             "INSERT INTO otp_secrets (user_id, secret, created_at) VALUES (?, ?, ?) "
@@ -1312,10 +1366,12 @@ class Database:
         )
 
     async def get_otp_secret(self, user_id: int) -> str | None:
+        """get_otp_secret."""
         row = await self._fetchone("SELECT secret FROM otp_secrets WHERE user_id = ?", (user_id,))
         return row["secret"] if row else None
 
     async def verify_otp(self, user_id: int, code: str, *, window: int = 1) -> bool:
+        """verify_otp."""
         secret = await self.get_otp_secret(user_id)
         if not secret:
             return False
