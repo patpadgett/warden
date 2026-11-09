@@ -34,7 +34,7 @@
       <div style="height: 4px; background: var(--bg-raised); border: 1px solid var(--border); overflow: hidden;">
         <span style="display: block; height: 100%; background: var(--accent); width: {{ tls.progress }}%;"></span>
       </div>
-      <div class="flex" style="justify-content: space-between; margin-top: 6px; font-size: 11px; color: var(--text-muted);">
+      <div class="flex" style="justify-content: space-between; margin-top: 6px; font-size: 12px; color: var(--text-muted);">
         <span>{{ tls.certificate.days_left|round|int }} days left</span>
         <span>{% if tls.renew_command %}auto-renew hook{% else %}manual renewal{% endif %}</span>
       </div>

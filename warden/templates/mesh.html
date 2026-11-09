@@ -53,7 +53,7 @@
 
 {% if last_apply %}
 <div class="panel" style="border-color: {{ 'var(--accent)' if last_apply.ok else 'var(--red)' }}; background: {{ 'var(--accent-soft)' if last_apply.ok else 'var(--red-soft)' }};">
-  <div class="panel-body" style="color: {{ 'var(--accent)' if last_apply.ok else '#fca5a5' }};">Last apply {{ last_apply.timestamp|relative_time }}{% if last_apply.output %} — <span class="mono" style="font-size: 11px;">{{ last_apply.output|truncate_middle(240) }}</span>{% endif %}</div>
+  <div class="panel-body" style="color: {{ 'var(--accent)' if last_apply.ok else '#fca5a5' }};">Last apply {{ last_apply.timestamp|relative_time }}{% if last_apply.output %} — <span class="mono" style="font-size: 12px;">{{ last_apply.output|truncate_middle(240) }}</span>{% endif %}</div>
 </div>
 {% endif %}
 
@@ -113,7 +113,7 @@
             <tr data-peer-id="{{ row.peer.id }}" data-public-key="{{ row.peer.public_key }}">
               <td>
                 <span style="font-weight: 500;">{{ row.peer.name }}</span>
-                <span class="mono" style="display: block; font-size: 11px; color: var(--text-muted); margin-top: 2px;" title="{{ row.peer.public_key }}">{{ row.peer.public_key[:12] }}…</span>
+                <span class="mono" style="display: block; font-size: 12px; color: var(--text-muted); margin-top: 2px;" title="{{ row.peer.public_key }}">{{ row.peer.public_key[:12] }}…</span>
               </td>
               <td class="mono">{{ row.peer.address }}</td>
               <td class="mono" data-peer-endpoint>{{ row.endpoint or '—' }}</td>
@@ -133,7 +133,7 @@
       {% if hub_public_key %}
       <div style="display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-top: 2px solid var(--border);">
         <span style="font-size: 12px; color: var(--text-muted); white-space: nowrap;">Hub public key</span>
-        <code id="hub-public-key" class="mono" style="flex: 1; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ hub_public_key }}</code>
+        <code id="hub-public-key" class="mono" style="flex: 1; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ hub_public_key }}</code>
         <button class="btn btn-ghost btn-sm" type="button" data-copy-hub>Copy</button>
       </div>
       {% endif %}

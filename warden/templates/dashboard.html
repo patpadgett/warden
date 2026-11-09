@@ -70,7 +70,7 @@
       <div class="panel-head">
         <h2 class="panel-title" id="services-title">
           <svg viewBox="0 0 24 24" width="16" height="16" style="color: var(--text-muted);" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
-          Services <span class="badge" style="display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 6px; font-size: 11px; font-weight: 600; color: var(--text-muted); background: var(--bg-raised); margin-left: 8px;">{{ services|length }}</span>
+          Services <span class="badge" style="display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 6px; font-size: 12px; font-weight: 600; color: var(--text-muted); background: var(--bg-raised); margin-left: 8px;">{{ services|length }}</span>
         </h2>
         <span style="font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 6px;">
           <span style="width: 8px; height: 8px; border: 2px solid var(--border); background: var(--accent); box-shadow: 0 0 8px var(--accent-glow);"></span>
@@ -91,14 +91,14 @@
                 <span class="badge {{ 'badge-accent' if service.status == 'online' else 'badge-indigo' }}" data-status-pill><span data-status-label>{{ service.status_label }}</span></span>
               </div>
               <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px;">
-                <span class="badge" style="font-size: 11px; color: var(--text-muted); background: var(--bg-raised);">{{ service.upstream }}</span>
+                <span class="badge" style="font-size: 12px; color: var(--text-muted); background: var(--bg-raised);">{{ service.upstream }}</span>
                 {% if service.route.auth %}
-                <span class="badge badge-accent" style="font-size: 11px;">passkey</span>
+                <span class="badge badge-accent" style="font-size: 12px;">passkey</span>
                 {% else %}
-                <span class="badge" style="font-size: 11px; color: var(--text-muted); background: var(--bg-raised);">public</span>
+                <span class="badge" style="font-size: 12px; color: var(--text-muted); background: var(--bg-raised);">public</span>
                 {% endif %}
                 {% if service.route.websocket %}
-                <span class="badge" style="font-size: 11px; color: var(--text-muted); background: var(--bg-raised);">ws</span>
+                <span class="badge" style="font-size: 12px; color: var(--text-muted); background: var(--bg-raised);">ws</span>
                 {% endif %}
               </div>
               <div style="display: flex; align-items: center; justify-content: space-between; padding-top: 10px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-muted);">
@@ -209,7 +209,7 @@
           <div style="height: 4px; background: var(--bg-raised); border: 1px solid var(--border); overflow: hidden;">
             <span style="display: block; height: 100%; background: var(--accent); width: {{ tls.progress }}%;"></span>
           </div>
-          <div style="display: flex; justify-content: space-between; margin-top: 6px; font-size: 11px; color: var(--text-muted);">
+          <div style="display: flex; justify-content: space-between; margin-top: 6px; font-size: 12px; color: var(--text-muted);">
             <span>{{ tls.certificate.days_left|round|int }} days left</span>
             <span>{% if tls.renew_command %}auto-renew hook{% else %}manual renewal{% endif %}</span>
           </div>
