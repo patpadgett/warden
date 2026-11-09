@@ -49,7 +49,9 @@ DEFAULT_SETUP_HELP = (
 
 
 class AuthError(Exception):
+    """AuthError."""
     def __init__(self, message: str, status_code: int = 400, *, event: str | None = None) -> None:
+        """__init__."""
         self.message = message
         self.status_code = status_code
         self.event = event
@@ -58,6 +60,7 @@ class AuthError(Exception):
 
 @dataclass(slots=True)
 class Ceremony:
+    """Ceremony."""
     options: dict[str, Any]
     challenge_id: str
     expires_in: int
@@ -163,11 +166,14 @@ def _user_verification(config: WardenConfig) -> UserVerificationRequirement:
 
 
 class PasskeyService:
+    """PasskeyService."""
     def __init__(self, db: Database) -> None:
+        """__init__."""
         self.db = db
 
     # ------------------------------------------------------------- setup codes
     async def user_count(self) -> int:
+        """user_count."""
         return await self.db.user_count()
 
     async def generate_backup_codes(self, user_id: int) -> list[str]:
@@ -200,6 +206,7 @@ class PasskeyService:
         return code, expires
 
     async def setup_status(self) -> dict[str, Any]:
+        """setup_status."""
         required = (await self.db.user_count()) == 0
         expires_raw = await self.db.get_setting(SETUP_EXPIRY_KEY)
         expires = float(expires_raw) if expires_raw else None
@@ -213,6 +220,7 @@ class PasskeyService:
         }
 
     async def _validate_setup_code(self, code: str) -> None:
+        """_validate_setup_code."""
         if await self.db.user_count() > 0:
             raise AuthError("This Warden instance has already been set up.", 409)
         stored = await self.db.get_setting(SETUP_HASH_KEY)
@@ -309,6 +317,7 @@ class PasskeyService:
         config: WardenConfig,
         flow: str = "add",
     ) -> Ceremony:
+        """begin_add_passkey."""
         credentials = await self.db.list_credentials(user.id)
         count = len(credentials) + 1
         passkey_name = (name or "").strip()[:60] or f"Passkey {count}"
@@ -356,6 +365,7 @@ class PasskeyService:
         config: WardenConfig,
         session_user: User | None,
     ) -> dict[str, Any]:
+        """complete_registration."""
         challenge = await self.db.consume_challenge(challenge_id, "register")
         if challenge is None:
             raise AuthError("That registration attempt expired. Please start again.", 400)
@@ -561,6 +571,7 @@ class PasskeyService:
         return user, safe_redirect(payload.get("next"), "/")
 
     async def setup_code_help(self) -> str:
+        """setup_code_help."""
         return DEFAULT_SETUP_HELP
 
 
@@ -573,6 +584,7 @@ class PasskeyService:
         config: WardenConfig,
         invite_token: str | None = None,
     ) -> Ceremony:
+        """begin_invite_registration."""
         credentials = await self.db.list_credentials(user.id)
         count = len(credentials) + 1
         passkey_name = (name or "").strip()[:60] or f"Passkey {count}"
@@ -621,6 +633,7 @@ class PasskeyService:
         config: WardenConfig,
         invite_token: str,
     ) -> dict[str, Any]:
+        """complete_invite_registration."""
         if not isinstance(invite_token, str) or not invite_token.strip():
             raise AuthError("Missing invite token.", 400)
         invite_token = invite_token.strip()

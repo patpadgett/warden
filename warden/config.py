@@ -43,11 +43,13 @@ class ConfigError(Exception):
     """Raised when a configuration file cannot be loaded or validated."""
 
     def __init__(self, message: str, errors: Iterable[str] | None = None) -> None:
+        """__init__."""
         self.message = message
         self.errors = list(errors or [])
         super().__init__(self.pretty())
 
     def pretty(self) -> str:
+        """pretty."""
         if not self.errors:
             return self.message
         lines = [self.message, ""]
@@ -81,11 +83,13 @@ def normalize_host(value: str, *, allow_wildcard: bool = False) -> str:
 
 
 def _host_under(host: str, parent: str) -> bool:
+    """_host_under."""
     base = host.removeprefix("*.")
     return base == parent or base.endswith("." + parent)
 
 
 def _normalize_origin(value: str) -> str:
+    """_normalize_origin."""
     value = value.strip().rstrip("/")
     parts = urlsplit(value)
     if parts.scheme not in {"http", "https"} or not parts.hostname:
@@ -102,12 +106,14 @@ def _normalize_origin(value: str) -> str:
 
 
 def _validate_header_value(value: str) -> str:
+    """_validate_header_value."""
     if "\r" in value or "\n" in value or "\x00" in value:
         raise ValueError("header values cannot contain control characters")
     return value
 
 
 class RateLimiterConfig(BaseModel):
+    """RateLimiterConfig."""
     model_config = ConfigDict(extra="forbid")
     
     backend: str = Field(default="memory", description="Backend for rate limiting: \"memory\" or \"redis\"")
@@ -117,12 +123,14 @@ class RateLimiterConfig(BaseModel):
     @field_validator("backend")
     @classmethod
     def _validate_backend(cls, value: str) -> str:
+        """_validate_backend."""
         if value not in {"memory", "redis"}:
             raise ValueError("rate_limiter.backend must be 'memory' or 'redis'")
         return value
 
 
 class TLSConfig(BaseModel):
+    """TLSConfig."""
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
@@ -137,6 +145,7 @@ class TLSConfig(BaseModel):
 
     @model_validator(mode="after")
     def _check_tls(self) -> TLSConfig:
+        """_check_tls."""
         if self.renew_command and not self.acme_webroot:
             # A renewal hook without webroot is allowed for DNS-01 challenges.
             pass
@@ -144,6 +153,7 @@ class TLSConfig(BaseModel):
 
 
 class WebAuthnConfig(BaseModel):
+    """WebAuthnConfig."""
     model_config = ConfigDict(extra="forbid")
 
     rp_id: str = "localhost"
@@ -156,6 +166,7 @@ class WebAuthnConfig(BaseModel):
     @field_validator("rp_id")
     @classmethod
     def _validate_rp_id(cls, value: str) -> str:
+        """_validate_rp_id."""
         host = normalize_host(value)
         try:
             ipaddress.ip_address(host)
@@ -166,11 +177,13 @@ class WebAuthnConfig(BaseModel):
     @field_validator("allowed_origins")
     @classmethod
     def _validate_origins(cls, value: list[str]) -> list[str]:
+        """_validate_origins."""
         return [_normalize_origin(origin) for origin in value]
 
     @field_validator("rp_name")
     @classmethod
     def _validate_name(cls, value: str) -> str:
+        """_validate_name."""
         value = value.strip()
         if not value:
             raise ValueError("rp_name cannot be empty")
@@ -178,6 +191,7 @@ class WebAuthnConfig(BaseModel):
 
 
 class DatabaseConfig(BaseModel):
+    """DatabaseConfig."""
     model_config = ConfigDict(extra="forbid")
 
     path: str = "warden.db"
@@ -186,6 +200,7 @@ class DatabaseConfig(BaseModel):
 
 
 class EmailConfig(BaseModel):
+    """EmailConfig."""
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
@@ -206,6 +221,7 @@ class EmailConfig(BaseModel):
 
 
 class ServerConfig(BaseModel):
+    """ServerConfig."""
     model_config = ConfigDict(extra="forbid")
 
     # Rate limiter configuration – optional; if omitted, in‑process limiter is used.
@@ -260,11 +276,13 @@ class ServerConfig(BaseModel):
     @field_validator("admin_host")
     @classmethod
     def _validate_admin_host(cls, value: str) -> str:
+        """_validate_admin_host."""
         return normalize_host(value)
 
     @field_validator("bind")
     @classmethod
     def _validate_bind(cls, value: str) -> str:
+        """_validate_bind."""
         value = value.strip()
         if not value:
             raise ValueError("bind address cannot be empty")
@@ -273,6 +291,7 @@ class ServerConfig(BaseModel):
     @field_validator("cookie_domain")
     @classmethod
     def _validate_cookie_domain(cls, value: str | None) -> str | None:
+        """_validate_cookie_domain."""
         if value is None or not value.strip():
             return None
         return normalize_host(value.lstrip("."))
@@ -280,6 +299,7 @@ class ServerConfig(BaseModel):
     @field_validator("forward_user_header", mode="before")
     @classmethod
     def _validate_user_header(cls, value: str | None) -> str | None:
+        """_validate_user_header."""
         if value is None:
             return None
         value = str(value).strip()
@@ -294,6 +314,7 @@ class ServerConfig(BaseModel):
     @field_validator("external_scheme")
     @classmethod
     def _validate_external_scheme(cls, value: str | None) -> str | None:
+        """_validate_external_scheme."""
         if value is not None and value not in {"http", "https"}:
             raise ValueError("external_scheme must be http or https")
         return value
@@ -301,6 +322,7 @@ class ServerConfig(BaseModel):
     @field_validator("public_url")
     @classmethod
     def _validate_public_url(cls, value: str | None) -> str | None:
+        """_validate_public_url."""
         if value is None or not value.strip():
             return None
         return _normalize_origin(value)
@@ -308,6 +330,7 @@ class ServerConfig(BaseModel):
     @field_validator("log_level")
     @classmethod
     def _validate_log_level(cls, value: str) -> str:
+        """_validate_log_level."""
         value = value.lower()
         if value not in {"debug", "info", "warning", "error", "critical"}:
             raise ValueError("log_level must be debug, info, warning, error, or critical")
@@ -315,6 +338,7 @@ class ServerConfig(BaseModel):
 
 
 class RouteConfig(BaseModel):
+    """RouteConfig."""
     model_config = ConfigDict(extra="forbid")
 
     host: str
@@ -347,11 +371,13 @@ class RouteConfig(BaseModel):
     @field_validator("host")
     @classmethod
     def _validate_host(cls, value: str) -> str:
+        """_validate_host."""
         return normalize_host(value, allow_wildcard=True)
 
     @field_validator("upstream")
     @classmethod
     def _validate_upstream(cls, value: str) -> str:
+        """_validate_upstream."""
         value = value.strip()
         parts = urlsplit(value)
         if parts.scheme not in {"http", "https"}:
@@ -371,6 +397,7 @@ class RouteConfig(BaseModel):
     @field_validator("name")
     @classmethod
     def _validate_name(cls, value: str | None) -> str | None:
+        """_validate_name."""
         if value is None:
             return None
         value = value.strip()
@@ -381,6 +408,7 @@ class RouteConfig(BaseModel):
     @field_validator("health_path")
     @classmethod
     def _validate_health_path(cls, value: str) -> str:
+        """_validate_health_path."""
         value = value.strip() or "/"
         if not value.startswith("/"):
             raise ValueError("health_path must start with /")
@@ -389,6 +417,7 @@ class RouteConfig(BaseModel):
     @field_validator("public_paths")
     @classmethod
     def _validate_public_paths(cls, value: list[str]) -> list[str]:
+        """_validate_public_paths."""
         cleaned: list[str] = []
         for path in value:
             path = path.strip()
@@ -400,6 +429,7 @@ class RouteConfig(BaseModel):
     @field_validator("headers")
     @classmethod
     def _validate_headers(cls, value: dict[str, str]) -> dict[str, str]:
+        """_validate_headers."""
         result: dict[str, str] = {}
         for key, item in value.items():
             if not _HEADER_NAME_RE.match(key):
@@ -412,6 +442,7 @@ class RouteConfig(BaseModel):
     @field_validator("allowed_ips")
     @classmethod
     def _validate_allowed_ips(cls, value: list[str]) -> list[str]:
+        """_validate_allowed_ips."""
         cleaned: list[str] = []
         for ip in value:
             try:
@@ -424,6 +455,7 @@ class RouteConfig(BaseModel):
     @field_validator("denied_ips")
     @classmethod
     def _validate_denied_ips(cls, value: list[str]) -> list[str]:
+        """_validate_denied_ips."""
         cleaned: list[str] = []
         for ip in value:
             try:
@@ -435,6 +467,7 @@ class RouteConfig(BaseModel):
 
     @property
     def display_name(self) -> str:
+        """display_name."""
         if self.name:
             return self.name
         if self.host.startswith("*."):
@@ -445,13 +478,16 @@ class RouteConfig(BaseModel):
 
     @property
     def scheme(self) -> str:
+        """scheme."""
         return urlsplit(self.upstream).scheme
 
     @property
     def upstream_host(self) -> str:
+        """upstream_host."""
         return urlsplit(self.upstream).netloc
 
     def matches_host(self, host: str) -> bool:
+        """matches_host."""
         if self.host == host:
             return True
         if self.host.startswith("*."):
@@ -460,12 +496,14 @@ class RouteConfig(BaseModel):
         return False
 
     def is_public_path(self, path: str) -> bool:
+        """is_public_path."""
         from fnmatch import fnmatch
 
         return any(fnmatch(path, pattern) for pattern in self.public_paths)
 
 
 class MeshConfig(BaseModel):
+    """MeshConfig."""
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
@@ -480,6 +518,7 @@ class MeshConfig(BaseModel):
     @field_validator("interface")
     @classmethod
     def _validate_interface(cls, value: str) -> str:
+        """_validate_interface."""
         value = value.strip()
         if not re.match(r"^[A-Za-z0-9_=+.-]{1,15}$", value):
             raise ValueError("invalid WireGuard interface name")
@@ -488,6 +527,7 @@ class MeshConfig(BaseModel):
     @field_validator("address")
     @classmethod
     def _validate_address(cls, value: str) -> str:
+        """_validate_address."""
         try:
             interface = ipaddress.ip_interface(value)
         except ValueError as exc:
@@ -497,6 +537,7 @@ class MeshConfig(BaseModel):
     @field_validator("client_allowed_ips")
     @classmethod
     def _validate_allowed_ips(cls, value: str) -> str:
+        """_validate_allowed_ips."""
         parts = [part.strip() for part in value.split(",") if part.strip()]
         if not parts:
             raise ValueError("client_allowed_ips cannot be empty")
@@ -510,6 +551,7 @@ class MeshConfig(BaseModel):
     @field_validator("endpoint")
     @classmethod
     def _validate_endpoint(cls, value: str | None) -> str | None:
+        """_validate_endpoint."""
         if value is None or not value.strip():
             return None
         value = value.strip()
@@ -525,6 +567,7 @@ class MeshConfig(BaseModel):
     @field_validator("dns")
     @classmethod
     def _validate_dns(cls, value: str | None) -> str | None:
+        """_validate_dns."""
         if value is None or not value.strip():
             return None
         try:
@@ -535,6 +578,7 @@ class MeshConfig(BaseModel):
 
 
 class WardenConfig(BaseModel):
+    """WardenConfig."""
     model_config = ConfigDict(extra="forbid")
 
     version: int = 1
@@ -549,6 +593,7 @@ class WardenConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_cross_fields(self) -> WardenConfig:
+        """_validate_cross_fields."""
         errors: list[str] = []
         rp_id = self.webauthn.rp_id
         admin_host = self.server.admin_host
@@ -621,12 +666,15 @@ class WardenConfig(BaseModel):
 
     @property
     def admin_origin(self) -> str | None:
+        """admin_origin."""
         return self.server.public_url
 
     def base_dir(self) -> Path:
+        """base_dir."""
         return Path(self._base_dir)
 
     def resolve_path(self, value: str) -> Path:
+        """resolve_path."""
         path = Path(value).expanduser()
         if not path.is_absolute():
             path = self.base_dir() / path
@@ -634,28 +682,33 @@ class WardenConfig(BaseModel):
 
     @property
     def database_path(self) -> Path:
+        """database_path."""
         return self.resolve_path(self.database.path)
 
     @property
     def certfile_path(self) -> Path | None:
+        """certfile_path."""
         if not self.server.tls.certfile:
             return None
         return self.resolve_path(self.server.tls.certfile)
 
     @property
     def keyfile_path(self) -> Path | None:
+        """keyfile_path."""
         if not self.server.tls.keyfile:
             return None
         return self.resolve_path(self.server.tls.keyfile)
 
     @property
     def acme_webroot_path(self) -> Path | None:
+        """acme_webroot_path."""
         if not self.server.tls.acme_webroot:
             return None
         return self.resolve_path(self.server.tls.acme_webroot)
 
     @property
     def mesh_config_path(self) -> Path | None:
+        """mesh_config_path."""
         if not self.mesh.config_path:
             return None
         return self.resolve_path(self.mesh.config_path)
@@ -671,9 +724,11 @@ class WardenConfig(BaseModel):
         return max(candidates, key=lambda route: len(route.host))
 
     def enabled_routes(self) -> list[RouteConfig]:
+        """enabled_routes."""
         return [route for route in self.routes if route.enabled]
 
     def origin_allowed(self, origin: str) -> bool:
+        """origin_allowed."""
         try:
             normalized = _normalize_origin(origin)
         except ValueError:
@@ -688,6 +743,7 @@ class WardenConfig(BaseModel):
 
 
 def format_validation_errors(exc: Exception) -> list[str]:
+    """format_validation_errors."""
     errors = getattr(exc, "errors", None)
     if callable(errors):
         messages: list[str] = []
@@ -707,6 +763,7 @@ def env_substitute(value: Any) -> Any:
         return [env_substitute(item) for item in value]
     if isinstance(value, str):
         def _replace(match: re.Match[str]) -> str:
+            """_replace."""
             var_name = match.group(1) or match.group(2)
             return os.environ.get(var_name, match.group(0))
         return re.sub(r"\$\{(\w+)\}|\$(\w+)", _replace, value)
@@ -714,6 +771,7 @@ def env_substitute(value: Any) -> Any:
 
 
 def parse_config_text(text: str, *, base_dir: Path, source: str = "config") -> WardenConfig:
+    """parse_config_text."""
     yaml = YAML(typ="safe", pure=True)
     yaml.allow_duplicate_keys = False
     try:
@@ -734,6 +792,7 @@ def parse_config_text(text: str, *, base_dir: Path, source: str = "config") -> W
 
 
 def load_config(path: str | Path) -> WardenConfig:
+    """load_config."""
     config_path = Path(path).expanduser().resolve()
     if not config_path.exists():
         raise ConfigError(
@@ -748,6 +807,7 @@ def load_config(path: str | Path) -> WardenConfig:
 
 
 def _to_commented(value: Any) -> Any:
+    """_to_commented."""
     if isinstance(value, dict):
         result = CommentedMap()
         for key, item in value.items():
@@ -772,29 +832,35 @@ class ConfigManager:
     """
 
     def __init__(self, config: WardenConfig, path: Path | None = None) -> None:
+        """__init__."""
         self._config = config
         self.path = Path(path).resolve() if path else None
         self._lock = threading.RLock()
 
     @classmethod
     def from_file(cls, path: str | Path) -> ConfigManager:
+        """from_file."""
         resolved = Path(path).expanduser().resolve()
         return cls(load_config(resolved), resolved)
 
     @property
     def config(self) -> WardenConfig:
+        """config."""
         return self._config
 
     @property
     def base_dir(self) -> Path:
+        """base_dir."""
         return self._config.base_dir()
 
     def read_text(self) -> str:
+        """read_text."""
         if not self.path or not self.path.exists():
             raise ConfigError("This Warden instance is not running from a YAML file.")
         return self.path.read_text(encoding="utf-8")
 
     def validate_text(self, text: str) -> WardenConfig:
+        """validate_text."""
         base = self.path.parent if self.path else self.base_dir
         return parse_config_text(text, base_dir=base, source=str(self.path or "config"))
 
@@ -837,6 +903,7 @@ class ConfigManager:
             return None
 
     def _write_text(self, text: str) -> None:
+        """_write_text."""
         if not self.path:
             raise ConfigError("This Warden instance is not running from a YAML file.")
         if not text.endswith("\n"):
@@ -856,6 +923,7 @@ class ConfigManager:
             raise
 
     def save_text(self, text: str) -> tuple[WardenConfig, list[str]]:
+        """save_text."""
         with self._lock:
             config = self.validate_text(text)
             previous = self._config
@@ -909,6 +977,7 @@ class ConfigManager:
         return self.save_text(buffer.getvalue())
 
     def _route_sequence(self, document: Any, create: bool = True) -> CommentedSeq:
+        """_route_sequence."""
         routes = document.get("routes")
         if routes is None:
             if not create:
@@ -1014,6 +1083,7 @@ _RESTART_FIELDS = (
 
 
 def _nested(data: dict[str, Any], dotted: str) -> Any:
+    """_nested."""
     current: Any = data
     for part in dotted.split("."):
         if not isinstance(current, dict) or part not in current:
@@ -1023,6 +1093,7 @@ def _nested(data: dict[str, Any], dotted: str) -> Any:
 
 
 def _nested_object(value: Any, dotted: str) -> Any:
+    """_nested_object."""
     current = value
     for part in dotted.split("."):
         current = getattr(current, part)
@@ -1030,6 +1101,7 @@ def _nested_object(value: Any, dotted: str) -> Any:
 
 
 def _set_nested_object(value: Any, dotted: str, replacement: Any) -> None:
+    """_set_nested_object."""
     parts = dotted.split(".")
     current = value
     for part in parts[:-1]:

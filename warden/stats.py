@@ -27,6 +27,7 @@ class RouteMetrics:
 
     @property
     def average_latency_ms(self) -> float | None:
+        """average_latency_ms."""
         if not self.requests:
             return None
         return self.total_latency_ms / self.requests
@@ -55,6 +56,7 @@ class TrafficEvent:
     public: bool = False
 
     def as_dict(self) -> dict[str, Any]:
+        """as_dict."""
         return {
             "timestamp": self.timestamp,
             "host": self.host,
@@ -75,6 +77,7 @@ BACKUP_CODE_USED_METRIC = "warden_backup_code_used_total"
 class MetricsModule:
     """In-memory metrics, health checks, and Prometheus export."""
     def __init__(self) -> None:
+        """__init__."""
         self.started_at = time.time()
         self.metrics: dict[str, RouteMetrics] = {}
         self.health: dict[str, Health] = {}
@@ -99,6 +102,7 @@ class MetricsModule:
         latency_ms: float,
         user: str | None,
     ) -> None:
+        """record_request."""
         metrics = self.metrics.setdefault(route.host, RouteMetrics())
         metrics.requests += 1
         metrics.last_status = status
@@ -135,28 +139,36 @@ class MetricsModule:
         health.error = error
 
     def inc_auth_success(self) -> None:
+        """inc_auth_success."""
         self.auth_success += 1
 
     def inc_auth_failure(self) -> None:
+        """inc_auth_failure."""
         self.auth_failure += 1
 
     def inc_otp_success(self) -> None:
+        """inc_otp_success."""
         self.otp_success += 1
 
     def inc_otp_failure(self) -> None:
+        """inc_otp_failure."""
         self.otp_failure += 1
 
     def inc_backup_code_used(self) -> None:
+        """inc_backup_code_used."""
         self.backup_code_used += 1
 
     def inc_rate_limit_blocked(self) -> None:
+        """inc_rate_limit_blocked."""
         self.rate_limit_blocked += 1
 
     def inc_rate_limit_allowed(self) -> None:
+        """inc_rate_limit_allowed."""
         self.rate_limit_allowed += 1
 
 
     def route_snapshot(self, config: WardenConfig) -> dict[str, dict[str, Any]]:
+        """route_snapshot."""
         snapshots: dict[str, dict[str, Any]] = {}
         for route in config.routes:
             metrics = self.metrics.get(route.host, RouteMetrics())
@@ -195,6 +207,7 @@ class MetricsModule:
     def prometheus_metrics(self) -> str:
         """Export metrics in Prometheus text format."""
         def _escape(value: str) -> str:
+            """_escape."""
             return str(value).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
         lines = []
@@ -248,6 +261,7 @@ class MetricsModule:
         return "\n".join(lines) + "\n"
 
     def snapshot(self, config: WardenConfig) -> dict[str, Any]:
+        """snapshot."""
         services = self.route_snapshot(config)
         enabled = [service for service in services.values() if service["state"] != "disabled"]
         online = sum(1 for service in services.values() if service["state"] == "online")

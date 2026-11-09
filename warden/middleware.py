@@ -79,6 +79,7 @@ class WardenMiddleware:
         self.stats = stats
 
     async def __call__(self, scope: MutableMapping[str, Any], receive: Callable, send: Callable) -> None:
+        """__call__."""
         if scope["type"] not in {"http", "websocket"}:
             await self.app(scope, receive, send)
             return
@@ -270,6 +271,7 @@ class WardenMiddleware:
         """Invoke the underlying FastAPI application, applying security headers to the response.
         """
         async def send_with_security(message: MutableMapping[str, Any]) -> None:
+            """send_with_security."""
             if message["type"] == "http.response.start":
                 headers = MutableHeaders(scope=message)
                 headers.setdefault("X-Request-ID", scope.get("state", {}).get("request_id", ""))

@@ -22,6 +22,7 @@ class MeshApplyAdapter:
     """
 
     def __init__(self, intake: MeshPeerIntake) -> None:
+        """__init__."""
         self.intake = intake
         self.config = intake.config
 

@@ -262,6 +262,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        """lifespan."""
         await database.init()
         try:
             validate_runtime_files(manager.config)
@@ -367,6 +368,7 @@ def create_app(
 
     @app.get("/.well-known/acme-challenge/{token}", include_in_schema=False)
     async def acme_challenge(token: str) -> Response:
+        """acme_challenge."""
         root = manager.config.acme_webroot_path
         if root is None or not _ACME_TOKEN_RE.match(token):
             raise HTTPException(404, "Not found")
@@ -395,6 +397,7 @@ def create_app(
 
     @app.exception_handler(StarletteHTTPException)
     async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> Response:
+        """http_exception_handler."""
         title, message = _STATUS_COPY.get(
             exc.status_code, ("Request failed", "Warden could not complete that request.")
         )
@@ -410,6 +413,7 @@ def create_app(
     async def validation_exception_handler(
         request: Request, exc: RequestValidationError
     ) -> Response:
+        """validation_exception_handler."""
         if request.url.path.startswith(f"{INTERNAL_PREFIX}/api/") or request_wants_json(
             request.scope
         ):
@@ -425,6 +429,7 @@ def create_app(
 
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception) -> Response:
+        """unhandled_exception_handler."""
         logger.exception("Unhandled request error on %s %s", request.method, request.url.path)
         return _error_response(
             request,

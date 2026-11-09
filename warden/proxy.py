@@ -83,11 +83,13 @@ class _BoundedReceive:
     """
 
     def __init__(self, receive: Any, max_bytes: int) -> None:
+        """__init__."""
         self._receive = receive
         self._max_bytes = max_bytes
         self._total = 0
 
     async def __call__(self) -> Any:
+        """__call__."""
         message = await self._receive()
         if message.get("type") == "http.request":
             self._total += len(message.get("body", b""))
@@ -147,6 +149,7 @@ class ProxyEngine:
         return False
 
     def _client(self, verify: bool) -> httpx.AsyncClient:
+        """_client."""
         client = self._clients.get(verify)
         if client is None:
             client_kwargs: dict[str, Any] = {
@@ -165,6 +168,7 @@ class ProxyEngine:
         return client
 
     async def close(self) -> None:
+        """close."""
         for client in self._clients.values():
             await client.aclose()
         self._clients.clear()
@@ -383,6 +387,7 @@ class ProxyEngine:
         return apply_security_headers(response)
 
     async def _send(self, response: Response, scope: Any, receive: Any, send: Any) -> None:
+        """_send."""
         await response(scope, receive, send)
 
     # --------------------------------------------------------------------- HTTP
@@ -585,6 +590,7 @@ class ProxyEngine:
                 return
 
             async def body_iterator():
+                """body_iterator."""
                 try:
                     async for chunk in upstream.aiter_raw():
                         if chunk:
@@ -665,6 +671,7 @@ class ProxyEngine:
     def _websocket_headers(
         self, scope: MutableMapping[str, Any], route: RouteConfig, user: Any | None
     ) -> list[tuple[str, str]]:
+        """_websocket_headers."""
         decoded = [
             (key.decode("latin-1"), value.decode("latin-1"))
             for key, value in scope.get("headers", [])
@@ -804,6 +811,7 @@ class ProxyEngine:
             raise
 
         async def client_to_upstream() -> None:
+            """client_to_upstream."""
             while True:
                 message = await websocket.receive()
                 if message["type"] == "websocket.disconnect":
@@ -814,6 +822,7 @@ class ProxyEngine:
                     await upstream.send(message["bytes"])
 
         async def upstream_to_client() -> None:
+            """upstream_to_client."""
             async for message in upstream:
                 if isinstance(message, str):
                     await websocket.send_text(message)

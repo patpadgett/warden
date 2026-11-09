@@ -44,6 +44,7 @@ router = APIRouter()
 
 
 def _get_fastapi_app(request: Request) -> FastAPI:
+    """_get_fastapi_app."""
     _app = request.scope.get("app")
     if _app is None:
         _app = request.app
@@ -56,6 +57,7 @@ def _get_fastapi_app(request: Request) -> FastAPI:
 
 
 class ServicePayload(BaseModel):
+    """ServicePayload."""
     model_config = ConfigDict(extra="forbid")
     host: str
     upstream: str
@@ -90,21 +92,25 @@ class ServiceUpdatePayload(ServicePayload):
 
 
 class ConfigPayload(BaseModel):
+    """ConfigPayload."""
     model_config = ConfigDict(extra="forbid")
     yaml: str = Field(..., max_length=1_048_576)
 
 
 class ImportPayload(BaseModel):
+    """ImportPayload."""
     model_config = ConfigDict(extra="forbid")
     yaml: str | None = None
 
 
 class PasskeyNamePayload(BaseModel):
+    """PasskeyNamePayload."""
     model_config = ConfigDict(extra="forbid")
     name: str = Field(..., min_length=1, max_length=60)
 
 
 class UserPayload(BaseModel):
+    """UserPayload."""
     model_config = ConfigDict(extra="forbid")
     username: str = Field(..., min_length=1, max_length=64)
     display_name: str = Field(..., min_length=1, max_length=128)
@@ -113,6 +119,7 @@ class UserPayload(BaseModel):
 
 
 class UserUpdatePayload(BaseModel):
+    """UserUpdatePayload."""
     model_config = ConfigDict(extra="forbid")
     display_name: str | None = Field(default=None, max_length=128)
     email: str | None = None
@@ -120,12 +127,14 @@ class UserUpdatePayload(BaseModel):
 
 
 class InviteCreateBody(BaseModel):
+    """InviteCreateBody."""
     model_config = ConfigDict(extra="forbid")
     user_id: int
     expires_in: int = Field(default=3600, ge=60, le=24 * 3600 * 365)
 
 
 class MeshPeerPayload(BaseModel):
+    """MeshPeerPayload."""
     model_config = ConfigDict(extra="forbid")
     name: str = Field(..., min_length=1, max_length=64)
     address: str | None = None
@@ -165,17 +174,20 @@ def _guard_host(request: Request) -> WardenConfig:
 
 
 def _session(request: Request) -> Session:
+    """_session."""
     session = getattr(request.state, "session", None)
     if session is None:
         raise HTTPException(401, "Sign in to continue.")
     return session
 
 def _user(request: Request) -> User:
+    """_user."""
     return _session(request).user
 
 
 # ---------------------------------------------------------------------- Admin access guard (binary is_admin)
 async def _require_admin(request: Request) -> None:
+    """_require_admin."""
     user = _user(request)
     if not user.is_admin:
         raise HTTPException(403, "Admin access required")
@@ -183,11 +195,13 @@ async def _require_admin(request: Request) -> None:
 
 
 def _db(request: Request):
+    """_db."""
     _app = _get_fastapi_app(request)
     return _app.state.db
 
 
 def _error(exc: ConfigError, status: int = 400) -> JSONResponse:
+    """_error."""
     return JSONResponse(
         {"detail": exc.message, "errors": exc.errors},
         status_code=status,
@@ -196,6 +210,7 @@ def _error(exc: ConfigError, status: int = 400) -> JSONResponse:
 
 
 def _display_upstream(upstream: str) -> str:
+    """_display_upstream."""
     parts = urlsplit(upstream)
     host = parts.hostname or ""
     if ":" in host:
@@ -209,6 +224,7 @@ def _display_upstream(upstream: str) -> str:
 
 
 def _base_context(request: Request, *, page: str, title: str) -> dict[str, Any]:
+    """_base_context."""
     return {
         "page": page,
         "page_title": title,
@@ -218,11 +234,13 @@ def _base_context(request: Request, *, page: str, title: str) -> dict[str, Any]:
 
 
 def _render(request: Request, template: str, context: dict[str, Any], status_code: int = 200) -> Response:
+    """_render."""
     response = templates.TemplateResponse(request, template, context, status_code=status_code)
     return add_page_headers(response)
 
 
 async def _audit(request: Request, event: str, detail: str | None = None) -> None:
+    """_audit."""
     session = getattr(request.state, "session", None)
     await _db(request).audit(
         event,
@@ -235,6 +253,7 @@ async def _audit(request: Request, event: str, detail: str | None = None) -> Non
 
 
 def _cert_context(request: Request, config: WardenConfig) -> dict[str, Any]:
+    """_cert_context."""
     status = certificate_status(config)
     renewal = getattr(_get_fastapi_app(request).state, "cert_renewal", None)
     info = status.get("certificate")
@@ -249,6 +268,7 @@ def _cert_context(request: Request, config: WardenConfig) -> dict[str, Any]:
 
 
 def _service_context(route: RouteConfig, config: WardenConfig, snapshot: dict[str, Any], scope) -> dict[str, Any]:
+    """_service_context."""
     data = snapshot["services"].get(route.host, {})
     state = data.get("state", "checking")
     labels = {
@@ -317,6 +337,7 @@ async def swagger_ui(request: Request) -> Response:
 
 @router.get("/metrics/view")
 async def metrics_view(request: Request) -> Response:
+    """metrics_view."""
     _guard_host(request)
     _app = _get_fastapi_app(request)
     stats = _app.state.stats
@@ -605,6 +626,7 @@ EVENT_META: dict[str, tuple[str, str, str]] = {
 
 @router.get("/activity")
 async def activity_page(request: Request) -> Response:
+    """activity_page."""
     _guard_host(request)
     event_filter = request.query_params.get("event")
     since_raw = request.query_params.get("since")
@@ -667,6 +689,7 @@ async def config_page(request: Request) -> Response:
 
 @router.get("/mesh")
 async def mesh_page(request: Request) -> Response:
+    """mesh_page."""
     config = _guard_host(request)
     context = _base_context(request, page="mesh", title="Mesh")
     _app = _get_fastapi_app(request)
@@ -759,6 +782,7 @@ async def generate_backup_code_page(request: Request) -> Response:
 @router.get("/_warden/api/backup_codes")
 async def list_backup_codes(request: Request) -> JSONResponse:
     # Ensure admin host access
+    """list_backup_codes."""
     _guard_host(request)
     user = _user(request)
     db = _db(request)
@@ -771,6 +795,7 @@ async def list_backup_codes(request: Request) -> JSONResponse:
 @router.post("/_warden/api/backup_codes")
 async def create_backup_code(request: Request) -> JSONResponse:
     # Ensure admin host and CSRF protection (middleware handles header + origin)
+    """create_backup_code."""
     _guard_host(request)
     user = _user(request)
     db = _db(request)
@@ -790,6 +815,7 @@ async def create_backup_code(request: Request) -> JSONResponse:
 # ---------------------------------------------------------------------- Status
 @router.get("/_warden/api/status")
 async def status_api(request: Request) -> JSONResponse:
+    """status_api."""
     config = _guard_host(request)
     _app = _get_fastapi_app(request)
     stats = _app.state.stats
@@ -799,6 +825,7 @@ async def status_api(request: Request) -> JSONResponse:
 
 @router.get("/_warden/api/database/health")
 async def database_health_api(request: Request) -> JSONResponse:
+    """database_health_api."""
     _guard_host(request)
     db = _db(request)
     healthy = await db.health_check()
@@ -807,6 +834,7 @@ async def database_health_api(request: Request) -> JSONResponse:
 
 @router.post("/_warden/api/services")
 async def add_service(request: Request, payload: ServicePayload) -> JSONResponse:
+    """add_service."""
     _guard_host(request)
     _app = _get_fastapi_app(request)
     manager = _app.state.manager
@@ -823,6 +851,7 @@ async def add_service(request: Request, payload: ServicePayload) -> JSONResponse
 
 @router.put("/_warden/api/services/{host:path}")
 async def update_service(request: Request, host: str, payload: ServiceUpdatePayload) -> JSONResponse:
+    """update_service."""
     _guard_host(request)
     _app = _get_fastapi_app(request)
     manager = _app.state.manager
@@ -841,6 +870,7 @@ async def update_service(request: Request, host: str, payload: ServiceUpdatePayl
 
 @router.delete("/_warden/api/services/{host:path}")
 async def delete_service(request: Request, host: str) -> JSONResponse:
+    """delete_service."""
     _guard_host(request)
     _app = _get_fastapi_app(request)
     manager = _app.state.manager
@@ -856,6 +886,7 @@ async def delete_service(request: Request, host: str) -> JSONResponse:
 
 @router.get("/_warden/api/config/export")
 async def export_config(request: Request) -> Response:
+    """export_config."""
     _guard_host(request)
     _app = _get_fastapi_app(request)
     manager = _app.state.manager
@@ -869,6 +900,7 @@ async def export_config(request: Request) -> Response:
 
 @router.post("/_warden/api/config/import")
 async def import_config(request: Request, payload: ImportPayload) -> JSONResponse:
+    """import_config."""
     _guard_host(request)
     _app = _get_fastapi_app(request)
     manager = _app.state.manager
@@ -888,6 +920,7 @@ async def import_config(request: Request, payload: ImportPayload) -> JSONRespons
 
 @router.get("/_warden/api/config")
 async def get_config(request: Request) -> JSONResponse:
+    """get_config."""
     _guard_host(request)
     _app = _get_fastapi_app(request)
     manager = _app.state.manager
@@ -899,6 +932,7 @@ async def get_config(request: Request) -> JSONResponse:
 
 @router.post("/_warden/api/config/validate")
 async def validate_config(request: Request, payload: ConfigPayload) -> JSONResponse:
+    """validate_config."""
     _guard_host(request)
     _app = _get_fastapi_app(request)
     manager = _app.state.manager
@@ -920,6 +954,7 @@ async def validate_config(request: Request, payload: ConfigPayload) -> JSONRespo
 
 @router.post("/_warden/api/config")
 async def save_config(request: Request, payload: ConfigPayload) -> JSONResponse:
+    """save_config."""
     _guard_host(request)
     _app = _get_fastapi_app(request)
     manager = _app.state.manager
@@ -933,6 +968,7 @@ async def save_config(request: Request, payload: ConfigPayload) -> JSONResponse:
 
 @router.patch("/_warden/api/passkeys/{credential_id}")
 async def rename_passkey(request: Request, credential_id: int, payload: PasskeyNamePayload) -> JSONResponse:
+    """rename_passkey."""
     _guard_host(request)
     user = _user(request)
     name = payload.name.strip()
@@ -947,6 +983,7 @@ async def rename_passkey(request: Request, credential_id: int, payload: PasskeyN
 
 @router.delete("/_warden/api/passkeys/{credential_id}")
 async def delete_passkey(request: Request, credential_id: int) -> JSONResponse:
+    """delete_passkey."""
     _guard_host(request)
     user = _user(request)
     db = _db(request)
@@ -966,6 +1003,7 @@ async def delete_passkey(request: Request, credential_id: int) -> JSONResponse:
 
 @router.delete("/_warden/api/sessions/{session_id}")
 async def revoke_session(request: Request, session_id: int) -> JSONResponse:
+    """revoke_session."""
     _guard_host(request)
     session = _session(request)
     config = _guard_host(request)
@@ -983,6 +1021,7 @@ async def revoke_session(request: Request, session_id: int) -> JSONResponse:
 
 @router.post("/_warden/api/sessions/revoke-others")
 async def revoke_other_sessions(request: Request) -> JSONResponse:
+    """revoke_other_sessions."""
     _guard_host(request)
     session = _session(request)
     count = await _db(request).revoke_other_sessions(session.user_id, session.token_hash)
@@ -992,6 +1031,7 @@ async def revoke_other_sessions(request: Request) -> JSONResponse:
 
 # -------------------------------------------------------------------- mesh
 def _mesh(request: Request):
+    """_mesh."""
     _guard_host(request)
     if not _guard_host(request).mesh.enabled:
         raise HTTPException(400, "WireGuard mesh is disabled in warden.yaml.")
@@ -1001,6 +1041,7 @@ def _mesh(request: Request):
 
 @router.post("/_warden/api/mesh/peers")
 async def add_mesh_peer(request: Request, payload: MeshPeerPayload) -> JSONResponse:
+    """add_mesh_peer."""
     mesh = _mesh(request)
     try:
         peer = await mesh.add_peer(
@@ -1030,6 +1071,7 @@ async def add_mesh_peer(request: Request, payload: MeshPeerPayload) -> JSONRespo
 
 @router.get("/_warden/api/mesh/peers/{peer_id}/config")
 async def mesh_peer_config(request: Request, peer_id: int) -> JSONResponse:
+    """mesh_peer_config."""
     mesh = _mesh(request)
     peer = await _db(request).get_mesh_peer(peer_id)
     if peer is None:
@@ -1048,6 +1090,7 @@ async def mesh_peer_config(request: Request, peer_id: int) -> JSONResponse:
 
 @router.delete("/_warden/api/mesh/peers/{peer_id}")
 async def delete_mesh_peer(request: Request, peer_id: int) -> JSONResponse:
+    """delete_mesh_peer."""
     _mesh(request)
     peer = await _db(request).get_mesh_peer(peer_id)
     if peer is None:
@@ -1059,6 +1102,7 @@ async def delete_mesh_peer(request: Request, peer_id: int) -> JSONResponse:
 
 @router.post("/_warden/api/mesh/apply")
 async def apply_mesh(request: Request) -> JSONResponse:
+    """apply_mesh."""
     mesh = _mesh(request)
     try:
         result = await mesh.apply()
@@ -1070,6 +1114,7 @@ async def apply_mesh(request: Request) -> JSONResponse:
 
 @router.get("/_warden/api/mesh/status")
 async def mesh_status(request: Request) -> JSONResponse:
+    """mesh_status."""
     mesh = _mesh(request)
     try:
         status = await mesh.refresh_handshakes()
@@ -1088,6 +1133,7 @@ async def mesh_status(request: Request) -> JSONResponse:
 
 @router.post("/_warden/api/proxy/reset-clients")
 async def reset_proxy_clients(request: Request) -> JSONResponse:
+    """reset_proxy_clients."""
     _guard_host(request)
     await _require_admin(request)
     _app = _get_fastapi_app(request)
@@ -1096,6 +1142,7 @@ async def reset_proxy_clients(request: Request) -> JSONResponse:
 
 @router.post("/_warden/api/mesh/rotate-hub-key")
 async def rotate_mesh_hub_key(request: Request) -> JSONResponse:
+    """rotate_mesh_hub_key."""
     _guard_host(request)
     await _require_admin(request)
     mesh = _mesh(request)

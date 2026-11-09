@@ -198,9 +198,11 @@ class HttpsRedirectApp:
     """Serve ACME challenges on plain HTTP and send everything else to HTTPS."""
 
     def __init__(self, manager: ConfigManager) -> None:
+        """__init__."""
         self.manager = manager
 
     def _acme_file(self, path: str) -> Path | None:
+        """_acme_file."""
         root = self.manager.config.acme_webroot_path
         if root is None or not path.startswith("/.well-known/acme-challenge/"):
             return None
@@ -217,6 +219,7 @@ class HttpsRedirectApp:
         return target
 
     def _location(self, scope: dict[str, Any]) -> str:
+        """_location."""
         config = self.manager.config
         host = get_host(scope)
         path = scope.get("raw_path") or scope.get("path", "/")
@@ -240,6 +243,7 @@ class HttpsRedirectApp:
         return location
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        """__call__."""
         if scope["type"] == "websocket":
             await send({"type": "websocket.close", "code": 1008})
             return
@@ -274,6 +278,7 @@ def _uvicorn_config(
     lifespan: str = "auto",
     use_tls: bool = True,
 ) -> uvicorn.Config:
+    """_uvicorn_config."""
     tls = config.server.tls
     ssl_kwargs: dict[str, Any] = {}
     if tls.enabled and use_tls:
@@ -295,11 +300,13 @@ def _uvicorn_config(
 
 
 async def _run_single(app: Any, config: WardenConfig, host: str, port: int, access_log: bool) -> None:
+    """_run_single."""
     server = uvicorn.Server(_uvicorn_config(app, host=host, port=port, config=config, access_log=access_log))
     await server.serve()
 
 
 async def _run_dual(app: Any, config: WardenConfig, host: str, access_log: bool) -> None:
+    """_run_dual."""
     https_server = uvicorn.Server(
         _uvicorn_config(
             app,
@@ -329,6 +336,7 @@ async def _run_dual(app: Any, config: WardenConfig, host: str, access_log: bool)
     loop = asyncio.get_running_loop()
 
     def stop(*_: Any) -> None:
+        """stop."""
         https_server.should_exit = True
         http_server.should_exit = True
 
@@ -421,6 +429,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
 def _serve_manager(manager: ConfigManager):
     # Reserved for future serve-time resource coordination. Keeping the path
     # explicit makes the config file visible in error messages.
+    """_serve_manager."""
     assert manager.path is not None
     yield manager
 
@@ -599,6 +608,7 @@ def cmd_certs(args: argparse.Namespace) -> int:
 
 
 async def _renew_now(manager: ConfigManager, command: str) -> int:
+    """_renew_now."""
     print(f"running: {command}")
     try:
         process = await asyncio.create_subprocess_shell(
@@ -708,6 +718,7 @@ def cmd_auth_reset(args: argparse.Namespace) -> int:
 
 
 async def _reset_auth(config: WardenConfig) -> int:
+    """_reset_auth."""
     try:
         db = _open_database(config)
     except DatabaseError as exc:
@@ -730,6 +741,7 @@ async def _reset_auth(config: WardenConfig) -> int:
 
 # ------------------------------------------------------------------------ mesh
 def _mesh_manager(args: argparse.Namespace) -> tuple[ConfigManager, Database, MeshManager]:
+    """_mesh_manager."""
     manager = _load_manager(args)
     if not manager.config.mesh.enabled and args.mesh_action != "status":
         raise MeshError("WireGuard mesh is disabled in warden.yaml.")
@@ -760,6 +772,7 @@ async def _mesh_command(
     db: Database,
     mesh: MeshManager,
 ) -> int:
+    """_mesh_command."""
     await db.init()
     try:
         return await _run_mesh(args, manager, db, mesh)
@@ -773,6 +786,7 @@ async def _run_mesh(
     db: Database,
     mesh: MeshManager,
 ) -> int:
+    """_run_mesh."""
     action = args.mesh_action
     if action == "status":
         if not manager.config.mesh.enabled:

@@ -10,10 +10,12 @@ class MockMeshApplyAdapter(MeshApplyAdapter):
     """Stub adapter for tests — skips wg subprocess calls."""
 
     def __init__(self, intake) -> None:
+        """__init__."""
         super().__init__(intake)
         self.mock_applied = True
 
     async def apply(self) -> dict[str, Any]:
+        """apply."""
         result = {
             "ok": True,
             "output": "mock applied",
@@ -25,7 +27,9 @@ class MockMeshApplyAdapter(MeshApplyAdapter):
         return result
 
     async def status(self) -> dict[str, Any]:
+        """status."""
         return {"available": True, "applied": True, "peers": {}, "detail": "mock status"}
 
     async def refresh_handshakes(self) -> dict[str, Any]:
+        """refresh_handshakes."""
         return await self.status()

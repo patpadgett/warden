@@ -89,12 +89,14 @@ class TLSError(Exception):
 class ACMEToken:
     """Short-lived token for an ACME challenge."""
     def __init__(self, token: str, validity: float):
+        """__init__."""
         self.token = token
         self.validity = validity
         self.created_at = time.time()
 
     @property
     def expired(self) -> bool:
+        """expired."""
         return time.time() > self.created_at + self.validity
 
 
@@ -102,20 +104,24 @@ class ACMEManager:
     """Handles automated certificate issuance via ACME (Let's Encrypt/ZeroSSL)."""
     """Handles automated certificate issuance via ACME (Let's Encrypt/ZeroSSL)."""
     def __init__(self, manager: ConfigManager) -> None:
+        """__init__."""
         self.manager = manager
         self._tokens: dict[str, ACMEToken] = {}
         self._account_key: Path | None = None
 
     def get_challenge_response(self, token: str) -> str | None:
+        """get_challenge_response."""
         t = self._tokens.get(token)
         if t and not t.expired:
             return t.token
         return None
 
     def set_challenge_token(self, token: str, validity: float = 3600) -> None:
+        """set_challenge_token."""
         self._tokens[token] = ACMEToken(token, validity)
 
     def _get_account_key(self) -> Path:
+        """_get_account_key."""
         config = self.manager.config
         path = config.base_dir() / ".warden" / "acme_account.key"
         if not path.exists():
@@ -154,6 +160,7 @@ class ACMEManager:
 
     def _run_acme_flow(self, domain: str, acme_url: str) -> tuple[Path, Path]:
         # Load/create the account private key.
+        """_run_acme_flow."""
         account_key_path = self._get_account_key()
         with open(account_key_path, "rb") as f:
             account_key = jose.JWKRSA.load(f.read())
@@ -238,6 +245,7 @@ class ACMEManager:
 
 @dataclass(slots=True)
 class CertificateInfo:
+    """CertificateInfo."""
     path: Path
     subject: str
     issuer: str
@@ -248,9 +256,11 @@ class CertificateInfo:
 
     @property
     def expired(self) -> bool:
+        """expired."""
         return self.days_left <= 0
 
     def as_dict(self) -> dict[str, Any]:
+        """as_dict."""
         return {
             "path": str(self.path),
             "subject": self.subject,
@@ -264,6 +274,7 @@ class CertificateInfo:
 
 
 def read_certificate(path: str | Path) -> CertificateInfo:
+    """read_certificate."""
     cert_path = Path(path)
     try:
         raw = cert_path.read_bytes()
@@ -300,6 +311,7 @@ def read_certificate(path: str | Path) -> CertificateInfo:
 
 
 def certificate_status(config: WardenConfig) -> dict[str, Any]:
+    """certificate_status."""
     tls = config.server.tls
     status: dict[str, Any] = {
         "enabled": tls.enabled,
@@ -367,6 +379,7 @@ async def renewal_loop(app: Any) -> None:
 
 
 async def _run_renewal(app: Any, config: WardenConfig) -> None:
+    """_run_renewal."""
     tls = config.server.tls
     command = tls.renew_command
     if not command:

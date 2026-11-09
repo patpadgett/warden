@@ -50,23 +50,28 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 
 class SetupBeginBody(BaseModel):
+    """SetupBeginBody."""
     username: str
     display_name: str | None = None
     setup_code: str
     next: str | None = None
 
 class LoginBeginBody(BaseModel):
+    """LoginBeginBody."""
     username: str | None = None
     next: str | None = None
 
 class RegisterBeginBody(BaseModel):
+    """RegisterBeginBody."""
     name: str | None = None
 
 class InviteBeginBody(BaseModel):
+    """InviteBeginBody."""
     token: str
     name: str | None = None
 
 class BackupCodeBody(BaseModel):
+    """BackupCodeBody."""
     code: str
 
 class OTPSetupPayload(BaseModel):
@@ -86,6 +91,7 @@ def csrf_protected(func):
 
     @wraps(func)
     async def wrapper(request: Request, *args, **kwargs):
+        """wrapper."""
         if not _origin_ok(request):
             return _error("Cross-origin request blocked.", 403)
         if request.headers.get("x-warden-request") != "1":
@@ -99,6 +105,7 @@ def csrf_protected(func):
 # ---------------------------------------------------------------------------
 
 def _config(request: Request) -> WardenConfig:
+    """_config."""
     _app = _get_fastapi_app(request)
     return _app.state.manager.config
 
@@ -120,9 +127,11 @@ def _user(request: Request) -> User:
     return _session(request).user
 
 class CredentialBody(BaseModel):
+    """CredentialBody."""
     credential: dict[str, Any]
 
 def _db(request: Request):
+    """_db."""
     _app = request.scope.get("app")
     if _app is None:
         _app = request.app
@@ -135,6 +144,7 @@ def _db(request: Request):
 
 
 def _passkeys(request: Request) -> PasskeyService:
+    """_passkeys."""
     _app = request.scope.get("app")
     if _app is None:
         _app = request.app
@@ -146,15 +156,18 @@ def _passkeys(request: Request) -> PasskeyService:
     return _app.state.passkeys
 
 def _json_response(payload: dict[str, Any], status_code: int = 200) -> JSONResponse:
+    """_json_response."""
     response = JSONResponse(payload, status_code=status_code)
     response.headers["Cache-Control"] = "no-store"
     return response
 
 def _error(message: str, status_code: int = 400) -> JSONResponse:
+    """_error."""
     return json_error(message, status_code)
 
 
 def _get_fastapi_app(request: Request) -> FastAPI:
+    """_get_fastapi_app."""
     _app = request.scope.get("app")
     if _app is None:
         _app = request.app
@@ -182,6 +195,7 @@ async def _body(request: Request, model: type[BaseModel]) -> BaseModel:
         raise AuthError(str(message)) from exc
 
 def _origin_ok(request: Request) -> bool:
+    """_origin_ok."""
     return check_origin(request.scope, _config(request))
 
 def _limited(request: Request, action: str, limit: int, window: float = 60.0) -> tuple[bool, dict[str, str]]:
@@ -207,6 +221,7 @@ async def _audit_failure(
     *,
     username: str | None = None,
 ) -> None:
+    """_audit_failure."""
     try:
         await _db(request).audit(
             event,
@@ -219,6 +234,7 @@ async def _audit_failure(
         logger.exception("Could not write audit event")
 
 async def _handle_auth_error(request: Request, exc: AuthError, *, audit: str | None = None) -> JSONResponse:
+    """_handle_auth_error."""
     if audit:
         await _audit_failure(request, audit, exc.message)
     _app = _get_fastapi_app(request)
@@ -246,6 +262,7 @@ async def otp_setup(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True, "secret": secret, "otpauth_url": otpauth})
 
 class OTPVerifyPayload(BaseModel):
+    """OTPVerifyPayload."""
     code: str
 
 @router.post("/_warden/auth/otp/verify")
