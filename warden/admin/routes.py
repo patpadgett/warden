@@ -56,6 +56,7 @@ def _get_fastapi_app(request: Request) -> FastAPI:
 
 
 class ServicePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     host: str
     upstream: str
     name: str | None = None
@@ -89,7 +90,8 @@ class ServiceUpdatePayload(ServicePayload):
 
 
 class ConfigPayload(BaseModel):
-    yaml: str
+    model_config = ConfigDict(extra="forbid")
+    yaml: str = Field(..., max_length=1_048_576)
 
 
 class ImportPayload(BaseModel):
@@ -98,18 +100,21 @@ class ImportPayload(BaseModel):
 
 
 class PasskeyNamePayload(BaseModel):
-    name: str
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(..., min_length=1, max_length=60)
 
 
 class UserPayload(BaseModel):
-    username: str
-    display_name: str
+    model_config = ConfigDict(extra="forbid")
+    username: str = Field(..., min_length=1, max_length=64)
+    display_name: str = Field(..., min_length=1, max_length=128)
     email: str | None = None
     is_admin: bool = False
 
 
 class UserUpdatePayload(BaseModel):
-    display_name: str | None = None
+    model_config = ConfigDict(extra="forbid")
+    display_name: str | None = Field(default=None, max_length=128)
     email: str | None = None
     is_admin: bool | None = None
 
@@ -121,10 +126,11 @@ class InviteCreateBody(BaseModel):
 
 
 class MeshPeerPayload(BaseModel):
-    name: str
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(..., min_length=1, max_length=64)
     address: str | None = None
     endpoint: str | None = None
-    keepalive: int = 25
+    keepalive: int = Field(default=25, ge=1, le=3600)
 
 
 
@@ -820,6 +826,8 @@ async def update_service(request: Request, host: str, payload: ServiceUpdatePayl
     _guard_host(request)
     _app = _get_fastapi_app(request)
     manager = _app.state.manager
+    if payload.host != host:
+        return JSONResponse({"detail": "Route host in body must match the URL path."}, status_code=400)
     try:
         route = RouteConfig(**payload.model_dump())
         _config, restart = manager.update_route(host, route)
