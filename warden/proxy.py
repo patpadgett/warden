@@ -496,8 +496,9 @@ class ProxyEngine:
                 return
 
         if self.health_monitor is not None:
-            upstream_host = urlsplit(route.upstream).hostname or route.upstream
-            health = self.stats.health.get(upstream_host)
+            # Health state is recorded under the route host (see HealthMonitor),
+            # so look it up by route.host rather than the upstream hostname.
+            health = self.stats.health.get(route.host)
             if health is not None and health.online is False and health.checked_at is not None:
                 response = self._error_response(
                     scope,
