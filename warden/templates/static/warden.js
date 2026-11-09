@@ -88,10 +88,26 @@
     if (!element) return;
     element.textContent = message;
     element.hidden = false;
+    const form = element.closest("form");
+    if (form) {
+      form.querySelectorAll("input, select, textarea").forEach((field) => {
+        field.setAttribute("aria-invalid", "true");
+        if (!field.getAttribute("aria-describedby")) {
+          field.setAttribute("aria-describedby", element.id || "");
+        }
+      });
+    }
   };
 
   W.hide = (element) => {
-    if (element) element.hidden = true;
+    if (!element) return;
+    element.hidden = true;
+    const form = element.closest("form");
+    if (form) {
+      form.querySelectorAll("input, select, textarea").forEach((field) => {
+        field.removeAttribute("aria-invalid");
+      });
+    }
   };
 
   W.setBusy = (button, busy, busyLabel = null) => {
@@ -337,19 +353,31 @@
     else dialog.removeAttribute("open");
   };
 
+  const runViewTransition = (update) => {
+    if (typeof document.startViewTransition === "function") {
+      try { return document.startViewTransition(update); } catch (e) { /* fall through */ }
+    }
+    update();
+    return null;
+  };
+
   W.openOverlay = (overlay) => {
     if (!overlay) return;
     overlay._trigger = document.activeElement;
-    overlay.hidden = false;
-    overlay.classList.add("open");
+    runViewTransition(() => {
+      overlay.hidden = false;
+      overlay.classList.add("open");
+    });
     const focusable = overlay.querySelector("input:not([type=hidden]), button, select, textarea");
     if (focusable) window.setTimeout(() => focusable.focus(), 30);
   };
 
   W.closeOverlay = (overlay) => {
     if (!overlay) return;
-    overlay.classList.remove("open");
     const trigger = overlay._trigger;
+    runViewTransition(() => {
+      overlay.classList.remove("open");
+    });
     window.setTimeout(() => {
       overlay.hidden = true;
       if (trigger && typeof trigger.focus === "function") trigger.focus();
