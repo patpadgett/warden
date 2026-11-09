@@ -47,7 +47,7 @@
               <div style="min-width: 0; flex: 1;">
                 <div style="font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 8px;">
                   <span data-passkey-name style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ credential.name }}</span>
-                  {% if loop.first %}<span class="badge badge-accent">primary</span>{% endif %}
+                  {% if loop.first %}<span class="badge badge-accent">first</span>{% endif %}
                   {% if credential.backup_state %}<span class="badge badge-accent">synced</span>{% elif credential.backup_eligible %}<span class="badge">backup ready</span>{% endif %}
                 </div>
                 <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">

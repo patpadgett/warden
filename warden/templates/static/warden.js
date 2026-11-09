@@ -160,8 +160,7 @@
     window.setTimeout(() => URL.revokeObjectURL(url), 1500);
   };
 
-  W.confirm = (message, { confirmLabel = "Continue", danger = true } = {}) =>
-    window.confirm(`${message}\n\n${confirmLabel}`) && (!danger || true);
+  W.confirm = (message) => window.confirm(message);
 
   // ---------------------------------------------------------------- base64url
   W.b64urlToBuffer = (value) => {
