@@ -66,6 +66,7 @@ def get_port(scope: MutableMapping[str, Any]) -> int | None:
 
 
 def base_scheme(scope: MutableMapping[str, Any]) -> str:
+    """base_scheme."""
     scheme = str(scope.get("scheme", "http"))
     if scheme in {"ws", "wss"}:
         scheme = "http" if scheme == "ws" else "https"
@@ -73,10 +74,12 @@ def base_scheme(scope: MutableMapping[str, Any]) -> str:
 
 
 def public_scheme(scope: MutableMapping[str, Any], config: WardenConfig) -> str:
+    """public_scheme."""
     return config.server.external_scheme or base_scheme(scope)
 
 
 def current_origin(scope: MutableMapping[str, Any], config: WardenConfig) -> str:
+    """current_origin."""
     host = get_host(scope)
     if config.server.public_url and host == config.server.admin_host:
         return config.server.public_url
@@ -98,6 +101,7 @@ def external_url(scope: MutableMapping[str, Any], config: WardenConfig, host: st
 
 
 def admin_url(scope: MutableMapping[str, Any], config: WardenConfig) -> str:
+    """admin_url."""
     if config.server.public_url:
         return config.server.public_url
     return external_url(scope, config, config.server.admin_host)
@@ -431,6 +435,7 @@ class RateLimiter:
     """Small in-process fixed-window limiter for authentication endpoints."""
 
     def __init__(self) -> None:
+        """__init__."""
         self._events: dict[str, deque[float]] = defaultdict(deque)
         self._last_cleanup = time.monotonic()
 
@@ -449,6 +454,7 @@ class RateLimiter:
         return True, max(0, limit - len(events))
 
     def _cleanup(self, now: float) -> None:
+        """_cleanup."""
         stale: Iterable[str] = [
             key for key, events in self._events.items() if not events or events[-1] < now - 3600
         ]
@@ -458,15 +464,18 @@ class RateLimiter:
 
 
 def accept_language(scope: MutableMapping[str, Any]) -> str:
+    """accept_language."""
     return Headers(scope=scope).get("accept-language", "")
 
 
 def wants_dark_mode(scope: MutableMapping[str, Any]) -> bool:
     # The design is intentionally dark; this exists for future themes.
+    """wants_dark_mode."""
     return True
 
 
 def json_script_value(value: Any) -> str:
+    """json_script_value."""
     return json.dumps(value, separators=(",", ":")).replace("</", "<\\/")
 
 
@@ -506,30 +515,39 @@ class _InMemoryRedis:
     is not installed."""
 
     def __init__(self) -> None:
+        """__init__."""
         self._store: dict[str, dict[str, float]] = {}
 
     def pipeline(self):
+        """pipeline."""
         return _InMemoryPipeline(self._store)
 
 
 class _InMemoryPipeline:
+    """_InMemoryPipeline."""
     def __init__(self, store: dict[str, dict[str, float]]) -> None:
+        """__init__."""
         self._store = store
         self._commands: list[tuple[str, ...]] = []
 
     def zadd(self, zset: str, members: dict[str, float]) -> None:
+        """zadd."""
         self._commands.append(("zadd", zset, members))
 
     def zremrangebyscore(self, zset: str, min_score: Any, max_score: Any) -> None:
+        """zremrangebyscore."""
         self._commands.append(("zremrangebyscore", zset, min_score, max_score))
 
     def zcard(self, zset: str) -> None:
+        """zcard."""
         self._commands.append(("zcard", zset))
 
     def expire(self, zset: str, seconds: int) -> None:
+        """expire."""
         self._commands.append(("expire", zset, seconds))
 
     async def execute(self):
+        """execute."""
         results: list[Any] = []
         for cmd in self._commands:
             op = cmd[0]
@@ -543,6 +561,7 @@ class _InMemoryPipeline:
                 zset, min_score, max_score = cmd[1], cmd[2], cmd[3]
                 current = self._store.get(zset, {})
                 def _score_in_min(value):
+                    """_score_in_min."""
                     if isinstance(min_score, str):
                         if min_score == "-inf":
                             return True
@@ -552,6 +571,7 @@ class _InMemoryPipeline:
                             return False
                     return min_score <= value
                 def _score_in_max(value):
+                    """_score_in_max."""
                     if isinstance(max_score, str):
                         if max_score == "+inf":
                             return True
@@ -582,6 +602,7 @@ class RedisRateLimiter:
     """
 
     def __init__(self, url: str = "redis://localhost", *, ttl: int = 86400) -> None:
+        """__init__."""
         try:
             import redis.asyncio as _redis
         except ImportError:

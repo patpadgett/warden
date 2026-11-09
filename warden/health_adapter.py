@@ -25,6 +25,7 @@ class HealthMonitor:
     """Periodic upstream health monitor (adapter over MetricsModule)."""
 
     def __init__(self, stats: MetricsModule, manager: ConfigManager) -> None:
+        """__init__."""
         self.stats = stats
         self.manager = manager
         self._task: asyncio.Task[None] | None = None
@@ -32,6 +33,7 @@ class HealthMonitor:
         self._stop = asyncio.Event()
 
     def _client(self, verify: bool) -> httpx.AsyncClient:
+        """_client."""
         client = self._clients.get(verify)
         if client is None:
             client = httpx.AsyncClient(
@@ -45,11 +47,13 @@ class HealthMonitor:
         return client
 
     async def start(self) -> None:
+        """start."""
         if self._task is None:
             self._stop.clear()
             self._task = asyncio.create_task(self._loop(), name="warden-health")
 
     async def stop(self) -> None:
+        """stop."""
         self._stop.set()
         if self._task is not None:
             self._task.cancel()
@@ -63,6 +67,7 @@ class HealthMonitor:
         self._clients.clear()
 
     async def _loop(self) -> None:
+        """_loop."""
         await asyncio.sleep(0.7)
         while not self._stop.is_set():
             config = self.manager.config
@@ -79,12 +84,14 @@ class HealthMonitor:
                 continue
 
     async def check_all(self, config: WardenConfig) -> None:
+        """check_all."""
         routes = config.enabled_routes()
         if not routes:
             return
         await asyncio.gather(*(self.check_route(route) for route in routes))
 
     async def check_route(self, route: RouteConfig) -> None:
+        """check_route."""
         url = upstream_url(route, route.health_path, b"")
         started = time.perf_counter()
         try:
