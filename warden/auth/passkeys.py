@@ -637,6 +637,9 @@ class PasskeyService:
         if challenge is None:
             raise AuthError("That registration attempt expired. Please start again.", 400)
         payload = challenge.payload
+        expected_origin = str(payload.get("origin") or origin or "")
+        if origin and origin.rstrip("/") != expected_origin.rstrip("/"):
+            raise AuthError("The registration origin did not match. Please try again.", 403)
         if payload.get("invite_token_hash") != invite_token_hash:
             raise AuthError("This registration does not match the supplied invite.", 400)
         if int(payload.get("user_id", -1)) != user.id:
@@ -648,7 +651,7 @@ class PasskeyService:
                 credential=credential,
                 expected_challenge=challenge_bytes,
                 expected_rp_id=config.webauthn.rp_id,
-                expected_origin=str(payload.get("origin") or origin or ""),
+                expected_origin=expected_origin,
                 require_user_verification=config.webauthn.require_user_verification,
             )
         except WebAuthnException as exc:
