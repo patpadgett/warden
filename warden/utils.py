@@ -582,10 +582,17 @@ class RedisRateLimiter:
         now = time.time()
         cutoff = now - window_seconds
         zset = f"rate:{key}"
+        # Remove expired entries and check the current count before recording
+        # this request, so over-limit requests do not inflate the window.
         pipe = self._redis.pipeline()
-        pipe.zadd(zset, {str(now): now})
         pipe.zremrangebyscore(zset, "-inf", cutoff)
         pipe.zcard(zset)
+        _, count = await pipe.execute()
+        if count >= limit:
+            return False, max(0, limit - count)
+        member = str(time.time_ns())
+        pipe = self._redis.pipeline()
+        pipe.zadd(zset, {member: now})
         pipe.expire(zset, max(int(window_seconds) + 60, self._default_ttl))
-        _, _, count, _ = await pipe.execute()
-        return count <= limit, max(0, limit - count)
+        await pipe.execute()
+        return True, max(0, limit - (count + 1))
