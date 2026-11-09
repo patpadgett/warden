@@ -450,6 +450,7 @@ async def create_invite(request: Request, body: InviteCreateBody) -> JSONRespons
         invite_id = await db.create_invite(user.id, token, time.time() + body.expires_in)
         await _audit(request, "invite_created", f"invite:{invite_id} user:{user.username}")
         # Deliver the token to the user's email address (if email is configured).
+        email_sent = False
         try:
             email_cfg = _get_fastapi_app(request).state.config.email
             if email_cfg.enabled and user.email:
@@ -463,15 +464,26 @@ async def create_invite(request: Request, body: InviteCreateBody) -> JSONRespons
                         f"Token: {token}\n"
                         f"Expires in: {body.expires_in} seconds.\n"
                         "Please keep this token secret. It is the only way to "
-                        "complete your first-login passkey registration."
+                        "complete your first-login passkey registration.\n\n"
+                        f"Complete setup at: {request.url.scheme}://{request.url.netloc}/_warden/invite/complete?token={token}"
                     ),
                 )
+                email_sent = True
         except Exception:
             # Email delivery failures must never block account creation.
             logger.exception("Failed to send invite email to %s", user.email)
+            email_sent = False
     except DatabaseError as exc:
         return JSONResponse({"detail": str(exc)}, status_code=400)
-    return JSONResponse({"ok": True, "token": token, "expires_in": body.expires_in})
+    return JSONResponse(
+        {
+            "ok": True,
+            "token": token,
+            "expires_in": body.expires_in,
+            "email_sent": email_sent,
+            "invite_url": f"/_warden/invite/complete?token={token}",
+        }
+    )
 
 
 @router.patch("/_warden/api/users/{user_id}")

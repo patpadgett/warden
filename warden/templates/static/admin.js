@@ -786,6 +786,10 @@
     const inviteModal = W.$("#invite-modal-overlay");
     const inviteToken = W.$("#invite-token");
     const inviteCopy = W.$("#invite-copy");
+    const inviteStatus = W.$("#invite-status");
+    const inviteLink = W.$("#invite-link");
+    const inviteLinkCopy = W.$("#invite-link-copy");
+    const inviteLinkField = W.$("#invite-link-field");
 
     const hide = (el) => { if (el) { el.hidden = true; el.textContent = ""; } };
 
@@ -833,6 +837,17 @@
           if (promoteBtn) promoteBtn.textContent = payload.is_admin ? 'Demote' : 'Promote';
         }
         if (inviteToken) inviteToken.value = invite.token || "";
+        if (inviteStatus) {
+          if (invite.email_sent) {
+            inviteStatus.textContent = "An email with the invite token has been sent to the user.";
+          } else {
+            inviteStatus.textContent = "No email was sent. Copy the token or link below and share it with the user manually.";
+          }
+        }
+        if (inviteLinkField) inviteLinkField.hidden = !invite.token;
+        if (inviteLink && invite.token) {
+          inviteLink.value = `${window.location.origin}/_warden/invite/complete?token=${encodeURIComponent(invite.token)}`;
+        }
         W.openOverlay(inviteModal);
         inviteToken?.select();
       } catch (error) {
@@ -848,6 +863,13 @@
       const ok = await W.copy(inviteToken.value);
       if (ok) inviteCopy.textContent = "Copied";
       window.setTimeout(() => { if (inviteCopy) inviteCopy.textContent = "Copy"; }, 1200);
+    });
+
+    inviteLinkCopy?.addEventListener("click", async () => {
+      if (!inviteLink?.value) return;
+      const ok = await W.copy(inviteLink.value);
+      if (ok) inviteLinkCopy.textContent = "Copied";
+      window.setTimeout(() => { if (inviteLinkCopy) inviteLinkCopy.textContent = "Copy"; }, 1200);
     });
 
     const openEdit = (row) => {
