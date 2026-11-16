@@ -705,6 +705,22 @@ class PostgresDatabase(Database):
             await session.commit()
             return result.rowcount > 0
 
+    async def demote_admin(self, user_id: int) -> bool:
+        """Clear ``is_admin`` unless the user is the last remaining admin."""
+        async with self.session_factory() as session:
+            remaining = (
+                select(func.count(users.c.id))
+                .where(users.c.is_admin.is_(True))
+                .scalar_subquery()
+            )
+            result = await session.execute(
+                update(users)
+                .where(users.c.id == user_id, remaining > 1)
+                .values(is_admin=False)
+            )
+            await session.commit()
+            return result.rowcount > 0
+
     async def update_user_display_name(self, user_id: int, display_name: str) -> bool:
         """update_user_display_name."""
         async with self.session_factory() as session:
@@ -1198,7 +1214,11 @@ class PostgresDatabase(Database):
                 stmt = stmt.where(audit.c.event == event)
             if since is not None:
                 stmt = stmt.where(audit.c.created_at >= since)
-            stmt = stmt.order_by(audit.c.id.desc()).limit(limit).offset(offset)
+            stmt = (
+                stmt.order_by(audit.c.created_at.desc(), audit.c.id.desc())
+                .limit(limit)
+                .offset(offset)
+            )
             result = await session.execute(stmt)
             return [_audit(r._mapping) for r in result.fetchall()]
 

@@ -57,12 +57,8 @@ class TestHealthMonitorLifecycle:
         adapter = HealthMonitor(stats, manager)
         import asyncio
 
-        async def _close():
-            pass
-
         with patch("warden.health_adapter.httpx.AsyncClient") as mock_cls:
             mock_client = AsyncMock()
-            mock_client.aclose.return_value = _close()
             mock_cls.return_value = mock_client
             adapter._clients[True] = mock_client
             asyncio.run(adapter.stop())

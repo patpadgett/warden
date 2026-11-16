@@ -8,6 +8,14 @@
     <p class="subhead">Every claim, sign-in, configuration change, and mesh action, newest first. Nothing leaves this server.</p>
   </div>
   <div class="page-actions">
+    <div class="flex" style="gap: 6px; flex-wrap: wrap;" role="group" aria-label="Time range">
+      {% for r in ranges %}
+      <a class="btn btn-ghost btn-sm" href="/activity?since={{ r.since }}{% if event_filter %}&amp;event={{ event_filter|urlencode }}{% endif %}"{% if since and since|int == r.since %} aria-current="true"{% endif %}>{{ r.label }}</a>
+      {% endfor %}
+      {% if since %}
+      <a class="btn btn-ghost btn-sm" href="/activity{% if event_filter %}?event={{ event_filter|urlencode }}{% endif %}">all</a>
+      {% endif %}
+    </div>
     <button class="btn btn-ghost" id="activity-refresh" type="button">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8M21 3v5h-5M21 12a9 9 0 0 0-9-9c-2.52 0-4.93 1-6.74 2.74L3 8M3 21v-5h5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       <span>Refresh</span>
@@ -30,7 +38,7 @@
         <form class="filter-form" method="get" action="/activity">
           <label class="visually-hidden" for="activity-filter">Filter events</label>
           <input class="input" id="activity-filter" name="event" type="search" placeholder="Filter events…" value="{{ event_filter }}" autocomplete="off" style="width: min(220px, 100%); max-width: 100%;">
-          <input type="hidden" name="since" value="{{ since }}">
+          {% if since %}<input type="hidden" name="since" value="{{ since }}">{% endif %}
         </form>
         <span class="count">{{ count }}</span>
       </div>

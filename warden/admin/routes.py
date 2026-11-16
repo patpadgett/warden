@@ -500,14 +500,18 @@ async def update_user(request: Request, user_id: int, payload: UserUpdatePayload
     user = await db.get_user(user_id)
     if user is None:
         return JSONResponse({"detail": "User not found."}, status_code=404)
-    if payload.is_admin is False and int(user.is_admin) == 1:
-        admins = [u for u in await db.list_users() if int(u.is_admin)]
-        if len(admins) <= 1:
-            return JSONResponse(
-                {"detail": "You cannot remove the last admin."}, status_code=400
-            )
     if payload.is_admin is not None:
-        await db.update_user_admin(user_id, payload.is_admin)
+        if payload.is_admin:
+            await db.update_user_admin(user_id, True)
+        elif int(user.is_admin) == 1:
+            # The count lives in the UPDATE, so two concurrent demotions cannot
+            # both pass a separate "is this the last admin?" check.
+            if not await db.demote_admin(user_id):
+                return JSONResponse(
+                    {"detail": "You cannot remove the last admin."}, status_code=400
+                )
+        else:
+            await db.update_user_admin(user_id, False)
     if payload.display_name is not None:
         await db.update_user_display_name(user_id, payload.display_name)
     if payload.email is not None:
@@ -692,8 +696,22 @@ async def activity_page(request: Request) -> Response:
     for event in events:
         label, tone, icon = EVENT_META.get(event.event, (event.event.replace("_", " ").title(), "neutral", "dot"))
         decorated.append({"event": event, "label": label, "tone": tone, "icon": icon})
+    now = time.time()
+    ranges = [
+        {"label": "24h", "since": int(now - 86400)},
+        {"label": "7d", "since": int(now - 7 * 86400)},
+        {"label": "30d", "since": int(now - 30 * 86400)},
+    ]
     context = _base_context(request, page="activity", title="Activity")
-    context.update({"events": decorated, "count": len(decorated), "event_filter": event_filter or "", "since": since})
+    context.update(
+        {
+            "events": decorated,
+            "count": len(decorated),
+            "event_filter": event_filter or "",
+            "since": since,
+            "ranges": ranges,
+        }
+    )
     return _render(request, "activity.html", context)
 
 

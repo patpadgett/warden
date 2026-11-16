@@ -86,6 +86,39 @@ class TLSError(Exception):
     """Error raised for TLS‑related operations, such as missing files or validation failures."""
 
 
+#: Longest a single HTTP-01 authorization may stay pending before giving up.
+ACME_AUTHZ_TIMEOUT = 300.0
+
+
+def _wait_for_authorization(
+    net: Any,
+    authz: Any,
+    domain: str,
+    *,
+    timeout: float = ACME_AUTHZ_TIMEOUT,
+    interval: float = 2.0,
+) -> None:
+    """Poll *authz* until the CA marks it valid.
+
+    Raises ``TLSError`` when the CA rejects the challenge, or when it stays
+    pending past *timeout*. Without a deadline one stuck order would pin the
+    ACME worker thread and silently stop every later renewal.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        updated = net.poll(authz)
+        status = updated.body.status
+        if status == "valid":
+            return
+        if status == "invalid":
+            raise TLSError(f"HTTP‑01 challenge validation failed for {domain}")
+        if time.monotonic() >= deadline:
+            raise TLSError(
+                f"Timed out after {timeout:.0f}s waiting for {domain} authorization"
+            )
+        time.sleep(interval)
+
+
 class ACMEToken:
     """Short-lived token for an ACME HTTP-01 challenge.
 
@@ -118,9 +151,13 @@ class ACMEManager:
     def get_challenge_response(self, token: str) -> str | None:
         """Return the key authorization the CA expects, or ``None`` if unknown/expired."""
         t = self._tokens.get(token)
-        if t and not t.expired:
-            return t.response
-        return None
+        if t is None:
+            return None
+        if t.expired:
+            # Drop it so the store cannot grow one entry per renewal forever.
+            self._tokens.pop(token, None)
+            return None
+        return t.response
 
     def set_challenge_token(self, token: str, response: str, validity: float = 3600) -> None:
         """Publish *response* (the key authorization) for the HTTP-01 *token*."""
@@ -207,14 +244,7 @@ class ACMEManager:
             net.answer_challenge(http_challenge, response)
 
             # Poll the authorization until it is ``valid``.
-            while True:
-                authz_updated = net.poll(authz)
-                status = authz_updated.body.status
-                if status == "valid":
-                    break
-                if status == "invalid":
-                    raise TLSError(f"HTTP‑01 challenge validation failed for {domain}")
-                time.sleep(2)
+            _wait_for_authorization(net, authz, domain)
 
         # Generate a CSR for the domain.
         private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)

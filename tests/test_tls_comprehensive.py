@@ -192,6 +192,54 @@ class TestACMEToken:
 
 
 # -------------------------------------------------------------------------
+# Tests for the HTTP-01 authorization poll
+# -------------------------------------------------------------------------
+class TestWaitForAuthorization:
+    """A pending authorization must not poll forever."""
+
+    @staticmethod
+    def _net(*statuses: str):
+        from types import SimpleNamespace
+
+        class _Net:
+            def __init__(self) -> None:
+                self.statuses = list(statuses)
+                self.calls = 0
+
+            def poll(self, authz: object):
+                self.calls += 1
+                status = self.statuses.pop(0) if len(self.statuses) > 1 else self.statuses[0]
+                return SimpleNamespace(body=SimpleNamespace(status=status))
+
+        return _Net()
+
+    def test_returns_when_authorization_becomes_valid(self) -> None:
+        from warden.tls import _wait_for_authorization
+
+        net = self._net("pending", "valid")
+        _wait_for_authorization(net, object(), "app.home.lan", interval=0.0)
+        assert net.calls == 2
+
+    def test_raises_when_authorization_is_invalid(self) -> None:
+        from warden.tls import TLSError, _wait_for_authorization
+
+        with pytest.raises(TLSError, match="validation failed"):
+            _wait_for_authorization(
+                self._net("invalid"), object(), "app.home.lan", interval=0.0
+            )
+
+    def test_times_out_instead_of_polling_forever(self) -> None:
+        from warden.tls import TLSError, _wait_for_authorization
+
+        net = self._net("pending")
+        with pytest.raises(TLSError, match="Timed out"):
+            _wait_for_authorization(
+                net, object(), "app.home.lan", timeout=0.0, interval=0.0
+            )
+        assert net.calls == 1
+
+
+# -------------------------------------------------------------------------
 # Tests for ACMEManager
 # -------------------------------------------------------------------------
 class TestACMEManager:
@@ -228,6 +276,8 @@ class TestACMEManager:
         manager.set_challenge_token("expired-token", "expired-token.thumbprint", validity=0)
         time.sleep(0.1)
         assert manager.get_challenge_response("expired-token") is None
+        # Expired tokens are evicted instead of being checked forever.
+        assert "expired-token" not in manager._tokens
 
     def test_account_key_generated_on_first_call(self, tmp_path: Path) -> None:
         config = parse_config_text(

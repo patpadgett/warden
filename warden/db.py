@@ -777,6 +777,27 @@ class Database:
             await cursor.close()
         return bool(changed)
 
+    async def demote_admin(self, user_id: int) -> bool:
+        """Clear ``is_admin`` unless the user is the last remaining admin.
+
+        The guard is part of the ``UPDATE`` so two concurrent demotions cannot
+        both observe two admins and leave zero. Returns ``False`` when the
+        change was refused.
+        """
+        if self._conn is None:
+            await self.init()
+        conn = self._require_conn()
+        async with self._lock:
+            cursor = await conn.execute(
+                "UPDATE users SET is_admin = 0 WHERE id = ? "
+                "AND (SELECT COUNT(*) FROM users WHERE is_admin = 1) > 1",
+                (user_id,),
+            )
+            await conn.commit()
+            changed = cursor.rowcount
+            await cursor.close()
+        return bool(changed)
+
     async def update_user_display_name(self, user_id: int, display_name: str) -> bool:
         """Set the ``display_name`` for a user. Returns ``True`` on success."""
         if self._conn is None:
@@ -1229,7 +1250,7 @@ class Database:
         query = "SELECT * FROM audit"
         if clauses:
             query += f" WHERE {' AND '.join(clauses)}"
-        query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        query += " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?"
         params.append(max(1, int(limit)))
         params.append(int(offset))
         rows = await self._fetchall(query, tuple(params))

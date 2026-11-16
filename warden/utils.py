@@ -268,10 +268,11 @@ def check_origin(scope: MutableMapping[str, Any], config: WardenConfig, *, requi
             # Browsers downgrade ``Origin`` to ``null`` on a same-origin form
             # post when the page is served with ``Referrer-Policy: no-referrer``.
             # ``Sec-Fetch-Site`` is set by the browser and cannot be forged by a
-            # cross-site page, so use it to tell that apart from a real cross-site
-            # request (browsers without it keep the old rejection).
-            fetch_site = headers.get("sec-fetch-site")
-            return fetch_site in {"same-origin", "none"}
+            # cross-site page, so require it to confirm the request really is
+            # same-origin (browsers without it keep the old rejection).
+            # ``none`` is a user-initiated navigation, not the quirk being
+            # accommodated, so it stays rejected.
+            return headers.get("sec-fetch-site") == "same-origin"
         if origin.rstrip("/") == current_origin(scope, config).rstrip("/"):
             return True
         return config.origin_allowed(origin)

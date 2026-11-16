@@ -48,6 +48,9 @@ from warden.utils import (
 
 logger = logging.getLogger("warden.proxy")
 
+#: Upper bound on tracked rate-limit windows before a sweep of stale keys.
+_RATE_WINDOW_MAX_KEYS = 4096
+
 # Headers that must never be trusted from the public edge.
 _STRIP_REQUEST_HEADERS = HOP_BY_HOP | {
     "host",
@@ -132,23 +135,33 @@ class ProxyEngine:
         if limit is None:
             return False
         now = now if now is not None else time.monotonic()
+        # Purge entries older than 60 seconds
+        cutoff = now - 60.0
         key = f"{route.host}:{route.upstream}:{client}"
         window = self._rate_windows.get(key)
         if window is None:
             self._rate_windows[key] = deque([now], maxlen=limit)
+            # One entry per source address would otherwise accumulate forever.
+            # Sweep only when the table grows, so the common path stays O(1).
+            if len(self._rate_windows) > _RATE_WINDOW_MAX_KEYS:
+                self._prune_rate_windows(cutoff)
             return False
-        # Purge entries older than 60 seconds
-        cutoff = now - 60.0
         while window and window[0] < cutoff:
             window.popleft()
         if len(window) >= limit:
             return True
         window.append(now)
-        # Prune empty windows to avoid unbounded growth.
-        empty = [key for key, w in self._rate_windows.items() if not w]
-        for key in empty:
-            self._rate_windows.pop(key, None)
         return False
+
+    def _prune_rate_windows(self, cutoff: float) -> None:
+        """Drop rate-limit windows whose newest sample has aged out."""
+        stale = [
+            key
+            for key, window in self._rate_windows.items()
+            if not window or window[-1] < cutoff
+        ]
+        for key in stale:
+            self._rate_windows.pop(key, None)
 
     def _client(self, verify: bool) -> httpx.AsyncClient:
         """_client."""

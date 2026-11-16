@@ -41,6 +41,35 @@ def test_proxy_engine_reset_clients() -> None:
     assert len(engine._clients) == 0
 
 
+def test_per_route_rate_limit_is_per_client() -> None:
+    manager = MagicMock(spec=ConfigManager)
+    manager.config = WardenConfig()
+    engine = ProxyEngine(manager, MetricsModule())
+    route = RouteConfig(host="app.home.lan", upstream="http://127.0.0.1:9", rate_limit=3)
+
+    allowed = [engine._per_route_rate_limit(route, "192.0.2.1", now=100.0) for _ in range(3)]
+    assert allowed == [False, False, False]
+    assert engine._per_route_rate_limit(route, "192.0.2.1", now=100.0) is True
+    # A different client has its own window.
+    assert engine._per_route_rate_limit(route, "192.0.2.2", now=100.0) is False
+
+
+def test_per_route_rate_limit_prunes_stale_windows(monkeypatch) -> None:
+    monkeypatch.setattr("warden.proxy._RATE_WINDOW_MAX_KEYS", 10)
+    manager = MagicMock(spec=ConfigManager)
+    manager.config = WardenConfig()
+    engine = ProxyEngine(manager, MetricsModule())
+    route = RouteConfig(host="app.home.lan", upstream="http://127.0.0.1:9", rate_limit=5)
+
+    for index in range(40):
+        engine._per_route_rate_limit(route, f"2001:db8::{index}", now=1000.0 + index * 0.01)
+    assert len(engine._rate_windows) >= 10
+
+    # Past the 60-second window the old keys are dropped instead of retained.
+    engine._per_route_rate_limit(route, "198.51.100.9", now=1120.0)
+    assert len(engine._rate_windows) == 1
+
+
 def test_proxy_subprotocol_filter() -> None:
     route = RouteConfig(host="ws.local", upstream="http://localhost:8000", websocket_subprotocols=["chat", "graphql-ws"])
     assert route.websocket_subprotocols == ["chat", "graphql-ws"]

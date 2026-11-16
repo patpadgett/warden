@@ -185,6 +185,99 @@ passkey and mesh dialogs were missing the same way.
 regression test asserts the dashboard/passkey dialogs ship in the HTML, and the
 browser E2E clicks **Add service** and waits for the form to become visible.
 
+## Second audit pass
+
+A read-through of the commits above looking for defects the suite does not
+cover. Every item below is fixed and tested.
+
+### 18. Per-route rate-limit windows leaked one entry per client IP — Fixed
+
+`_per_route_rate_limit()` gained the client IP in its key (#8), but the cleanup
+at the end of the method only removed windows that were *empty* — which never
+happens, because a window always holds at least the sample just appended. Every
+distinct source address therefore stayed in `_rate_windows` for the life of the
+process, and the sweep walked the whole dict on every allowed request.
+
+A new `_prune_rate_windows(cutoff)` drops windows whose newest sample is older
+than the 60-second cutoff. It runs only when the table exceeds
+`_RATE_WINDOW_MAX_KEYS` (4096), so the common path stays O(1). Covered by
+`test_per_route_rate_limit_is_per_client` and
+`test_per_route_rate_limit_prunes_stale_windows`.
+
+### 19. ACME authorization polling had no deadline — Fixed
+
+`_run_acme_flow()` polled the CA in `while True: net.poll(authz); time.sleep(2)`.
+A challenge that stayed `pending` — a stuck CA, a firewall eating the validator's
+request, an order the CA abandoned — pinned the worker thread
+(`asyncio.to_thread`) forever and stalled every later renewal with no error.
+
+Extracted `_wait_for_authorization()` with `ACME_AUTHZ_TIMEOUT = 300s`; it raises
+`TLSError` on rejection or timeout. Covered by `TestWaitForAuthorization`
+(valid, invalid, timeout) in `tests/test_tls_comprehensive.py`.
+
+### 20. Expired ACME challenge tokens were never evicted — Fixed
+
+`get_challenge_response()` returned `None` for an expired token but left the
+entry in `_tokens`, so the store grew by one entry per renewal indefinitely. It
+now pops expired entries on read; `test_challenge_token_expired` asserts the
+token is gone.
+
+### 21. `Origin: null` accepted for `Sec-Fetch-Site: none` — Fixed (narrowed)
+
+The referrer-policy quirk in #2 makes Chromium send `Origin: null` on a
+**same-origin** form post, which is what the exception is for. `none` (a
+user-initiated navigation) was also accepted without need, widening the CSRF
+exception. `check_origin()` now accepts `Origin: null` only with
+`Sec-Fetch-Site: same-origin`; `tests/test_utils.py` asserts `none` is rejected.
+
+### 22. `?since=` was unusable — Fixed
+
+`activity_page()` parsed `since` and passed it to the query (#6), but nothing in
+the UI ever set it, and the hidden field rendered the literal string
+`value="None"` when unset. `/activity` now renders 24h / 7d / 30d / all range
+links (server-rendered anchors, since the CSP blocks inline handlers) that
+preserve the event filter, and the hidden field is emitted only when `since` is
+set.
+
+### 23. Last-admin demotion guard was check-then-act — Fixed
+
+`update_user()` counted admins with `list_users()` and then demoted in a second
+statement, so two concurrent requests could both see two admins and leave zero.
+Both backends gained `demote_admin()`, which puts the guard inside the UPDATE
+(`... WHERE id = ? AND (SELECT COUNT(*) FROM users WHERE is_admin = 1) > 1` for
+SQLite, a counted scalar subquery for PostgreSQL).
+
+### 24. Audit ordering differed by backend — Fixed
+
+SQLite ordered by `created_at DESC`; PostgreSQL ordered by `id DESC`. With
+`offset` pagination the two disagreed. SQLite now uses
+`ORDER BY created_at DESC, id DESC` and PostgreSQL orders by
+`created_at.desc(), id.desc()`.
+
+### 25. Mesh directory writability check was a no-op as root — Fixed
+
+`os.access(parent, os.W_OK)` reports writable for root regardless of mode, so
+the check in `validate_startup()` could not fail on a root-run container. It is
+replaced with a temporary-file probe in the directory. The `mkdir` that precedes
+it remains intentional startup behaviour (see #15).
+
+### 26. Health-monitor test left an un-awaited coroutine — Fixed
+
+`tests/test_health_adapter_comprehensive.py` set
+`mock_client.aclose.return_value` to a coroutine object, producing
+`RuntimeWarning: coroutine ... was never awaited` in every run. The mock now uses
+AsyncMock's default awaitable; the suite runs clean under
+`-W error::RuntimeWarning`.
+
+### Correction: cookie_domain coverage warning was not missing
+
+An earlier draft of this pass claimed `host_coverage_warnings()` needed a third
+case for a `server.cookie_domain` that is not a parent of a route host. It does
+not: `parse_config_text()` already rejects that configuration with
+`routes[i].host (...) is outside server.cookie_domain (...)` (#config validation,
+`warden/config.py`). The startup warning covers only the unset case, which is
+reachable.
+
 ## Verification
 
 * `tests/test_utils.py` covers the new `Origin: null` / `Sec-Fetch-Site` rule,

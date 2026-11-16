@@ -928,8 +928,15 @@ class ConfigManager:
                     raise ConfigError(
                         f"Mesh config directory is not usable: {parent} ({exc})"
                     ) from exc
-                if not os.access(parent, os.W_OK):
-                    raise ConfigError(f"Mesh config directory is not writable: {parent}")
+                try:
+                    # ``os.access(path, os.W_OK)`` reports writable for root
+                    # whatever the mode, so probe with a real (removed) file.
+                    with tempfile.NamedTemporaryFile(dir=parent, prefix=".warden-probe-"):
+                        pass
+                except OSError as exc:
+                    raise ConfigError(
+                        f"Mesh config directory is not writable: {parent} ({exc})"
+                    ) from exc
                 logger.info(
                     "Mesh config %s does not exist yet; it will be written on the first apply.",
                     mesh_path,
