@@ -518,6 +518,34 @@ def upstream_url(
     return url
 
 
+def _score_meets_min(value: float, min_score: Any) -> bool:
+    """Return whether ``value`` is at or above ``min_score``.
+
+    Redis sorted-set score bounds accept the ``"-inf"`` string in addition to
+    numbers; anything unparseable excludes the member, as redis-py would.
+    """
+    if isinstance(min_score, str):
+        if min_score == "-inf":
+            return True
+        try:
+            return float(min_score) <= value
+        except ValueError:
+            return False
+    return min_score <= value
+
+
+def _score_meets_max(value: float, max_score: Any) -> bool:
+    """Return whether ``value`` is at or below ``max_score``."""
+    if isinstance(max_score, str):
+        if max_score == "+inf":
+            return True
+        try:
+            return value <= float(max_score)
+        except ValueError:
+            return False
+    return value <= max_score
+
+
 class _InMemoryRedis:
     """Minimal in-memory stand-in for the redis client used when redis-py
     is not installed."""
@@ -568,29 +596,9 @@ class _InMemoryPipeline:
             elif op == "zremrangebyscore":
                 zset, min_score, max_score = cmd[1], cmd[2], cmd[3]
                 current = self._store.get(zset, {})
-                def _score_in_min(value):
-                    """_score_in_min."""
-                    if isinstance(min_score, str):
-                        if min_score == "-inf":
-                            return True
-                        try:
-                            return float(min_score) <= value
-                        except ValueError:
-                            return False
-                    return min_score <= value
-                def _score_in_max(value):
-                    """_score_in_max."""
-                    if isinstance(max_score, str):
-                        if max_score == "+inf":
-                            return True
-                        try:
-                            return value <= float(max_score)
-                        except ValueError:
-                            return False
-                    return value <= max_score
                 self._store[zset] = {
                     k: v for k, v in current.items()
-                    if not (_score_in_min(v) and _score_in_max(v))
+                    if not (_score_meets_min(v, min_score) and _score_meets_max(v, max_score))
                 }
                 results.append(0)
             elif op == "zcard":

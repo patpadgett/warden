@@ -18,11 +18,14 @@ Usage::
 
 from __future__ import annotations
 
+import logging
 import smtplib
 import ssl
 from email.message import EmailMessage
 
 from warden.config import EmailConfig
+
+logger = logging.getLogger("warden.mail")
 
 
 def _build_message(email: EmailConfig, to: str, subject: str, body: str) -> EmailMessage:
@@ -68,5 +71,5 @@ def send_email(email: EmailConfig, to: str, subject: str, body: str) -> None:
         except Exception:  # noqa: BLE001
             try:
                 client.close()
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Could not close SMTP connection: %s", exc)
