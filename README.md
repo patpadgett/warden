@@ -338,8 +338,11 @@ stays up during renewal so webroot challenges keep working.
 Setting `acme_directory` lets Warden issue the certificate itself through the
 renewal loop and serve the HTTP-01 key authorization in memory, with no
 `acme_webroot` needed. TLS still requires a readable certificate at startup, so
-the **first** certificate comes from `acme_webroot` + certbot (or a self-signed
-placeholder that the renewal loop replaces).
+the **first** certificate comes from `acme_webroot` + certbot, or from a
+placeholder written by `warden certs bootstrap`. The placeholder is self-signed:
+browsers will warn until the real certificate arrives, and it does not help
+validation, because HTTP-01 is fetched over plain HTTP on port 80 — the CA has to
+be able to reach that port either way.
 
 ### `webauthn`
 
@@ -767,6 +770,9 @@ config show            print effective warden.yaml
 
 certs status [--json]
 certs renew [--dry-run]
+certs bootstrap [--force]
+                      write a self-signed placeholder at the configured paths so
+                      TLS startup can run before the first ACME certificate exists
 
 backup                write a timestamped, mode-0600 SQLite backup next to the DB
 

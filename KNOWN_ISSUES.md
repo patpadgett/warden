@@ -126,10 +126,22 @@ can be replaced in-process and the dashboard reports `restart_required`.
 
 Still needs attention: the first certificate cannot be obtained this way,
 because startup requires a readable certificate before the TLS listener starts
-(`validate_runtime_files`). First issuance therefore still needs the
-`acme_webroot` + certbot path (or a pre-seeded self-signed cert, which the
-renewal loop can then replace). The flow is covered by unit tests with a mocked
-ACME client; it has not been exercised against a live CA.
+(`validate_runtime_files`). `warden certs bootstrap` now writes a self-signed
+placeholder at the configured `certfile`/`keyfile` paths for exactly that gap
+(`--force` to replace an existing pair), so the flow is: bootstrap → start → the
+renewal loop completes HTTP-01 over the plain HTTP companion → restart to serve
+the real certificate.
+
+A self-signed certificate does **not** help the ACME exchange itself: HTTP-01 is
+validated over plain HTTP on port 80, and the CA never inspects the presented
+certificate. It only answers "the process cannot boot without one". The
+remaining hard requirement is therefore unchanged: the CA must be able to fetch
+`http://<domain>/.well-known/acme-challenge/<token>` on port 80 (forwarded from
+the internet, and not blocked by the ISP). Without that, the fix is DNS-01
+issuance, which is not implemented.
+
+The flow is covered by unit tests with a mocked ACME client and by CLI tests for
+the bootstrap path; it has not been exercised against a live CA.
 
 ### 14. WebAuthn RP ID does not cover service subdomains — Fixed via warning
 
@@ -280,20 +292,24 @@ reachable.
 
 ## Verification
 
-* `tests/test_utils.py` covers the new `Origin: null` / `Sec-Fetch-Site` rule,
-  and `tests/test_admin_security.py` gained a last-admin regression test.
-* Full suite: **394 passed**, 77.44% coverage. The previously failing
-  invite-email test passes and `pytest` now exits cleanly.
-* New coverage for this pass: ACME key-authorization storage and in-memory
-  challenge serving, mesh startup with a missing config file, and the
-  route-host coverage warnings.
-* Real-browser E2E (`e2e/browser_e2e.py`, Chromium + WebAuthn virtual
-  authenticator, real `warden serve`): **ALL PASS** — setup, user creation,
-  invite capture, invite registration through the shipped page, reuse
-  rejection, the non-admin portal (redirect from `/`, service list, credential
-  links, 403 with a portal link for admin paths), invited-user passkey sign-in,
-  admin sign-in, every dashboard page, the **Add service** dialog opening and
-  closing, and backup-code generation via the server-rendered form
-  (`POST /backup_codes/generate` → 200).
-* `ruff` still reports pre-existing `B023` findings in
-  `utils._InMemoryPipeline`; those lines are unchanged by this pass.
+* `ruff check warden` (the CI lint step): clean. The `S110`/`B023` findings from
+  the first pass were fixed in `a2f6311`.
+* Full suite: **402 passed**, **77.91%** coverage (gate 75%), run with
+  `-W error::RuntimeWarning` to catch un-awaited coroutines.
+* New coverage for this pass: per-client rate limiting and stale-window pruning,
+  ACME authorization timeout, expired-token eviction, and the narrowed
+  `Origin: null` rule; plus `warden certs bootstrap` (write, `--force`, and both
+  guard paths) in `tests/test_cli.py`.
+* Historical: the real-browser E2E run (Chromium + WebAuthn virtual
+  authenticator against a live `warden serve`) covered setup, user creation,
+  invite registration, the non-admin portal, every dashboard page, the **Add
+  service** dialog, and backup-code generation. That script lived in `e2e/`,
+  which was deleted in `300537b`, so it is no longer runnable from this repo;
+  the portal and backup-code paths are now covered by
+  `tests/test_admin_security.py` instead.
+* Known lint debt outside the CI target: `ruff check tests` reports 8
+  pre-existing issues (`B017`, `SIM117`, `UP031`, `C408`) in
+  `tests/test_invite_flow.py`, `tests/test_invite_routes.py` and
+  `tests/test_mail.py`. The workflow lints only `warden`, so these do not fail
+  the build; narrowing the blind `pytest.raises(Exception)` assertions is a
+  deliberate follow-up rather than a mechanical fix.

@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from warden import cli
+from warden.tls import read_certificate
 
 from .conftest import config_dict, count_rows, seed_user, write_config
 from .test_tls import make_certificate
@@ -290,6 +291,76 @@ def test_certs_renew_runs_command(
     code, out, err = run(capsys, "-c", failing, "certs", "renew")
     assert code == 1
     assert "exited with 3" in err
+
+
+def test_certs_bootstrap_writes_placeholder(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cert_path = tmp_path / "tls" / "cert.pem"
+    key_path = tmp_path / "tls" / "key.pem"
+    data = config_dict(
+        tmp_path,
+        tls={
+            "enabled": True,
+            "certfile": str(cert_path),
+            "keyfile": str(key_path),
+            "acme_domain": "warden.home.lan",
+        },
+    )
+    path = write_config(tmp_path, data)
+    code, out, err = run(capsys, "-c", path, "certs", "bootstrap")
+    assert code == 0
+    assert err == ""
+    assert cert_path.exists() and key_path.exists()
+    assert stat.S_IMODE(key_path.stat().st_mode) == 0o600
+    assert read_certificate(cert_path).sans == ["warden.home.lan"]
+    assert "self-signed placeholder" in out
+    assert "HTTP-01" in out
+
+    # The placeholder is exactly what startup validation was waiting for.
+    from warden.tls import validate_runtime_files
+
+    validate_runtime_files(cli.ConfigManager.from_file(path).config)
+
+
+def test_certs_bootstrap_requires_force_to_replace(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cert_path = tmp_path / "cert.pem"
+    cert_path.write_bytes(b"future real certificate")
+    key_path = tmp_path / "key.pem"
+    data = config_dict(
+        tmp_path,
+        tls={"enabled": True, "certfile": str(cert_path), "keyfile": str(key_path)},
+    )
+    path = write_config(tmp_path, data)
+
+    code, _out, err = run(capsys, "-c", path, "certs", "bootstrap")
+    assert code == 1
+    assert "already exists" in err
+    assert cert_path.read_bytes() == b"future real certificate"
+
+    code, _out, _err = run(capsys, "-c", path, "certs", "bootstrap", "--force")
+    assert code == 0
+    assert cert_path.read_bytes().startswith(b"-----BEGIN CERTIFICATE-----")
+
+
+def test_certs_bootstrap_guards(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    disabled = write_config(tmp_path, config_dict(tmp_path))
+    code, _out, err = run(capsys, "-c", disabled, "certs", "bootstrap")
+    assert code == 1
+    assert "TLS is disabled" in err
+
+    unconfigured = write_config(
+        tmp_path,
+        config_dict(tmp_path, tls={"enabled": True}),
+        name="unconfigured.yaml",
+    )
+    code, _out, err = run(capsys, "-c", unconfigured, "certs", "bootstrap")
+    assert code == 1
+    assert "certfile/keyfile" in err
 
 
 # ------------------------------------------------------------------------ auth

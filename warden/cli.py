@@ -30,6 +30,7 @@ from warden.mesh_peer import MeshError
 from warden.tls import (
     TLSError,
     certificate_status,
+    generate_self_signed_cert,
     validate_runtime_files,
 )
 from warden.utils import apply_security_headers, get_host
@@ -603,6 +604,36 @@ def cmd_certs(args: argparse.Namespace) -> int:
             return 1
         return 0
 
+    if args.action == "bootstrap":
+        # A self-signed placeholder only exists so the process can boot: TLS
+        # startup refuses to run without a readable certificate, and HTTP-01
+        # validation happens over plain HTTP, so the CA never sees this one.
+        tls = config.server.tls
+        if not tls.enabled:
+            _print_error("TLS is disabled in warden.yaml")
+            return 1
+        cert_path = config.certfile_path
+        key_path = config.keyfile_path
+        if cert_path is None or key_path is None:
+            _print_error("TLS is enabled but certfile/keyfile are not configured.")
+            return 1
+        existing = [path for path in (cert_path, key_path) if path.exists()]
+        if existing and not args.force:
+            _print_error(f"{existing[0]} already exists; pass --force to replace it")
+            return 1
+        name = tls.acme_domain or config.server.admin_host
+        generate_self_signed_cert(cert_path, key_path, common_name=name)
+        print(f"certificate  {cert_path}")
+        print(f"key          {key_path}")
+        print(f"subject      CN={name} (self-signed placeholder)")
+        print()
+        print(
+            "Browsers will not trust this certificate. It lets Warden start and "
+            "serve the HTTP-01 challenge while ACME issues the real one; the CA "
+            "still has to reach Warden's plain HTTP port."
+        )
+        return 0
+
     # renew
     tls = config.server.tls
     if not tls.enabled:
@@ -922,10 +953,13 @@ def build_parser() -> argparse.ArgumentParser:
     config_cmd.add_argument("show", nargs="?", default="show", choices=["show"], help="print config (default)")
     config_cmd.set_defaults(func=cmd_config_show)
 
-    certs = sub.add_parser("certs", help="inspect or renew the TLS certificate")
-    certs.add_argument("action", choices=["status", "renew"])
+    certs = sub.add_parser("certs", help="inspect, renew, or bootstrap the TLS certificate")
+    certs.add_argument("action", choices=["status", "renew", "bootstrap"])
     certs.add_argument("--json", action="store_true", help="JSON output for status")
     certs.add_argument("--dry-run", action="store_true", help="print the renewal command only")
+    certs.add_argument(
+        "--force", action="store_true", help="replace an existing certificate (bootstrap)"
+    )
     certs.set_defaults(func=cmd_certs)
 
     backup = sub.add_parser("backup", help="back up the SQLite database")
