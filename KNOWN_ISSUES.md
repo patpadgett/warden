@@ -141,7 +141,13 @@ the internet, and not blocked by the ISP). Without that, the fix is DNS-01
 issuance, which is not implemented.
 
 The flow is covered by unit tests with a mocked ACME client and by CLI tests for
-the bootstrap path; it has not been exercised against a live CA.
+the bootstrap path, and has since been exercised end to end against a local
+Pebble directory (see `ROADMAP.md` §2). That run found three defects the mocks
+had hidden — an `acme` 5.x client argument, the challenge published under the
+raw token instead of its base64url encoding, and a `Status` enum compared to a
+string — all fixed; the CA then validated the challenge and the renewal loop
+wrote a chain issued by `CN=Pebble Intermediate CA …` with `restart_required`
+set.
 
 ### 14. WebAuthn RP ID does not cover service subdomains — Fixed via warning
 
@@ -294,7 +300,7 @@ reachable.
 
 * `ruff check warden` (the CI lint step): clean. The `S110`/`B023` findings from
   the first pass were fixed in `a2f6311`.
-* Full suite: **402 passed**, **77.91%** coverage (gate 75%), run with
+* Full suite: **404 passed**, **77.90%** coverage (gate 75%), run with
   `-W error::RuntimeWarning` to catch un-awaited coroutines.
 * New coverage for this pass: per-client rate limiting and stale-window pruning,
   ACME authorization timeout, expired-token eviction, and the narrowed

@@ -25,7 +25,7 @@ except ImportError:
     errors = None
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from cryptography import x509
@@ -106,11 +106,15 @@ def _wait_for_authorization(
     """
     deadline = time.monotonic() + timeout
     while True:
-        updated = net.poll(authz)
+        # ``ClientV2.poll`` returns (AuthorizationResource, Response).
+        updated, _response = net.poll(authz)
+        # acme 5.x reports the status as a ``Status`` enum member rather than
+        # a str, so a comparison against the bare literal never matches and the
+        # waiter sleeps past a challenge the CA already accepted.
         status = updated.body.status
-        if status == "valid":
+        if status == messages.STATUS_VALID:
             return
-        if status == "invalid":
+        if status == messages.STATUS_INVALID:
             raise TLSError(f"HTTP‑01 challenge validation failed for {domain}")
         if time.monotonic() >= deadline:
             raise TLSError(
@@ -185,13 +189,13 @@ class ACMEManager:
         The flow is:
         1️⃣ Load or create an account key (stored under ``.warden/acme_account.key``).
         2️⃣ Register a new ACME account (or reuse an existing one).
-        3️⃣ Create a new order for the domain.
+        3️⃣ Generate a CSR and create a new order for it (the order identifiers
+           are read from the CSR).
         4️⃣ For each authorization, fulfill the HTTP‑01 challenge by storing the
            token via :meth:`set_challenge_token`. The ``ProxyEngine`` will serve the
            ``/.well-known/acme-challenge/<token>`` response.
         5️⃣ Wait until the challenge is marked *valid* by the CA.
-        6️⃣ Generate a CSR for the domain, finalize the order and download the
-           certificate chain.
+        6️⃣ Finalize the order and download the certificate chain.
         7️⃣ Write the certificate and the private key to the paths defined in the
            configuration (``server.tls.certfile`` / ``server.tls.keyfile``).
         """
@@ -208,20 +212,40 @@ class ACMEManager:
         with open(account_key_path, "rb") as f:
             account_key = jose.JWKRSA.load(f.read())
 
-        # Initialise ACME client.
-        net = acme_client.ClientV2(directory=acme_url, key=account_key)
+        # acme keeps transport (``ClientNetwork``) and protocol (``ClientV2``)
+        # apart; the account key signs both.
+        net = acme_client.ClientNetwork(key=account_key)
+        # The directory has to be fetched explicitly: ``ClientV2`` only stores
+        # the resource it is handed and never follows a URL itself.
+        directory = messages.Directory.from_json(net.get(acme_url).json())
+        client = acme_client.ClientV2(directory=directory, net=net)
 
         # Register a new account (terms‑of‑service must be agreed to).
         try:
-            net.new_account(messages.NewRegistration.from_data(email=None, terms_of_service_agreed=True))
-        except errors.Error as exc:
-            # If the account already exists, ``new_account`` raises a conflict.
-            # The library stores the registration on the client object, so we can
-            # continue using ``net``.
-            logger.debug("ACME account already exists: %s", exc)
+            client.new_account(
+                messages.NewRegistration.from_data(
+                    email=None, terms_of_service_agreed=True
+                )
+            )
+        except errors.ConflictError as exc:
+            # The account key is reused across renewals, and a CA that already
+            # knows it answers with the account URL instead of registering
+            # again. Binding it makes later requests sign with its kid rather
+            # than a bare JWK, which ACME only allows for ``newAccount``.
+            logger.debug("ACME account already exists: %s", exc.location)
+            net.account = messages.RegistrationResource(
+                uri=exc.location, body=messages.Registration()
+            )
 
-        # Create a new order for the domain.
-        order = net.new_order(messages.NewOrder(identifiers=[messages.Identifier(typ=messages.IDENTIFIER_FQDN, value=domain)]))
+        # The CSR decides which names the order covers, so it comes first.
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        csr = x509.CertificateSigningRequestBuilder().subject_name(
+            x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, domain)])
+        ).add_extension(
+            x509.SubjectAlternativeName([x509.DNSName(domain)]), critical=False,
+        ).sign(private_key, hashes.SHA256())
+
+        order = client.new_order(csr.public_bytes(serialization.Encoding.PEM))
 
         # Fulfil each HTTP‑01 challenge.
         for authz in order.authorizations:
@@ -234,28 +258,28 @@ class ACMEManager:
             if http_challenge is None:
                 raise TLSError(f"No HTTP‑01 challenge found for {domain}")
 
-            token = http_challenge.chall.token
+            # ``HTTP01.token`` is the decoded payload; the CA fetches the
+            # base64url encoding of it, which is what ``encode`` returns and
+            # what the request path carries. Keying the store by the raw token
+            # leaves nothing to match, so every challenge comes back 404.
+            token = http_challenge.chall.encode("token")
             # The CA fetches /<token> and requires the key authorization there.
             key_authorization = str(http_challenge.chall.key_authorization(account_key))
             self.set_challenge_token(token, key_authorization)
 
             # Tell the CA we are ready for validation.
             response = http_challenge.chall.response(account_key)
-            net.answer_challenge(http_challenge, response)
+            client.answer_challenge(http_challenge, response)
 
             # Poll the authorization until it is ``valid``.
-            _wait_for_authorization(net, authz, domain)
+            _wait_for_authorization(client, authz, domain)
 
-        # Generate a CSR for the domain.
-        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-        csr = x509.CertificateSigningRequestBuilder().subject_name(
-            x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, domain)])
-        ).add_extension(
-            x509.SubjectAlternativeName([x509.DNSName(domain)]), critical=False,
-        ).sign(private_key, hashes.SHA256())
-
-        # Finalise the order.
-        finalized = net.finalize_order(order, csr.public_bytes(serialization.Encoding.DER))
+        # Finalise the order and wait for the certificate.
+        # ``finalize_order`` compares the deadline with a naive local
+        # ``datetime.now()``, so an aware value raises TypeError.
+        finalized = client.finalize_order(
+            order, deadline=datetime.now() + timedelta(seconds=ACME_AUTHZ_TIMEOUT)
+        )
 
         # The certificate chain is returned as PEM.
         cert_pem = finalized.fullchain_pem

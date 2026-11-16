@@ -208,8 +208,17 @@ class TestWaitForAuthorization:
 
             def poll(self, authz: object):
                 self.calls += 1
+                from acme import messages as acme_messages
+
                 status = self.statuses.pop(0) if len(self.statuses) > 1 else self.statuses[0]
-                return SimpleNamespace(body=SimpleNamespace(status=status))
+                # Poll reports the status as ``messages.Status``, not a str.
+                # ClientV2.poll returns (AuthorizationResource, Response).
+                return (
+                    SimpleNamespace(
+                        body=SimpleNamespace(status=acme_messages.Status(status))
+                    ),
+                    None,
+                )
 
         return _Net()
 
@@ -240,8 +249,37 @@ class TestWaitForAuthorization:
 
 
 # -------------------------------------------------------------------------
-# Tests for ACMEManager
+# Tests for the installed acme API and for ACMEManager
 # -------------------------------------------------------------------------
+class TestInstalledACMEApi:
+    """Guard against the issuance code drifting from the installed acme API.
+
+    The mocked issuance tests replace the client wholesale, so they kept
+    passing while ``_run_acme_flow`` called ``ClientV2(key=...)`` — an argument
+    acme 5.x does not accept, which only showed up against a real CA.
+    """
+
+    def test_client_arguments_are_accepted(self) -> None:
+        import inspect
+
+        from acme import client as acme_client
+
+        inspect.signature(acme_client.ClientNetwork.__init__).bind(None, key=object())
+        inspect.signature(acme_client.ClientV2.__init__).bind(
+            None, "https://acme.invalid/dir", object()
+        )
+
+    def test_order_calls_take_a_csr_and_a_deadline(self) -> None:
+        import inspect
+
+        from acme import client as acme_client
+
+        inspect.signature(acme_client.ClientV2.new_order).bind(None, b"csr")
+        inspect.signature(acme_client.ClientV2.finalize_order).bind(
+            None, object(), deadline=object()
+        )
+
+
 class TestACMEManager:
     """Tests for the ACMEManager class."""
 
@@ -694,7 +732,10 @@ class TestRequestCertificate:
         mock_order = MagicMock()
         mock_authz = MagicMock()
         mock_authz.body = MagicMock()
-        mock_authz.body.status = "valid"
+        from acme import messages as acme_messages
+
+        # The real poll reports ``messages.Status``; a bare str never matches.
+        mock_authz.body.status = acme_messages.STATUS_VALID
         # Simulate an HTTP-01 challenge with a proper chall object
         # The code checks `isinstance(chall.chall, challenges.HTTP01)`
         # So we need a mock that passes the isinstance check
@@ -703,7 +744,11 @@ class TestRequestCertificate:
         from acme import challenges as acme_challenges
         # Create a mock with the same type as HTTP01 (for isinstance check)
         http01_chall = create_autospec(acme_challenges.HTTP01, instance=True)
-        http01_chall.token = "test-token"
+        # The CA fetches the base64url form of the token, while ``token``
+        # itself is the decoded payload, so the open channel must be the
+        # encoded value.
+        http01_chall.token = b"test-token"
+        http01_chall.encode = MagicMock(return_value="test-token")
         # response is a method that takes account_key; mock it to return a string
         http01_chall.response = MagicMock(return_value="dummy-key-authorization")
         http01_chall.key_authorization = MagicMock(
@@ -713,15 +758,26 @@ class TestRequestCertificate:
         mock_chall.chall = http01_chall
         mock_authz.body.challenges = [mock_chall]
         mock_order.authorizations = [mock_authz]
-        # Mock ClientV2 client
+        # Mock the transport (ClientNetwork) and the protocol (ClientV2).
         mock_net = MagicMock()
+        directory_response = MagicMock()
+        directory_response.json.return_value = {
+            "newNonce": "https://acme.example.com/new-nonce",
+            "newAccount": "https://acme.example.com/new-account",
+            "newOrder": "https://acme.example.com/new-order",
+            "revokeCert": "https://acme.example.com/revoke-cert",
+            "keyChange": "https://acme.example.com/key-change",
+        }
+        mock_net.get = MagicMock(return_value=directory_response)
         mock_net.new_order = MagicMock(return_value=mock_order)
         mock_net.new_account = MagicMock()
-        mock_net.poll = MagicMock(return_value=mock_authz)
+        # ClientV2.poll returns (AuthorizationResource, Response).
+        mock_net.poll = MagicMock(return_value=(mock_authz, None))
         mock_net.answer_challenge = MagicMock()
         mock_finalized = MagicMock()
         mock_finalized.fullchain_pem = "-----BEGIN CERTIFICATE-----\nTEST\n-----END CERTIFICATE-----\n"
         mock_net.finalize_order = MagicMock(return_value=mock_finalized)
+        mock_client.ClientNetwork = MagicMock(return_value=mock_net)
         mock_client.ClientV2 = MagicMock(return_value=mock_net)
 
         tls_mod.acme_client = mock_client
@@ -730,6 +786,10 @@ class TestRequestCertificate:
             cert_path, key_path = await manager.request_certificate("admin.home.lan", "https://acme.example.com")
             assert cert_path.exists()
             assert key_path.exists()
+            # The order is created from the CSR: acme 5.x reads the identifiers
+            # off it instead of taking a list of Identifier objects.
+            csr_pem = mock_net.new_order.call_args.args[0]
+            assert csr_pem.startswith(b"-----BEGIN CERTIFICATE REQUEST-----")
             assert cert_path.read_text().startswith("-----BEGIN CERTIFICATE-----")
             # The served body must be the key authorization, not the bare token.
             assert (
