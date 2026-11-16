@@ -1,6 +1,7 @@
 # Warden
 
-[![tests](https://github.com/patpadgett/warden/actions/workflows/python-app.yml/badge.svg)](https://github.com/patpadgett/warden/actions/workflows/python-app.yml) [![Powered by DartNode](https://dartnode.com/branding/DN-Open-Source-sm.png)](https://dartnode.com "Powered by DartNode - Free VPS for Open Source")
+[![tests](https://github.com/patpadgett/warden/actions/workflows/python-app.yml/badge.svg)](https://github.com/patpadgett/warden/actions/workflows/python-app.yml)
+[![Powered by DartNode](https://dartnode.com/branding/DN-Open-Source-sm.png)](https://dartnode.com "Powered by DartNode - Free VPS for Open Source")
 
 **One door to your homelab.**
 
