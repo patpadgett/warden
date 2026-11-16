@@ -87,10 +87,16 @@ class TLSError(Exception):
 
 
 class ACMEToken:
-    """Short-lived token for an ACME challenge."""
-    def __init__(self, token: str, validity: float):
+    """Short-lived token for an ACME HTTP-01 challenge.
+
+    ``token`` is the path segment the CA requests and ``response`` is the body
+    it must receive there: the key authorization (``token.thumbprint``), not the
+    bare token.
+    """
+    def __init__(self, token: str, response: str, validity: float = 3600):
         """__init__."""
         self.token = token
+        self.response = response
         self.validity = validity
         self.created_at = time.time()
 
@@ -110,15 +116,15 @@ class ACMEManager:
         self._account_key: Path | None = None
 
     def get_challenge_response(self, token: str) -> str | None:
-        """get_challenge_response."""
+        """Return the key authorization the CA expects, or ``None`` if unknown/expired."""
         t = self._tokens.get(token)
         if t and not t.expired:
-            return t.token
+            return t.response
         return None
 
-    def set_challenge_token(self, token: str, validity: float = 3600) -> None:
-        """set_challenge_token."""
-        self._tokens[token] = ACMEToken(token, validity)
+    def set_challenge_token(self, token: str, response: str, validity: float = 3600) -> None:
+        """Publish *response* (the key authorization) for the HTTP-01 *token*."""
+        self._tokens[token] = ACMEToken(token, response, validity)
 
     def _get_account_key(self) -> Path:
         """_get_account_key."""
@@ -192,10 +198,11 @@ class ACMEManager:
                 raise TLSError(f"No HTTP‑01 challenge found for {domain}")
 
             token = http_challenge.chall.token
-            # Store token so the proxy can serve it.
-            self.set_challenge_token(token)
+            # The CA fetches /<token> and requires the key authorization there.
+            key_authorization = str(http_challenge.chall.key_authorization(account_key))
+            self.set_challenge_token(token, key_authorization)
 
-            # Build the response (key authorization) and tell the CA we are ready.
+            # Tell the CA we are ready for validation.
             response = http_challenge.chall.response(account_key)
             net.answer_challenge(http_challenge, response)
 
@@ -364,7 +371,7 @@ async def renewal_loop(app: Any) -> None:
     while True:
         config = manager.config
         tls = config.server.tls
-        if not (tls.enabled and tls.renew_command):
+        if not (tls.enabled and (tls.renew_command or tls.acme_directory)):
             return
         try:
             status = certificate_status(config)
@@ -379,13 +386,45 @@ async def renewal_loop(app: Any) -> None:
 
 
 async def _run_renewal(app: Any, config: WardenConfig) -> None:
-    """_run_renewal."""
+    """Renew in-process via ACME when configured, otherwise run ``renew_command``."""
     tls = config.server.tls
+    started = time.time()
+    if tls.acme_directory:
+        domain = tls.acme_domain or config.server.admin_host
+        logger.info("Certificate renewal due; requesting %s from %s", domain, tls.acme_directory)
+        try:
+            cert_path, _key_path = await app.state.acme_manager.request_certificate(
+                domain, tls.acme_directory
+            )
+        except Exception as exc:  # noqa: BLE001
+            app.state.cert_renewal = {
+                "ok": False,
+                "command": None,
+                "acme_directory": tls.acme_directory,
+                "output": str(exc),
+                "timestamp": started,
+                "restart_required": False,
+            }
+            logger.warning("ACME certificate request failed: %s", exc)
+            return
+        app.state.cert_renewal = {
+            "ok": True,
+            "command": None,
+            "acme_directory": tls.acme_directory,
+            "output": str(cert_path),
+            "timestamp": started,
+            "restart_required": True,
+        }
+        logger.info(
+            "Obtained a certificate for %s at %s. Restart Warden to serve it.",
+            domain,
+            cert_path,
+        )
+        return
     command = tls.renew_command
     if not command:
         return
     logger.info("Certificate renewal due; running configured renewal command")
-    started = time.time()
     try:
         process = await asyncio.create_subprocess_shell(
             command,

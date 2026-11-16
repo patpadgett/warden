@@ -7,8 +7,8 @@ dist/
 .venv/
 venv/
 
-# Warden runtime
-warden.yaml
+# Warden runtime (deployment config at the repo root; fixtures elsewhere are tracked)
+/warden.yaml
 *.db
 *.db-wal
 *.db-shm
@@ -18,6 +18,10 @@ certs/
 # Scratch
 tmp/
 
+# Runtime logs and test caches
+*.log
+.pytest_cache/
+
 .ruff_cache/
 .coverage
 htmlcov/
@@ -25,3 +29,4 @@ htmlcov/
 .vscode/
 .DS_Store
 .warden/
+.impeccable/

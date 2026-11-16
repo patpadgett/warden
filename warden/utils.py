@@ -265,7 +265,13 @@ def check_origin(scope: MutableMapping[str, Any], config: WardenConfig, *, requi
     origin = headers.get("origin")
     if origin:
         if origin == "null":
-            return False
+            # Browsers downgrade ``Origin`` to ``null`` on a same-origin form
+            # post when the page is served with ``Referrer-Policy: no-referrer``.
+            # ``Sec-Fetch-Site`` is set by the browser and cannot be forged by a
+            # cross-site page, so use it to tell that apart from a real cross-site
+            # request (browsers without it keep the old rejection).
+            fetch_site = headers.get("sec-fetch-site")
+            return fetch_site in {"same-origin", "none"}
         if origin.rstrip("/") == current_origin(scope, config).rstrip("/"):
             return True
         return config.origin_allowed(origin)
@@ -294,8 +300,10 @@ def apply_security_headers(response: Response) -> Response:
     )
     headers.setdefault(
         "Content-Security-Policy",
-        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data:; connect-src 'self'; font-src 'self'; "
+        "default-src 'self'; script-src 'self'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "img-src 'self' data:; connect-src 'self'; "
+        "font-src 'self' https://fonts.gstatic.com; "
         "frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
     )
     return response

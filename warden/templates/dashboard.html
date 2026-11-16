@@ -78,9 +78,9 @@
         </span>
       </div>
       <div class="panel-body">
-        <div id="service-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px;">
+        <div id="service-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 12px;">
           {% for service in services %}
-          <div class="panel service-card" data-host="{{ service.host }}" data-service='{{ service|tojson }}' style="{% if service.status == 'offline' %}opacity: 0.7;{% endif %}">
+          <div class="panel service-card" data-host="{{ service.host }}" data-service='{{ service.json|tojson }}' style="{% if service.status == 'offline' %}opacity: 0.7;{% endif %}">
             <div class="panel-body">
               <div style="display: flex; align-items: flex-start; gap: 12px; margin-bottom: 10px;">
                 <div style="display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; font-size: 15px; font-weight: 700; border: 2px solid var(--border); flex-shrink: 0; background: var(--bg-raised);">{{ service.initials }}</div>
@@ -116,7 +116,7 @@
           <div class="panel" style="grid-column: 1 / -1;">
             <div class="panel-body" style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 48px 24px; text-align: center;">
               <svg viewBox="0 0 24 24" width="48" height="48" style="color: var(--text-muted); margin-bottom: 16px; opacity: 0.5;"><path d="M12 2 2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              <h3 style="font-size: 16px; font-weight: 600; margin-bottom: 6px;">The door is open.</h3>
+              <h3 style="font-size: 15px; font-weight: 600; margin-bottom: 6px;">The door is open.</h3>
               <p style="font-size: 13px; color: var(--text-muted); max-width: 36ch; margin-bottom: 18px;">Nothing is behind it yet. Add a hostname and an upstream, and Warden handles the rest.</p>
               <button class="btn btn-primary" type="button" data-open-service>Add your first service</button>
             </div>
@@ -222,7 +222,7 @@
         {% endif %}
         {% elif tls.enabled %}
         <div class="panel" style="border-color: var(--red); background: var(--red-soft); margin: 0;">
-          <div class="panel-body" style="color: #fca5a5;">{{ tls.error or 'The certificate could not be read.' }}</div>
+          <div class="panel-body" style="color: var(--red-text);">{{ tls.error or 'The certificate could not be read.' }}</div>
         </div>
         {% else %}
         <p style="font-size: 13px; color: var(--text-secondary);">TLS is not configured. Warden is serving plain HTTP — passkeys require a secure context, so use this dashboard from localhost or put a TLS terminator in front.</p>
@@ -249,7 +249,7 @@
 
     <div class="modal-body">
       <div class="panel" id="service-error" role="alert" hidden style="border-color: var(--red); background: var(--red-soft);">
-        <div class="panel-body" style="color: #fca5a5; font-size: 12px;"></div>
+        <div class="panel-body" style="color: var(--red-text); font-size: 12px;"></div>
       </div>
       <form id="service-form" novalidate>
         <div class="form-row">

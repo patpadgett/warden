@@ -353,21 +353,53 @@
     else dialog.removeAttribute("open");
   };
 
-  const runViewTransition = (update) => {
-    if (typeof document.startViewTransition === "function") {
-      try { return document.startViewTransition(update); } catch (e) { /* fall through */ }
+  W.confirm = (message, options) => {
+    options = options || {};
+    const overlay = document.getElementById("confirm-overlay");
+    if (!overlay) return Promise.resolve(window.confirm(message));
+    const titleEl = overlay.querySelector("#confirm-title");
+    const msgEl = overlay.querySelector("#confirm-message");
+    const okBtn = overlay.querySelector("[data-confirm-ok]");
+    const cancelBtn = overlay.querySelector("[data-confirm-cancel]");
+    if (titleEl) titleEl.textContent = options.title || "Confirm";
+    if (msgEl) msgEl.textContent = message;
+    if (okBtn) {
+      okBtn.textContent = options.confirmLabel || "Confirm";
+      okBtn.className = options.danger ? "btn btn-danger" : "btn btn-primary";
     }
-    update();
-    return null;
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        if (okBtn) okBtn.removeEventListener("click", onOk);
+        if (cancelBtn) cancelBtn.removeEventListener("click", onCancel);
+        document.removeEventListener("keydown", onKey, true);
+        overlay.removeEventListener("click", onBackdrop);
+        W.closeOverlay(overlay);
+        resolve(value);
+      };
+      const onOk = () => finish(true);
+      const onCancel = () => finish(false);
+      const onKey = (event) => {
+        if (event.key === "Escape") { event.preventDefault(); finish(false); }
+      };
+      const onBackdrop = (event) => {
+        if (event.target === overlay) finish(false);
+      };
+      if (okBtn) okBtn.addEventListener("click", onOk);
+      if (cancelBtn) cancelBtn.addEventListener("click", onCancel);
+      document.addEventListener("keydown", onKey, true);
+      overlay.addEventListener("click", onBackdrop);
+      W.openOverlay(overlay);
+    });
   };
 
   W.openOverlay = (overlay) => {
     if (!overlay) return;
     overlay._trigger = document.activeElement;
-    runViewTransition(() => {
-      overlay.hidden = false;
-      overlay.classList.add("open");
-    });
+    overlay.hidden = false;
+    overlay.classList.add("open");
     const focusable = overlay.querySelector("input:not([type=hidden]), button, select, textarea");
     if (focusable) window.setTimeout(() => focusable.focus(), 30);
   };
@@ -375,9 +407,7 @@
   W.closeOverlay = (overlay) => {
     if (!overlay) return;
     const trigger = overlay._trigger;
-    runViewTransition(() => {
-      overlay.classList.remove("open");
-    });
+    overlay.classList.remove("open");
     window.setTimeout(() => {
       overlay.hidden = true;
       if (trigger && typeof trigger.focus === "function") trigger.focus();
@@ -421,6 +451,7 @@
     });
 
     W.$$(".modal-overlay").forEach((overlay) => {
+      if (overlay.id === "confirm-overlay") return;
       overlay.addEventListener("click", (event) => {
         if (event.target === overlay) W.closeOverlay(overlay);
       });

@@ -1210,13 +1210,25 @@ class Database:
             ),
         )
 
-    async def list_audit(self, limit: int = 50, event: str | None = None, offset: int = 0) -> list[AuditEvent]:
+    async def list_audit(
+        self,
+        limit: int = 50,
+        event: str | None = None,
+        offset: int = 0,
+        since: float | None = None,
+    ) -> list[AuditEvent]:
         """list_audit."""
-        query = "SELECT * FROM audit"
+        clauses: list[str] = []
         params: list[Any] = []
         if event:
-            query += " WHERE event = ?"
+            clauses.append("event = ?")
             params.append(event)
+        if since is not None:
+            clauses.append("created_at >= ?")
+            params.append(since)
+        query = "SELECT * FROM audit"
+        if clauses:
+            query += f" WHERE {' AND '.join(clauses)}"
         query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
         params.append(max(1, int(limit)))
         params.append(int(offset))

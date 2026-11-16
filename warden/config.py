@@ -9,6 +9,7 @@ handling atomic saves and preserving restart‑only fields.
 from __future__ import annotations
 
 import ipaddress
+import logging
 import os
 import re
 import tempfile
@@ -37,6 +38,8 @@ HOP_BY_HOP = {
 _LABEL = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
 _HOST_RE = re.compile(rf"^(?:{_LABEL}\.)*{_LABEL}$")
 _HEADER_NAME_RE = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
+
+logger = logging.getLogger("warden.config")
 
 
 class ConfigError(Exception):
@@ -142,6 +145,33 @@ class TLSConfig(BaseModel):
     renew_command: str | None = None
     renew_days_before: int = Field(default=30, ge=1, le=90)
     check_interval_hours: int = Field(default=12, ge=1, le=168)
+    #: ACME directory URL for in-process issuance (e.g. Let's Encrypt). Unset
+    #: keeps issuance external (``acme_webroot`` + ``renew_command``).
+    acme_directory: str | None = None
+    #: Domain requested when ``acme_directory`` is set (default: admin host).
+    acme_domain: str | None = None
+
+    @field_validator("acme_directory")
+    @classmethod
+    def _validate_acme_directory(cls, value: str | None) -> str | None:
+        """_validate_acme_directory."""
+        if value is None or not value.strip():
+            return None
+        value = value.strip()
+        parts = urlsplit(value)
+        if parts.scheme not in {"http", "https"} or not parts.hostname:
+            raise ValueError("acme_directory must be an http(s) URL")
+        if parts.query or parts.fragment:
+            raise ValueError("acme_directory cannot include a query or fragment")
+        return value.rstrip("/")
+
+    @field_validator("acme_domain")
+    @classmethod
+    def _validate_acme_domain(cls, value: str | None) -> str | None:
+        """_validate_acme_domain."""
+        if value is None or not value.strip():
+            return None
+        return normalize_host(value)
 
     @model_validator(mode="after")
     def _check_tls(self) -> TLSConfig:
@@ -889,7 +919,21 @@ class ConfigManager:
         if config.mesh.enabled and config.mesh.config_path:
             mesh_path = config.mesh_config_path
             if mesh_path and not mesh_path.exists():
-                raise ConfigError(f"Mesh config not found: {mesh_path}")
+                # The file is written by the first "apply to host"; only the
+                # directory has to be usable at startup.
+                parent = mesh_path.parent
+                try:
+                    parent.mkdir(parents=True, exist_ok=True)
+                except OSError as exc:
+                    raise ConfigError(
+                        f"Mesh config directory is not usable: {parent} ({exc})"
+                    ) from exc
+                if not os.access(parent, os.W_OK):
+                    raise ConfigError(f"Mesh config directory is not writable: {parent}")
+                logger.info(
+                    "Mesh config %s does not exist yet; it will be written on the first apply.",
+                    mesh_path,
+                )
 
     def _backup_config(self) -> Path | None:
         """Create a timestamped backup of the current config file."""

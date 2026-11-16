@@ -1184,13 +1184,22 @@ class PostgresDatabase(Database):
             )
             await session.commit()
 
-    async def list_audit(self, limit: int = 50, event: str | None = None) -> list[AuditEvent]:
+    async def list_audit(
+        self,
+        limit: int = 50,
+        event: str | None = None,
+        offset: int = 0,
+        since: float | None = None,
+    ) -> list[AuditEvent]:
         """list_audit."""
         async with self.session_factory() as session:
             stmt = select(audit)
             if event is not None:
                 stmt = stmt.where(audit.c.event == event)
-            result = await session.execute(stmt.order_by(audit.c.id.desc()).limit(limit))
+            if since is not None:
+                stmt = stmt.where(audit.c.created_at >= since)
+            stmt = stmt.order_by(audit.c.id.desc()).limit(limit).offset(offset)
+            result = await session.execute(stmt)
             return [_audit(r._mapping) for r in result.fetchall()]
 
     async def count_audit(self, *, event: str | None = None, since: float | None = None) -> int:

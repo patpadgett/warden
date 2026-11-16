@@ -98,6 +98,14 @@ def test_check_origin_accepts_same_origin_and_rejects_cross_site(config) -> None
     assert not check_origin(cross, config)
     null_origin = scope(host="admin.home.lan", origin="null")
     assert not check_origin(null_origin, config)
+    null_same_origin = scope(
+        host="admin.home.lan", origin="null", Sec_Fetch_Site="same-origin"
+    )
+    assert check_origin(null_same_origin, config)
+    null_cross_site = scope(
+        host="admin.home.lan", origin="null", Sec_Fetch_Site="cross-site"
+    )
+    assert not check_origin(null_cross_site, config)
     sans_origin = scope(host="admin.home.lan", Sec_Fetch_Site="cross-site")
     assert not check_origin(sans_origin, config)
     assert check_origin(scope(host="admin.home.lan"), config)

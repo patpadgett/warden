@@ -28,6 +28,7 @@
       </div>
 
       <nav class="nav" aria-label="Main navigation">
+        {% if user.is_admin %}
         <a href="/" {% if page == 'dashboard' %}class="nav-link active" aria-current="page"{% else %}class="nav-link"{% endif %} data-nav title="Services">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
           <span>Services</span>
@@ -56,6 +57,16 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
           <span>Mesh</span>
         </a>
+        {% else %}
+        <a href="/portal" {% if page == 'portal' %}class="nav-link active" aria-current="page"{% else %}class="nav-link"{% endif %} data-nav title="Portal">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+          <span>Portal</span>
+        </a>
+        <a href="/passkeys" {% if page == 'passkeys' %}class="nav-link active" aria-current="page"{% else %}class="nav-link"{% endif %} data-nav title="Access">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+          <span>Access</span>
+        </a>
+        {% endif %}
       </nav>
 
       <div class="sidebar-foot">
@@ -66,7 +77,7 @@
       </div>
     </aside>
 
-    <div class="main">
+    <main class="main">
       <header class="header">
         <div class="header-left">
           <h1 class="header-title">{{ page_title }}</h1>
@@ -87,10 +98,27 @@
       <footer class="sidebar-foot footer-meta">
         <span>warden <span class="mono">v{{ app_version }}</span></span>
       </footer>
-    </div>
+    </main>
   </div>
 
   <div class="toast-root" id="toast-root" aria-live="polite"></div>
+
+  {% block modals %}{% endblock %}
+
+  <div class="modal-overlay" id="confirm-overlay" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+      <div class="modal-head">
+        <h2 id="confirm-title">Confirm</h2>
+      </div>
+      <div class="modal-body">
+        <p id="confirm-message" style="font-size: 13px; line-height: 1.55; color: var(--text-secondary);"></p>
+      </div>
+      <div class="modal-foot" style="display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 14px 20px; border-top: 2px solid var(--border);">
+        <button class="btn btn-ghost" type="button" data-confirm-cancel>Cancel</button>
+        <button class="btn btn-primary" type="button" data-confirm-ok>Confirm</button>
+      </div>
+    </div>
+  </div>
 
   <script src="{{ static_prefix }}/warden.js" defer></script>
   <script src="{{ static_prefix }}/admin.js" defer></script>

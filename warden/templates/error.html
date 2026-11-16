@@ -16,7 +16,7 @@
     .error-wrap { width: min(480px, 100%); text-align: center; }
     .error-brand { justify-content: center; margin-bottom: 32px; display: inline-flex; }
     .error-code { font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
-    .error-title { font-size: 28px; font-weight: 700; margin-bottom: 8px; }
+    .error-title { font-size: 22px; font-weight: 700; margin-bottom: 8px; }
     .error-msg { font-size: 14px; color: var(--text-secondary); max-width: 36ch; margin: 0 auto 24px; line-height: 1.55; }
     .error-actions { display: flex; gap: 10px; justify-content: center; }
     .error-detail { margin-top: 20px; padding: 12px; background: var(--bg-surface); border: 2px solid var(--border); font-size: 12px; color: var(--text-muted); overflow-x: auto; text-align: left; }
@@ -31,7 +31,7 @@
           <circle cx="16" cy="13.1" r="2.7" fill="none" stroke="currentColor" stroke-width="1.8"/>
           <path d="M16 15.8v5.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
         </svg>
-        <span style="font-size: 24px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;">warden</span>
+        <span style="font-size: 20px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;">warden</span>
       </a>
 
       <p class="mono error-code">{{ code }}{% if host %} · {{ host }}{% endif %}</p>
@@ -39,9 +39,12 @@
       <p class="error-msg">{{ message }}</p>
 
       <div class="error-actions">
-        <a class="btn btn-primary" href="{{ retry_url or '/' }}">Try again</a>
+        <a class="btn btn-primary" href="{{ retry_url or '/' }}">{{ retry_label if retry_label is defined and retry_label else 'Try again' }}</a>
         {% if admin_url %}
         <a class="btn btn-ghost" href="{{ admin_url }}">Open Warden</a>
+        {% endif %}
+        {% if signed_in %}
+        <button class="btn btn-ghost" type="button" id="logout-button">Sign out</button>
         {% endif %}
       </div>
 
@@ -53,5 +56,6 @@
       {% endif %}
     </div>
   </main>
+  {% if signed_in %}<script src="{{ static_prefix }}/warden.js" defer></script>{% endif %}
 </body>
 </html>

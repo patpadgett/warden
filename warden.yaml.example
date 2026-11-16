@@ -64,6 +64,10 @@ server:
   #   certfile: /etc/letsencrypt/live/warden.home.lan/fullchain.pem
   #   keyfile: /etc/letsencrypt/live/warden.home.lan/privkey.pem
   #   acme_webroot: /var/www/warden-acme
+  #   # Optional: let Warden issue the certificate itself. A readable cert is
+  #   # still required at startup, so the first one comes from acme_webroot.
+  #   # acme_directory: https://acme-v02.api.letsencrypt.org/directory
+  #   # acme_domain: warden.home.lan
   #   renew_command: certbot renew --quiet
   #   renew_days_before: 30
   #   check_interval_hours: 12

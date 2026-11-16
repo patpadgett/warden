@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import sqlite3
 import time
 from unittest.mock import patch
@@ -27,7 +26,7 @@ async def test_non_admin_denied_on_admin_host(app_and_path, client) -> None:
             is_admin=False,
         )
     finally:
-        db.close()
+        await db.close()
 
     token = "mallory-token"
     conn = sqlite3.connect(db_path)
@@ -54,6 +53,74 @@ async def test_non_admin_denied_on_admin_host(app_and_path, client) -> None:
     )
     assert response.status_code == 401
     assert response.json()["detail"] == "Admin access required."
+
+
+@pytest.mark.asyncio
+async def test_non_admin_gets_portal_and_credential_pages(app_and_path, client) -> None:
+    """Non-admins land on a portal, can manage their own credentials, and
+    still cannot reach admin pages."""
+    _app, cfg_path = app_and_path
+    db_path = cfg_path.with_name("warden.db")
+
+    db = Database(db_path)
+    await db.init()
+    try:
+        user = await db.create_user(
+            username="portal-user",
+            display_name="Portal User",
+            webauthn_user_id=b"p" * 16,
+            is_admin=False,
+        )
+    finally:
+        await db.close()
+
+    token = "portal-token"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO sessions "
+        "(token_hash, user_id, created_at, expires_at, last_seen_at, ip, user_agent)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            hash_token(token),
+            user.id,
+            time.time(),
+            time.time() + 3600,
+            time.time(),
+            "127.0.0.1",
+            "pytest",
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    headers = {
+        "host": "admin.home.lan",
+        "cookie": f"warden_session={token}",
+        "accept": "text/html",
+    }
+
+    root = client.get("/", headers=headers, follow_redirects=False)
+    assert root.status_code == 303
+    assert root.headers["location"] == "/portal"
+
+    portal = client.get("/portal", headers=headers)
+    assert portal.status_code == 200
+    assert "app.home.lan" in portal.text
+    assert "passkey" in portal.text
+
+    for page in ("/passkeys", "/backup_codes"):
+        response = client.get(page, headers=headers)
+        assert response.status_code == 200, page
+
+    denied = client.get("/users", headers=headers)
+    assert denied.status_code == 403
+    assert "/portal" in denied.text
+
+    api = client.get(
+        "/_warden/api/status", headers={**headers, "accept": "application/json"}
+    )
+    assert api.status_code == 401
+    assert api.json()["detail"] == "Admin access required."
 
 
 @pytest.mark.asyncio
@@ -210,3 +277,27 @@ async def test_create_invite_email_failure_is_non_blocking(app_and_path, client)
 
     assert response.status_code == 200
     assert response.json()["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_update_user_refuses_to_demote_last_admin(app_and_path, client) -> None:
+    """Demoting the only admin would lock everyone out of the dashboard."""
+    app, _cfg_path = app_and_path
+    admins = [user for user in await app.state.db.list_users() if int(user.is_admin)]
+    assert len(admins) == 1
+    admin = admins[0]
+
+    response = client.patch(
+        f"/_warden/api/users/{admin.id}",
+        headers={
+            "host": "admin.home.lan",
+            "cookie": "warden_session=test-session-token",
+            "x-warden-request": "1",
+        },
+        json={"is_admin": False},
+    )
+
+    assert response.status_code == 400
+    assert "last admin" in response.json()["detail"]
+    still_admin = await app.state.db.get_user(admin.id)
+    assert still_admin is not None and int(still_admin.is_admin) == 1

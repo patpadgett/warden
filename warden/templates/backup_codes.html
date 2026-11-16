@@ -4,8 +4,8 @@
 <section class="page-head">
   <div>
     <p class="panel-title" style="margin-bottom: 6px;">Recovery</p>
-    <h1 class="page-title">Backup codes.</h1>
-    <p class="subhead">One-time recovery codes for lost passkeys. Each code can be used once to log in via <code class="code">/_warden/auth/login/backup</code>. Only admin users can generate new codes.</p>
+    <h1 class="page-title">Backup codes</h1>
+    <p class="subhead">One-time recovery codes for lost passkeys. Each code can be used once to log in via <code class="code">/_warden/auth/login/backup</code>.</p>
   </div>
   <div class="page-actions">
     <form method="post" action="/backup_codes/generate" id="backup-form">
@@ -23,7 +23,7 @@
     <p class="panel-title" style="margin-bottom: 8px;">New backup code</p>
     <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 10px;">Copy this code now. It will not be shown again.</p>
     <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-      <code class="code mono" id="new-backup-code" style="font-size: 18px; letter-spacing: 0.08em;">{{ new_code }}</code>
+      <code class="code mono" id="new-backup-code" style="font-size: 20px; letter-spacing: 0.08em;">{{ new_code }}</code>
       <button class="btn" type="button" id="copy-backup-code">Copy</button>
     </div>
   </div>

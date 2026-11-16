@@ -110,7 +110,7 @@
       const remove = event.target.closest("[data-delete-service]");
       if (!remove) return;
       const host = card.dataset.host;
-      if (!window.confirm(`Remove the route for ${host}?\n\nRequests will stop reaching this service immediately.`)) {
+      if (!(await W.confirm(`Remove the route for ${host}?\n\nRequests will stop reaching this service immediately.`, { danger: true, confirmLabel: "Remove" }))) {
         return;
       }
       remove.disabled = true;
@@ -313,7 +313,7 @@
       }
     });
 
-    W.$("#passkey-list")?.addEventListener("click", (event) => {
+    W.$("#passkey-list")?.addEventListener("click", async (event) => {
       const row = event.target.closest("[data-credential-id]");
       if (!row) return;
       if (event.target.closest("[data-rename-passkey]")) {
@@ -325,7 +325,7 @@
       }
       if (event.target.closest("[data-delete-passkey]")) {
         const name = row.dataset.name || "this passkey";
-        if (!window.confirm(`Remove "${name}"?\n\nYou will need another passkey to sign in.`)) return;
+        if (!(await W.confirm(`Remove "${name}"?\n\nYou will need another passkey to sign in.`, { danger: true, confirmLabel: "Remove" }))) return;
         const button = event.target.closest("button");
         button.disabled = true;
         W.fetchJSON(`/_warden/api/passkeys/${row.dataset.credentialId}`, { method: "DELETE" })
@@ -371,7 +371,7 @@
       if (!button) return;
       const row = button.closest("[data-session-id]");
       if (!row) return;
-      if (!window.confirm("Revoke this session? That device will need to sign in again.")) return;
+      if (!(await W.confirm("Revoke this session? That device will need to sign in again.", { danger: true, confirmLabel: "Revoke" }))) return;
       button.disabled = true;
       try {
         const result = await W.fetchJSON(`/_warden/api/sessions/${row.dataset.sessionId}`, {
@@ -391,7 +391,7 @@
     });
 
     W.$("#revoke-others")?.addEventListener("click", async (event) => {
-      if (!window.confirm("Sign out every other browser and device?")) return;
+      if (!(await W.confirm("Sign out every other browser and device?", { danger: true, confirmLabel: "Sign out all" }))) return;
       const button = event.currentTarget;
       W.setBusy(button, true, "Revoking…");
       try {
@@ -546,8 +546,8 @@
 
     validateButton?.addEventListener("click", () => validate());
     saveButton?.addEventListener("click", save);
-    reloadButton?.addEventListener("click", () => {
-      if (editor.value !== original && !window.confirm("Discard your unsaved changes?")) return;
+    reloadButton?.addEventListener("click", async () => {
+      if (editor.value !== original && !(await W.confirm("Discard your unsaved changes?", { danger: true, confirmLabel: "Discard" }))) return;
       editor.value = original;
       window.__wardenConfigDirty = false;
       setError("");
@@ -692,7 +692,7 @@
       }
       if (event.target.closest("[data-delete-peer]")) {
         const name = W.$(".primary", row)?.textContent || "this peer";
-        if (!window.confirm(`Remove ${name}?\n\nIts keys are deleted from Warden. Apply again to drop the live session.`)) {
+        if (!(await W.confirm(`Remove ${name}?\n\nIts keys are deleted from Warden. Apply again to drop the live session.`, { danger: true, confirmLabel: "Remove" }))) {
           return;
         }
         const button = event.target.closest("button");
@@ -720,7 +720,7 @@
     });
 
     W.$("#mesh-apply")?.addEventListener("click", async (event) => {
-      if (!window.confirm("Write the WireGuard config and apply it to the host interface now?")) return;
+      if (!(await W.confirm("Write the WireGuard config and apply it to the host interface now?", { confirmLabel: "Apply" }))) return;
       const button = event.currentTarget;
       W.setBusy(button, true, "Applying…");
       try {
@@ -969,7 +969,7 @@
         if (!row) return;
         const userId = row.dataset.userId;
         const name = row.querySelector(".user-name")?.textContent || "this user";
-        if (!window.confirm(`Remove ${name}?\n\nThey will lose access immediately.`)) return;
+        if (!(await W.confirm(`Remove ${name}?\n\nThey will lose access immediately.`, { danger: true, confirmLabel: "Remove" }))) return;
         button.disabled = true;
         try {
           await W.fetchJSON(`/_warden/api/users/${encodeURIComponent(userId)}`, {

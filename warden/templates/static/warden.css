@@ -14,8 +14,9 @@
   --border: #333333;
   --border-strong: #555555;
   --text-primary: #ffffff;
-  --text-secondary: #888888;
-  --text-muted: #7a7a7a;
+  --text-secondary: #b0b0b0;
+  --text-muted: #8a8a8a;
+  --red-text: #fca5a5;
   --accent: #00ff88;
   --accent-hover: #33ffaa;
   --accent-soft: rgba(0, 255, 136, 0.1);
@@ -97,6 +98,19 @@ input:focus, textarea:focus, select:focus {
 ::selection {
   background: var(--accent);
   color: var(--bg-base);
+}
+
+/* Keyboard focus */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+button:focus-visible,
+a:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* --------------------------------------------------------------------------
@@ -415,6 +429,7 @@ input:focus, textarea:focus, select:focus {
 .table-wrap {
   border: 2px solid var(--border);
   background: var(--bg-surface);
+  overflow-x: auto;
 }
 
 .table {
@@ -1300,6 +1315,11 @@ input:focus, textarea:focus, select:focus {
   .nav {
     flex-direction: row;
     overflow-x: auto;
+    scrollbar-width: thin;
+  }
+
+  .nav::-webkit-scrollbar {
+    height: 6px;
   }
 
   .content {
@@ -1330,9 +1350,18 @@ input:focus, textarea:focus, select:focus {
    -------------------------------------------------------------------------- */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
-    animation-duration: 0.01ms !important;
+    animation-duration: 120ms !important;
     animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
+    transition-duration: 120ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .toast {
+    animation: none !important;
+  }
+
+  .modal {
+    transform: none !important;
   }
 }
 
@@ -1342,5 +1371,38 @@ input:focus, textarea:focus, select:focus {
 @media (max-width: 860px) {
   .dash-layout {
     grid-template-columns: 1fr !important;
+  }
+
+  .btn,
+  .btn-sm,
+  .modal-close,
+  .nav-link {
+    min-height: 44px;
+  }
+}
+
+/* Tablet tuning */
+@media (max-width: 1024px) {
+  .content {
+    padding: 20px;
+  }
+
+  .stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dash-layout {
+    gap: 12px;
+  }
+}
+
+/* Coarse pointer touch targets */
+@media (pointer: coarse) {
+  .btn,
+  .btn-sm,
+  .modal-close,
+  .nav-link,
+  summary {
+    min-height: 44px;
   }
 }

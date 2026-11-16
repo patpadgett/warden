@@ -457,9 +457,9 @@ async def create_invite(request: Request, body: InviteCreateBody) -> JSONRespons
                 await asyncio.to_thread(
                     send_email,
                     email_cfg,
-                    user.email,
-                    f"[{email_cfg.subject_prefix}] Your first-login invite",
-                    (
+                    to=user.email,
+                    subject=f"[{email_cfg.subject_prefix}] Your first-login invite",
+                    body=(
                         "You are invited to activate your Warden account.\n"
                         f"Token: {token}\n"
                         f"Expires in: {body.expires_in} seconds.\n"
@@ -500,6 +500,12 @@ async def update_user(request: Request, user_id: int, payload: UserUpdatePayload
     user = await db.get_user(user_id)
     if user is None:
         return JSONResponse({"detail": "User not found."}, status_code=404)
+    if payload.is_admin is False and int(user.is_admin) == 1:
+        admins = [u for u in await db.list_users() if int(u.is_admin)]
+        if len(admins) <= 1:
+            return JSONResponse(
+                {"detail": "You cannot remove the last admin."}, status_code=400
+            )
     if payload.is_admin is not None:
         await db.update_user_admin(user_id, payload.is_admin)
     if payload.display_name is not None:
@@ -526,6 +532,37 @@ async def delete_user(request: Request, user_id: int) -> JSONResponse:
     
     await _audit(request, "user_deleted", f"User ID {user_id}")
     return JSONResponse({"ok": True})
+@router.get("/portal")
+async def portal(request: Request) -> Response:
+    """Render the signed-in user's portal.
+
+    * Lists every enabled service route with an absolute link, marking which
+      ones require a passkey (``auth: true``) and which are public.
+    * Links to the user's own passkeys, sessions, and backup codes, which are
+      the only other admin-host pages non-admins may open.
+    """
+    config = _guard_host(request)
+    user = _user(request)
+    credentials = await _db(request).list_credentials(user.id)
+    services: list[dict[str, Any]] = []
+    for route in config.routes:
+        if not route.enabled:
+            continue
+        name = route.display_name
+        services.append(
+            {
+                "name": name,
+                "host": route.host,
+                "url": external_url(request.scope, config, route.host),
+                "public": not route.auth,
+                "initials": route_initials(name, route.icon),
+            }
+        )
+    context = _base_context(request, page="portal", title="Portal")
+    context.update({"services": services, "passkey_count": len(credentials)})
+    return _render(request, "portal.html", context)
+
+
 @router.get("/")
 async def dashboard(request: Request) -> Response:
     """Render the main admin dashboard with service status and metrics.
@@ -648,7 +685,9 @@ async def activity_page(request: Request) -> Response:
             since = float(since_raw)
         except ValueError:
             since = None
-    events = await _db(request).list_audit(150, event=event_filter, offset=0)
+    events = await _db(request).list_audit(
+        150, event=event_filter, offset=0, since=since
+    )
     decorated = []
     for event in events:
         label, tone, icon = EVENT_META.get(event.event, (event.event.replace("_", " ").title(), "neutral", "dot"))
@@ -922,6 +961,8 @@ async def import_config(request: Request, payload: ImportPayload) -> JSONRespons
             # Validate before saving
             manager.validate_text(payload.yaml)
             config, restart = manager.save_text(payload.yaml)
+            _app.state.config = config
+            _app.state.db.config = config.server
             await _audit(request, "config_imported", f"Imported YAML config ({len(config.routes)} routes)")
             return JSONResponse({"ok": True, "restart_required": restart})
         except ConfigError as exc:
@@ -974,6 +1015,8 @@ async def save_config(request: Request, payload: ConfigPayload) -> JSONResponse:
         config, restart = manager.save_text(payload.yaml)
     except ConfigError as exc:
         return _error(exc)
+    _app.state.config = config
+    _app.state.db.config = config.server
     await _audit(request, "config_saved", f"{len(config.routes)} routes")
     return JSONResponse({"ok": True, "restart_required": restart})
 
@@ -1149,7 +1192,7 @@ async def reset_proxy_clients(request: Request) -> JSONResponse:
     _guard_host(request)
     await _require_admin(request)
     _app = _get_fastapi_app(request)
-    _app.state.proxy.reset_clients()
+    await _app.state.proxy.reset_clients()
     return JSONResponse({"ok": True})
 
 @router.post("/_warden/api/mesh/rotate-hub-key")

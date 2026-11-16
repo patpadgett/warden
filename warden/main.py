@@ -128,6 +128,39 @@ def _public_base_url(config: WardenConfig) -> str:
     return f"{scheme}://{host}{suffix}"
 
 
+def host_coverage_warnings(config: WardenConfig) -> list[str]:
+    """Return startup warnings for route hosts passkeys or cookies cannot reach.
+
+    Browsers accept a single-label RP ID (``localhost``) only on that exact host,
+    and a host-only session cookie is not shared with other hostnames unless
+    ``server.cookie_domain`` is configured.
+    """
+    rp_id = config.webauthn.rp_id
+    admin_host = config.server.admin_host
+    cookie_domain = config.server.cookie_domain
+    single_label = "." not in rp_id
+    warnings: list[str] = []
+    for route in config.enabled_routes():
+        if not route.auth:
+            continue
+        base = route.host.removeprefix("*.")
+        if single_label and base != rp_id:
+            warnings.append(
+                f"Route host {route.host!r} is not covered by WebAuthn RP ID {rp_id!r}: "
+                "browsers allow a single-label RP ID only on that exact host, so passkey "
+                f"sign-in on {base!r} will fail. Use a registrable parent domain for "
+                "webauthn.rp_id (for example home.lan) and keep routes under it."
+            )
+        if cookie_domain is None and base != admin_host:
+            warnings.append(
+                f"Route host {route.host!r} is not {admin_host!r} and server.cookie_domain "
+                "is unset, so the session cookie is host-only and users must sign in "
+                f"again on {base!r}. Set server.cookie_domain to {rp_id!r} to share one "
+                "session across hosts."
+            )
+    return warnings
+
+
 def _print_banner(
     manager: ConfigManager,
     setup_code: str | None,
@@ -257,7 +290,8 @@ def create_app(
     engine = proxy or ProxyEngine(manager, metrics)
     passkeys = PasskeyService(database)
     acme_manager = ACMEManager(manager)
-    # Attach to engine for token bridging (challenge responses)
+    # Bridge in-process HTTP-01 challenge responses to the proxy.
+    engine.acme_manager = acme_manager
     mesh = MeshManager(database, manager)
 
     @asynccontextmanager
@@ -273,6 +307,8 @@ def create_app(
             os.environ.get("WARDEN_SETUP_TOKEN")
         )
         _print_banner(manager, setup_code, setup_expires)
+        for warning in host_coverage_warnings(manager.config):
+            logger.warning("%s", warning)
 
         app.state.config = manager.config
         # Verify Redis connectivity for the rate limiter; fall back to the
@@ -299,7 +335,8 @@ def create_app(
             )
         ]
         renewal_task: asyncio.Task[Any] | None = None
-        if manager.config.server.tls.enabled and manager.config.server.tls.renew_command:
+        tls_config = manager.config.server.tls
+        if tls_config.enabled and (tls_config.renew_command or tls_config.acme_directory):
             renewal_task = asyncio.create_task(renewal_loop(app), name="warden-tls-renewal")
             app.state.renewal_task = renewal_task
         app.state.background_tasks = tasks
@@ -368,21 +405,29 @@ def create_app(
 
     @app.get("/.well-known/acme-challenge/{token}", include_in_schema=False)
     async def acme_challenge(token: str) -> Response:
-        """acme_challenge."""
+        """Serve an HTTP-01 challenge from the webroot or the in-process ACME client."""
+        if not _ACME_TOKEN_RE.match(token):
+            raise HTTPException(404, "Not found")
         root = manager.config.acme_webroot_path
-        if root is None or not _ACME_TOKEN_RE.match(token):
+        if root is not None:
+            try:
+                resolved_root = root.resolve()
+                target = (resolved_root / token).resolve()
+            except OSError:
+                pass
+            else:
+                if resolved_root in target.parents:
+                    try:
+                        content = target.read_text(encoding="utf-8").strip()
+                    except OSError:
+                        content = None
+                    if content is not None:
+                        response = PlainTextResponse(content)
+                        response.headers["Cache-Control"] = "no-store"
+                        return response
+        content = acme_manager.get_challenge_response(token)
+        if content is None:
             raise HTTPException(404, "Not found")
-        try:
-            resolved_root = root.resolve()
-            target = (resolved_root / token).resolve()
-        except OSError:
-            raise HTTPException(404, "Not found") from None
-        if resolved_root not in target.parents:
-            raise HTTPException(404, "Not found")
-        try:
-            content = target.read_text(encoding="utf-8").strip()
-        except OSError:
-            raise HTTPException(404, "Not found") from None
         response = PlainTextResponse(content)
         response.headers["Cache-Control"] = "no-store"
         return response

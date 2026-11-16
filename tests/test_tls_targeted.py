@@ -35,7 +35,7 @@ def test_certificate_expired(tmp_path: Path) -> None:
     assert info.as_dict()["expired"] is False
 
 def test_acme_token_expired() -> None:
-    t = ACMEToken("token", 0)
+    t = ACMEToken("token", "token.thumbprint", 0)
     import time
     time.sleep(0.01)
     assert t.expired is True

@@ -276,13 +276,20 @@ fast. All relative paths are resolved from the directory containing
 | `enabled` | `false` | Serve HTTPS and the HTTP redirect/ACME companion. |
 | `certfile` / `keyfile` | required | PEM certificate chain and private key. |
 | `acme_webroot` | unset | Directory served at `/.well-known/acme-challenge/`. |
+| `acme_directory` | unset | ACME directory URL for in-process issuance, e.g. `https://acme-v02.api.letsencrypt.org/directory`. |
+| `acme_domain` | admin host | Domain requested when `acme_directory` is set. |
 | `renew_command` | unset | Shell command run when renewal is due. |
 | `renew_days_before` | `30` | Run the hook when the certificate has this many days left. |
-| `check_interval_hours` | `12` | How often the renewal loop checks. |
-
-Warden never reloads a certificate in place: after renewal, restart the process
+| `check_interval_hours` | `12` | How often the renewal loop checks. |Warden never reloads a certificate in place: after renewal, restart the
+process
 (or use a certbot deploy hook that restarts it). The HTTP companion stays up
 during renewal so webroot challenges keep working.
+
+Setting `acme_directory` lets Warden issue the certificate itself through the
+renewal loop and serve the HTTP-01 key authorization in memory, with no
+`acme_webroot` needed. TLS still requires a readable certificate at startup, so
+the **first** certificate comes from `acme_webroot` + certbot (or a self-signed
+placeholder that the renewal loop replaces).
 
 ### `webauthn`
 

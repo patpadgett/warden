@@ -46,6 +46,15 @@ _PUBLIC_AUTH_PREFIXES = (
     f"{INTERNAL_PREFIX}/static/",
     f"{INTERNAL_PREFIX}/invite/complete",
 )
+#: Admin-host pages a signed-in non-admin may open. These pages only show or
+#: change the requesting user's own data.
+_USER_PAGE_PATHS = ("/portal", "/passkeys", "/backup_codes")
+#: Admin-host APIs that are scoped to the session user, so non-admins may use
+#: them from those pages (passkey rename/remove, session revoke).
+_USER_API_PREFIXES = (
+    f"{INTERNAL_PREFIX}/api/passkeys",
+    f"{INTERNAL_PREFIX}/api/sessions",
+)
 _ACME_PREFIX = "/.well-known/acme-challenge/"
 
 
@@ -122,6 +131,11 @@ class WardenMiddleware:
         """
         return path.startswith(f"{INTERNAL_PREFIX}/static/")
 
+    def _is_user_portal_path(self, path: str) -> bool:
+        """Return ``True`` if a non-admin may open *path* on the admin host."""
+        allowed = _USER_PAGE_PATHS + _USER_API_PREFIXES
+        return any(path == prefix or path.startswith(f"{prefix}/") for prefix in allowed)
+
     # ------------------------------------------------------------------- http
     async def _handle_http(
         self,
@@ -178,6 +192,37 @@ class WardenMiddleware:
                 await self._json_unauthorized("Sign in to continue.")(scope, receive, send)
                 return
             if not session.user.is_admin:
+                # The portal and the per-user credential pages are the only
+                # admin-host destinations open to non-admins. ``/`` lands them
+                # on the portal instead of the admin dashboard.
+                if path == "/" and method in {"GET", "HEAD"}:
+                    response = self._redirect("/portal")
+                    await response(scope, receive, send)
+                    return
+                if self._is_user_portal_path(path):
+                    if method not in {"GET", "HEAD", "OPTIONS"}:
+                        if path.startswith(f"{INTERNAL_PREFIX}/api/"):
+                            header = Headers(scope=scope).get("x-warden-request")
+                            if header != "1":
+                                response = JSONResponse(
+                                    {"detail": "Missing X-Warden-Request header."},
+                                    status_code=403,
+                                )
+                                response.headers["Cache-Control"] = "no-store"
+                                await response(scope, receive, send)
+                                return
+                        if not check_origin(scope, config):
+                            response = JSONResponse(
+                                {"detail": "Cross-origin request blocked."}, status_code=403
+                            )
+                            response.headers["Cache-Control"] = "no-store"
+                            await response(scope, receive, send)
+                            return
+                    await self._call_app(scope, receive, send, config)
+                    return
+                if is_navigation(scope):
+                    await self._no_dashboard_access(scope, receive, send, host)
+                    return
                 response = self._json_unauthorized("Admin access required.")
                 await response(scope, receive, send)
                 return
@@ -284,9 +329,11 @@ class WardenMiddleware:
                 )
                 headers.setdefault(
                     "Content-Security-Policy",
-                    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-                    "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; "
-                    "base-uri 'none'; form-action 'self'",
+                    "default-src 'self'; script-src 'self'; "
+                    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+                    "img-src 'self' data:; connect-src 'self'; "
+                    "font-src 'self' https://fonts.gstatic.com; "
+                    "frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
                 )
                 if config.server.external_scheme == "https" or str(scope.get("scheme")) == "https":
                     headers.setdefault(
@@ -332,6 +379,36 @@ class WardenMiddleware:
         response = JSONResponse(payload, status_code=401)
         response.headers["Cache-Control"] = "no-store"
         return response
+
+    async def _no_dashboard_access(
+        self,
+        scope: MutableMapping[str, Any],
+        receive: Callable,
+        send: Callable,
+        host: str,
+    ) -> None:
+        """Explain the admin-only dashboard to a signed-in non-admin visitor."""
+        template = templates.get_template("error.html")
+        body = template.render(
+            page_title="No dashboard access",
+            code="403",
+            title="This dashboard is for admins",
+            message=(
+                "You're signed in, but the Warden dashboard is admin-only. "
+                "Your portal lists the services you can open and lets you "
+                "manage your passkeys and backup codes."
+            ),
+            detail="",
+            host=host,
+            retry_url="/portal",
+            retry_label="Open portal",
+            admin_url=None,
+            retry_after=None,
+            signed_in=True,
+        )
+        response = HTMLResponse(body, status_code=403)
+        add_page_headers(response)
+        await response(scope, receive, send)
 
     async def _not_found(
         self,

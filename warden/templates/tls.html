@@ -4,7 +4,7 @@
 <section class="page-head">
   <div>
     <p class="panel-title" style="margin-bottom: 6px;">Encryption</p>
-    <h1 class="page-title">TLS Certificate.</h1>
+    <h1 class="page-title">TLS Certificate</h1>
     <p class="subhead">Certificate status, expiry, issuer, and renewal hook — all in one place.</p>
   </div>
 </section>
@@ -47,7 +47,7 @@
     {% endif %}
     {% elif tls.enabled %}
     <div class="panel" style="border-color: var(--red); background: var(--red-soft); margin: 0;">
-      <div class="panel-body" style="color: #fca5a5;">{{ tls.error or 'The certificate could not be read.' }}</div>
+      <div class="panel-body" style="color: var(--red-text);">{{ tls.error or 'The certificate could not be read.' }}</div>
     </div>
     {% else %}
     <p style="font-size: 13px; color: var(--text-secondary);">TLS is disabled. Enable it in the <a class="btn btn-ghost btn-sm" href="/config">configuration</a>.</p>

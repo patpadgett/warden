@@ -35,7 +35,7 @@
     <div class="panel-body" id="config-errors" role="alert" hidden style="border-bottom: 2px solid var(--border);">{% if config_error %}{{ config_error }}{% endif %}</div>
 
     <label class="visually-hidden" for="config-editor">warden.yaml</label>
-    <textarea class="input" id="config-editor" spellcheck="false" autocapitalize="none" autocomplete="off" wrap="off" style="font-family: var(--font); font-size: 12px; line-height: 1.6; min-height: 520px; resize: vertical; border: none; border-bottom: 2px solid var(--border); border-radius: 0; background: var(--bg-base);">{{ raw_config }}</textarea>
+    <textarea class="input" id="config-editor" spellcheck="false" autocapitalize="none" autocomplete="off" wrap="off" style="font-family: var(--font); font-size: 12px; line-height: 1.6; min-height: 520px; width: 100%; resize: vertical; border: none; border-bottom: 2px solid var(--border); border-radius: 0; background: var(--bg-base);">{{ raw_config }}</textarea>
 
     <div class="flex" style="align-items: center; justify-content: space-between; padding: 12px 18px; border-top: 2px solid var(--border);">
       <span style="font-size: 12px; color: var(--text-muted);">Ctrl / ⌘ + S saves · validation runs before every write</span>

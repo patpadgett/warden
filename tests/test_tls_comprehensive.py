@@ -172,22 +172,22 @@ class TestACMEToken:
     """Tests for the ACMEToken class."""
 
     def test_token_not_expired_initially(self) -> None:
-        token = ACMEToken("abc123", validity=3600)
+        token = ACMEToken("abc123", "abc123", validity=3600)
         assert token.expired is False
 
     def test_token_expired_when_validity_is_zero(self) -> None:
-        token = ACMEToken("abc123", validity=0)
+        token = ACMEToken("abc123", "abc123", validity=0)
         assert token.expired is True
 
     def test_token_expired_after_validity(self) -> None:
         from time import sleep
-        token = ACMEToken("abc123", validity=1)
+        token = ACMEToken("abc123", "abc123", validity=1)
         sleep(1.1)
         assert token.expired is True
 
     def test_token_created_at_timestamp(self) -> None:
         from time import time
-        token = ACMEToken("abc123", validity=3600)
+        token = ACMEToken("abc123", "abc123", validity=3600)
         assert token.created_at <= time() + 1
 
 
@@ -216,16 +216,16 @@ class TestACMEManager:
 
     def test_set_and_get_challenge_token(self, manager: ACMEManager) -> None:
         token = "test-token-123"
-        manager.set_challenge_token(token, validity=3600)
+        manager.set_challenge_token(token, f"{token}.thumbprint", validity=3600)
         response = manager.get_challenge_response(token)
-        assert response == token
+        assert response == f"{token}.thumbprint"
 
     def test_get_challenge_response_returns_none_for_unknown(self, manager: ACMEManager) -> None:
         assert manager.get_challenge_response("unknown-token") is None
 
     def test_challenge_token_expired(self, manager: ACMEManager) -> None:
         import time
-        manager.set_challenge_token("expired-token", validity=0)
+        manager.set_challenge_token("expired-token", "expired-token.thumbprint", validity=0)
         time.sleep(0.1)
         assert manager.get_challenge_response("expired-token") is None
 
@@ -482,6 +482,8 @@ class TestRunRenewal:
         app = MagicMock()
         config = MagicMock()
         config.server.tls.renew_command = "test-renew"
+        config.server.tls.acme_directory = None
+        config.server.tls.acme_domain = None
         config.base_dir.return_value = tmp_path
         mock_process = AsyncMock()
         mock_process.communicate.return_value = (b"", b"")
@@ -498,6 +500,8 @@ class TestRunRenewal:
         app = MagicMock()
         config = MagicMock()
         config.server.tls.renew_command = "failing-command"
+        config.server.tls.acme_directory = None
+        config.server.tls.acme_domain = None
         config.base_dir.return_value = tmp_path
         mock_process = AsyncMock()
         mock_process.communicate.return_value = (b"", b"")
@@ -652,6 +656,9 @@ class TestRequestCertificate:
         http01_chall.token = "test-token"
         # response is a method that takes account_key; mock it to return a string
         http01_chall.response = MagicMock(return_value="dummy-key-authorization")
+        http01_chall.key_authorization = MagicMock(
+            return_value="test-token.dummy-thumbprint"
+        )
         mock_chall = MagicMock()
         mock_chall.chall = http01_chall
         mock_authz.body.challenges = [mock_chall]
@@ -674,6 +681,11 @@ class TestRequestCertificate:
             assert cert_path.exists()
             assert key_path.exists()
             assert cert_path.read_text().startswith("-----BEGIN CERTIFICATE-----")
+            # The served body must be the key authorization, not the bare token.
+            assert (
+                manager.get_challenge_response("test-token")
+                == "test-token.dummy-thumbprint"
+            )
         finally:
             tls_mod.acme_client = original_acme_client
 

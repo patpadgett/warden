@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="panel-title" style="margin-bottom: 6px;">Portal</p>
+    <h1 class="page-title">Your services.</h1>
+    <p class="subhead">Everything Warden exposes that you can open. Passkey-protected services use the same sign-in you already completed.</p>
+  </div>
+  <div class="page-actions">
+    <a class="btn btn-ghost" href="/passkeys">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>Manage passkeys</span>
+    </a>
+  </div>
+</section>
+
+<div class="dash-layout" style="display: grid; grid-template-columns: 1fr 340px; gap: 16px; align-items: start;">
+  <section aria-labelledby="portal-services-title">
+    <div class="panel">
+      <div class="panel-head">
+        <h2 class="panel-title" id="portal-services-title">
+          <svg viewBox="0 0 24 24" width="16" height="16" style="color: var(--text-muted);" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+          Services <span class="badge" style="display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 6px; font-size: 12px; font-weight: 600; color: var(--text-muted); background: var(--bg-raised); margin-left: 8px;">{{ services|length }}</span>
+        </h2>
+      </div>
+      <div class="panel-body">
+        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); gap: 12px;">
+          {% for service in services %}
+          <div class="panel service-card" data-host="{{ service.host }}">
+            <div class="panel-body">
+              <div style="display: flex; align-items: flex-start; gap: 12px; margin-bottom: 10px;">
+                <div style="display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; font-size: 15px; font-weight: 700; border: 2px solid var(--border); flex-shrink: 0; background: var(--bg-raised);">{{ service.initials }}</div>
+                <div style="flex: 1; min-width: 0;">
+                  <div style="font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ service.name }}</div>
+                  <div style="font-size: 12px; color: var(--text-muted); font-family: var(--font); margin-top: 2px;">{{ service.host }}</div>
+                </div>
+                {% if service.public %}
+                <span class="badge" style="font-size: 12px; color: var(--text-muted); background: var(--bg-raised);">public</span>
+                {% else %}
+                <span class="badge badge-accent" style="font-size: 12px;">passkey</span>
+                {% endif %}
+              </div>
+              <div style="display: flex; align-items: center; justify-content: flex-end; padding-top: 10px; border-top: 1px solid var(--border);">
+                <a class="btn btn-ghost btn-sm" href="{{ service.url }}" title="Open {{ service.name }}">Open</a>
+              </div>
+            </div>
+          </div>
+          {% else %}
+          <div class="panel" style="grid-column: 1 / -1;">
+            <div class="panel-body" style="padding: 32px; text-align: center; color: var(--text-muted); font-size: 13px;">
+              No services are exposed yet. Ask an admin to add a route.
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <aside class="stack">
+    <section class="panel">
+      <div class="panel-head">
+        <h2 class="panel-title">Your access</h2>
+      </div>
+      <div class="panel-body">
+        <div class="access-row">
+          <span class="access-label">Signed in as</span>
+          <span class="access-value"><strong>{{ user.username }}</strong></span>
+        </div>
+        <div class="access-row">
+          <span class="access-label">Passkeys</span>
+          <span class="access-value">{{ passkey_count }}</span>
+        </div>
+      </div>
+    </section>
+
+    <div class="panel">
+      <div class="panel-body">
+        <h3 style="font-size: 13px; font-weight: 600; margin-bottom: 8px;">Credentials</h3>
+        <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.55;">Add or remove passkeys, review the devices signed in as you, and generate a recovery code.</p>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px;">
+          <a class="btn btn-primary btn-sm" href="/passkeys">Manage passkeys</a>
+          <a class="btn btn-ghost btn-sm" href="/backup_codes">Backup codes</a>
+        </div>
+      </div>
+    </div>
+  </aside>
+</div>
+{% endblock %}

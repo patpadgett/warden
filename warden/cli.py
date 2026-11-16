@@ -197,9 +197,10 @@ async def _confirm(question: str, assume_yes: bool) -> bool:
 class HttpsRedirectApp:
     """Serve ACME challenges on plain HTTP and send everything else to HTTPS."""
 
-    def __init__(self, manager: ConfigManager) -> None:
+    def __init__(self, manager: ConfigManager, acme_manager: Any | None = None) -> None:
         """__init__."""
         self.manager = manager
+        self.acme_manager = acme_manager
 
     def _acme_file(self, path: str) -> Path | None:
         """_acme_file."""
@@ -259,7 +260,14 @@ class HttpsRedirectApp:
             else:
                 response = PlainTextResponse(content)
         elif path.startswith("/.well-known/acme-challenge/"):
-            response = PlainTextResponse("Not found", status_code=404)
+            token = path.rsplit("/", 1)[-1]
+            content = None
+            if self.acme_manager is not None and _ACME_TOKEN_RE.match(token):
+                content = self.acme_manager.get_challenge_response(token)
+            if content is None:
+                response = PlainTextResponse("Not found", status_code=404)
+            else:
+                response = PlainTextResponse(content)
         else:
             response = Response(status_code=308)
             response.headers["Location"] = self._location(scope)
@@ -316,7 +324,9 @@ async def _run_dual(app: Any, config: WardenConfig, host: str, access_log: bool)
             access_log=access_log,
         )
     )
-    redirect = HttpsRedirectApp(app.state.manager)
+    redirect = HttpsRedirectApp(
+        app.state.manager, getattr(app.state, "acme_manager", None)
+    )
     http_server = uvicorn.Server(
         _uvicorn_config(
             redirect,

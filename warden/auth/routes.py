@@ -542,7 +542,10 @@ async def invite_complete(request: Request) -> JSONResponse:
         user_agent=user_agent(request.scope),
         detail="First passkey registered via invite",
     )
-    response = _json_response({"ok": True, "redirect": admin_url(request.scope, config)})
+    # Non-admin accounts cannot open the dashboard, so send them somewhere that
+    # explains the situation instead of the admin host's JSON 401.
+    redirect_to = admin_url(request.scope, config) if int(user.is_admin) else "/"
+    response = _json_response({"ok": True, "redirect": redirect_to})
     set_session_cookie(response, token, request.scope, config)
     clear_challenge_cookie(response, request.scope, config)
     return response

@@ -1,0 +1,206 @@
+# Known issues
+
+Findings from a code audit plus an end-to-end run of a real `warden serve`
+instance driven through Chromium with a real WebAuthn authenticator (setup,
+user creation, invite capture, invite registration, admin login, dashboard).
+
+Status legend: **Fixed** = changed in this pass, **Open** = documented but not
+changed yet, **By design** = confirmed intended behaviour.
+
+## Bugs
+
+### 1. Invite registration always fails in the browser — Fixed
+
+`warden/templates/static/invite.js` passed the raw JSON ceremony options
+straight to `navigator.credentials.create({ publicKey: data.publicKey })` and
+then serialised the resulting `ArrayBuffer`s by putting them into a JSON object.
+
+* `challenge`, `user.id` and `excludeCredentials[].id` arrive base64url-encoded,
+  so the browser throws `Failed to read the 'challenge' property ... not of type
+  '(ArrayBuffer or ArrayBufferView)'` before any authenticator is touched.
+* Even with the options converted, `JSON.stringify` turns the response buffers
+  into `{}`, so the server can never verify the attestation.
+
+The page loaded only `invite.js`, while the working helpers live in `warden.js`.
+`invite.js` now uses `Warden.prepareCreationOptions()` and
+`Warden.serializeRegistration()` (already loaded by `auth_base.html`) and reports
+unsupported/blocked passkeys through `Warden.friendlyPasskeyError()`.
+
+### 2. Server-rendered form POSTs rejected with 403 — Fixed
+
+Chromium sends `Origin: null` on same-origin form submissions when the page is
+served with `Referrer-Policy: no-referrer` (which Warden sets on every
+response). `check_origin()` treated every `null` origin as cross-site, so
+`POST /backup_codes/generate` (and any other plain `<form method="post">`)
+returned `403 {"detail":"Cross-origin request blocked."}`.
+
+`check_origin()` now accepts `Origin: null` only when `Sec-Fetch-Site` is
+`same-origin` or `none`. That header is set by the browser and cannot be forged
+by a cross-site page, and browsers that do not send it still get the old
+rejection.
+
+### 3. Non-admin invitees land on a JSON 401 — Fixed
+
+`invite_complete()` always redirected to `admin_url()`, but the admin host is
+admin-only, so a freshly registered non-admin saw
+`{"detail":"Admin access required."}`. The redirect now sends non-admins to the
+admin host root, and the middleware renders an HTML explanation page there
+instead of JSON for navigation requests, with a working sign-out button.
+
+### 4. `reset-clients` reported success while doing nothing — Fixed
+
+`warden/admin/routes.py` called `_app.state.proxy.reset_clients()` without
+`await`, emitting `RuntimeWarning: coroutine ... was never awaited` and returning
+`200` before any client was closed. Now awaited.
+
+### 5. The last admin can be demoted — Fixed
+
+`PATCH /_warden/api/users/{id}` with `{"is_admin": false}` had no guard, so the
+only admin account could lose dashboard access, locking everyone out.
+`update_user()` now returns `400` when the change would leave zero admins.
+
+### 6. `?since=` on the activity page is parsed but ignored — Fixed
+
+`activity_page()` read the `since` query parameter, handed it to the template,
+and then queried audit rows without it. `list_audit()` now accepts `since` on
+both the SQLite and PostgreSQL backends, and the page passes it through.
+
+### 7. PostgreSQL `list_audit()` ignores `offset` — Fixed
+
+`GET /_warden/api/audit/export?offset=...` passes `offset` to `list_audit()`,
+but the PostgreSQL implementation only accepted `limit` and `event`, so
+pagination raised `TypeError` on a Postgres deployment. The signature now
+matches the SQLite backend.
+
+### 8. Per-route rate limits are global, not per client — Fixed
+
+`ProxyEngine._per_route_rate_limit()` keyed its window on
+`host:upstream` only, so one busy client exhausted a route's `rate_limit` for
+everyone. The key now includes the client IP, which is already available in the
+scope at the call site.
+
+### 9. Saved configuration does not take effect at runtime — Fixed
+
+`app.state.config` and `database.config` were captured once at startup.
+`POST /_warden/api/config` and `/config/import` replaced `manager.config` but
+left both stale copies in place, so anything reading them (mail settings, the
+database vacuum threshold) kept using the old values until a restart. Both save
+paths now refresh `app.state.config` and `app.state.db.config`.
+
+### 10. Invite email test failure — Fixed
+
+`tests/test_admin_security.py::test_create_invite_sends_email` asserted
+`send_email` was called with keyword arguments, while the route passed them
+positionally, producing `KeyError: 'to'`. The route now calls `send_email` with
+`to=`, `subject=` and `body=`, matching the documented contract.
+
+### 11. Test suite hangs at exit — Fixed
+
+`tests/test_admin_security.py::test_non_admin_denied_on_admin_host` opened a
+second `Database` and called `db.close()` without `await`, leaving an aiosqlite
+worker thread alive so `pytest` never exited (the tests themselves reported
+`passed`). Now awaited; the suite exits normally.
+
+### 12. CSP blocks the webfont the templates load — Fixed
+
+Every page links `fonts.googleapis.com`/`fonts.gstatic.com`, but the CSP
+shipped `style-src 'self' 'unsafe-inline'` and `font-src 'self'`, so the
+stylesheet was blocked and the UI silently fell back to a system font. Both CSP
+copies (`utils.apply_security_headers` and the middleware header injection) now
+allow those two hosts. If third-party requests should be avoided entirely,
+self-hosting JetBrains Mono and removing the hosts from the CSP is the follow-up.
+
+## Unfinished functionality
+
+### 13. ACME issuance is unreachable — Partially fixed
+
+Fixed: the manager stored the bare challenge token and served that instead of
+the key authorization the CA requires; it now computes
+`HTTP01.key_authorization()` during the order and serves that. The in-memory
+responses are now reachable: `main.py` serves them from the challenge route when
+`acme_webroot` has no file, the HTTP→HTTPS listener does the same, and the ACME
+manager is attached to the proxy (the intended bridge line was missing).
+Issuance is wired to the renewal loop through the new opt-in
+`tls.acme_directory` / `tls.acme_domain` settings, so an expiring certificate
+can be replaced in-process and the dashboard reports `restart_required`.
+
+Still needs attention: the first certificate cannot be obtained this way,
+because startup requires a readable certificate before the TLS listener starts
+(`validate_runtime_files`). First issuance therefore still needs the
+`acme_webroot` + certbot path (or a pre-seeded self-signed cert, which the
+renewal loop can then replace). The flow is covered by unit tests with a mocked
+ACME client; it has not been exercised against a live CA.
+
+### 14. WebAuthn RP ID does not cover service subdomains — Fixed via warning
+
+An invitee signing in at `app.localhost` with `rp_id: localhost` gets
+`SecurityError` (shown as "This domain isn't allowed to use passkeys"). Chrome
+only accepts an RP ID that is the origin's host or a registrable domain suffix,
+and `localhost` is special-cased to the bare host, so this cannot be fixed in
+Warden — it is a configuration rule.
+
+`main.host_coverage_warnings()` now runs at startup and logs two warnings:
+when a single-label RP ID cannot cover a route host, and when a route host
+differs from the admin host while `server.cookie_domain` is unset (the session
+cookie is host-only, so users must sign in again on each host).
+
+### 15. Mesh configuration must exist before first start — Fixed
+
+`ConfigManager.validate_startup()` used to raise `ConfigError: Mesh config not
+found` when `mesh.enabled` was true and `mesh.config_path` did not exist yet,
+even though the mesh page writes that file on the first `apply()`. Startup now
+only requires the parent directory to exist (it is created when possible) and to
+be writable; the missing file is logged as an informational message and is
+written by the first apply.
+
+### 16. No landing page for signed-in non-admins — Fixed
+
+Non-admins now get `GET /portal` on the admin host: a grid of every enabled
+route with its hostname, a public/passkey badge, and an absolute link (scheme
+and port included), plus links to their own passkeys, sessions, and backup
+codes. Visiting `/` redirects there, and the 403 page for other admin paths
+points at it.
+
+Only three admin-host pages and two user-scoped API groups are opened up to
+non-admins (`/portal`, `/passkeys`, `/backup_codes`, `/_warden/api/passkeys*`,
+`/_warden/api/sessions*`); each already resolves the target user from the
+session. State-changing requests on those paths keep the same
+`X-Warden-Request` header and origin checks as the admin UI. Service visibility
+is intentionally binary for now — every signed-in user sees every enabled route.
+Per-route ACLs (a grant table plus admin UI for "this user may open this host")
+are a **future feature**, not a defect in the portal; the portal is the natural
+place to render them once they exist.
+
+### 17. "Add service" opened nothing — Fixed
+
+`base.html` rendered `{% block content %}`, `{% block scripts %}`, and
+`{% block head_extra %}`, but never `{% block modals %}`. Templates that put
+their dialogs in that block (`dashboard.html`, `passkeys.html`, `mesh.html`)
+were silently discarded, so `#service-modal-overlay` was not in the DOM. The
+click handler then read `title.textContent` on a null node and threw before
+opening anything — from the user's side the button simply did nothing. The
+passkey and mesh dialogs were missing the same way.
+
+`base.html` now renders the block before the shared confirm dialog. A template
+regression test asserts the dashboard/passkey dialogs ship in the HTML, and the
+browser E2E clicks **Add service** and waits for the form to become visible.
+
+## Verification
+
+* `tests/test_utils.py` covers the new `Origin: null` / `Sec-Fetch-Site` rule,
+  and `tests/test_admin_security.py` gained a last-admin regression test.
+* Full suite: **394 passed**, 77.44% coverage. The previously failing
+  invite-email test passes and `pytest` now exits cleanly.
+* New coverage for this pass: ACME key-authorization storage and in-memory
+  challenge serving, mesh startup with a missing config file, and the
+  route-host coverage warnings.
+* Real-browser E2E (`e2e/browser_e2e.py`, Chromium + WebAuthn virtual
+  authenticator, real `warden serve`): **ALL PASS** — setup, user creation,
+  invite capture, invite registration through the shipped page, reuse
+  rejection, the non-admin portal (redirect from `/`, service list, credential
+  links, 403 with a portal link for admin paths), invited-user passkey sign-in,
+  admin sign-in, every dashboard page, the **Add service** dialog opening and
+  closing, and backup-code generation via the server-rendered form
+  (`POST /backup_codes/generate` → 200).
+* `ruff` still reports pre-existing `B023` findings in
+  `utils._InMemoryPipeline`; those lines are unchanged by this pass.

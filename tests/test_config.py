@@ -38,6 +38,18 @@ def test_load_and_match_routes(tmp_path: Path) -> None:
     assert config.database_path == (tmp_path / "warden.db").resolve()
 
 
+def test_validate_startup_allows_missing_mesh_config(tmp_path: Path) -> None:
+    data = config_dict(
+        tmp_path, mesh={"enabled": True, "config_path": str(tmp_path / "wg0.conf")}
+    )
+    path = write_config(tmp_path, data)
+    manager = ConfigManager.from_file(path)
+    # The file is written by the first "apply to host"; startup only needs the
+    # directory to be usable.
+    manager.validate_startup()
+    assert not (tmp_path / "wg0.conf").exists()
+
+
 def test_wildcard_route_under_rp_id_is_allowed(tmp_path: Path) -> None:
     data = config_dict(
         tmp_path,

@@ -29,7 +29,7 @@
       <div class="flex" style="align-items: center; gap: 12px;">
         <form class="filter-form" method="get" action="/activity">
           <label class="visually-hidden" for="activity-filter">Filter events</label>
-          <input class="input" id="activity-filter" name="event" type="search" placeholder="Filter events…" value="{{ event_filter }}" autocomplete="off" style="width: 220px;">
+          <input class="input" id="activity-filter" name="event" type="search" placeholder="Filter events…" value="{{ event_filter }}" autocomplete="off" style="width: min(220px, 100%); max-width: 100%;">
           <input type="hidden" name="since" value="{{ since }}">
         </form>
         <span class="count">{{ count }}</span>

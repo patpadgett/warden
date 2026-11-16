@@ -54,6 +54,16 @@
   };
 
   const startRegistration = async (inviteToken, name) => {
+    const W = window.Warden;
+    if (!W || !W.prepareCreationOptions || !W.serializeRegistration) {
+      showError("Warden's client helpers did not load. Reload the page and try again.");
+      return;
+    }
+    if (!W.passkeysSupported()) {
+      showError(W.passkeySupportMessage());
+      return;
+    }
+
     registerBtn.disabled = true;
     registerBtn.querySelector("span:first-child").textContent = "Setting up…";
 
@@ -62,24 +72,16 @@
         token: inviteToken,
         name,
       });
-      const cred = await navigator.credentials.create({ publicKey: data.publicKey });
-      const credential = {
-        id: cred.id,
-        type: cred.type,
-        rawId: cred.rawId,
-        response: {
-          clientDataJSON: cred.response.clientDataJSON,
-          attestationObject: cred.response.attestationObject,
-          transports: cred.response.transports,
-          authenticatorData: cred.response.authenticatorData,
-          signature: cred.response.signature,
-          userHandle: cred.response.userHandle,
-          publicKeyAlgorithm: cred.response.publicKeyAlgorithm,
-          publicKey: cred.response.publicKey,
-        },
-        getClientExtensionResults: () => cred.getClientExtensionResults(),
-        invite_token: inviteToken,
-      };
+      let cred;
+      try {
+        cred = await navigator.credentials.create({
+          publicKey: W.prepareCreationOptions(data.publicKey),
+        });
+      } catch (err) {
+        throw new Error(W.friendlyPasskeyError(err));
+      }
+      const credential = W.serializeRegistration(cred);
+      credential.invite_token = inviteToken;
       const result = await postJSON("/_warden/auth/invite/complete", {
         token: inviteToken,
         credential,

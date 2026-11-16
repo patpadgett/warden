@@ -88,6 +88,10 @@ def test_dashboard_and_pages_render(client, app_and_path) -> None:
     assert "App" in dashboard.text
     assert "Public" in dashboard.text
     assert "TLS is off" in dashboard.text
+    # Pages that put their dialogs in {% block modals %} must actually ship them;
+    # a missing base block silently removes the form behind "Add service".
+    assert 'id="service-modal-overlay"' in dashboard.text
+    assert 'id="service-form"' in dashboard.text
     assert dashboard.headers["cache-control"] == "no-store"
     assert "frame-ancestors 'none'" in dashboard.headers["content-security-policy"]
 
@@ -95,6 +99,7 @@ def test_dashboard_and_pages_render(client, app_and_path) -> None:
     assert passkeys.status_code == 200
     assert "Test passkey" in passkeys.text
     assert "Spare 1" in passkeys.text
+    assert 'id="passkey-modal-overlay"' in passkeys.text
 
     activity = client.get("/activity", headers=admin_headers())
     assert activity.status_code == 200
@@ -108,6 +113,10 @@ def test_dashboard_and_pages_render(client, app_and_path) -> None:
     mesh = client.get("/mesh", headers=admin_headers())
     assert mesh.status_code == 200
     assert "WireGuard" in mesh.text
+    # The peer dialog only ships when mesh is enabled; if the page offers the
+    # button, the dialog it opens must be in the document.
+    if 'id="add-peer"' in mesh.text:
+        assert 'id="peer-modal-overlay"' in mesh.text
 
     # Admin routes are only reachable on the admin host.
     not_admin = client.get("/passkeys", headers=host_headers("app.home.lan"))
@@ -525,3 +534,11 @@ def test_acme_challenge_route(tmp_path: Path) -> None:
             "/.well-known/acme-challenge/token123", headers={"host": "app.home.lan"}
         )
         assert public.status_code == 200
+
+        # In-process ACME: the manager publishes key authorizations in memory.
+        app.state.acme_manager.set_challenge_token("memtoken", "memtoken.thumbprint")
+        memory = test_client.get(
+            "/.well-known/acme-challenge/memtoken", headers={"host": "admin.home.lan"}
+        )
+        assert memory.status_code == 200
+        assert memory.text == "memtoken.thumbprint"

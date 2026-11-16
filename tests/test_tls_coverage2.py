@@ -37,7 +37,7 @@ def test_generate_self_signed_cert_validity(tmp_path: Path) -> None:
 
 
 def test_acme_token_lifecycle() -> None:
-    t = ACMEToken("my-token", 1.0)
+    t = ACMEToken("my-token", "my-token.thumbprint", 1.0)
     assert t.expired is False
     # token should expire after validity period
     time.sleep(1.1)

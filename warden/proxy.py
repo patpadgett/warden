@@ -124,13 +124,15 @@ class ProxyEngine:
         # ACME challenge store: token -> response
         self._rate_windows: dict[str, deque[float]] = {}
 
-    def _per_route_rate_limit(self, route: RouteConfig, now: float | None = None) -> bool:
-        """Return ``True`` if the request should be rate-limited."""
+    def _per_route_rate_limit(
+        self, route: RouteConfig, client: str, now: float | None = None
+    ) -> bool:
+        """Return ``True`` if this client should be rate-limited for *route*."""
         limit = route.rate_limit
         if limit is None:
             return False
         now = now if now is not None else time.monotonic()
-        key = f"{route.host}:{route.upstream}"
+        key = f"{route.host}:{route.upstream}:{client}"
         window = self._rate_windows.get(key)
         if window is None:
             self._rate_windows[key] = deque([now], maxlen=limit)
@@ -408,7 +410,7 @@ class ProxyEngine:
         """
         # ACME challenge response.
         path = scope.get("path", "")
-        if self._per_route_rate_limit(route):
+        if self._per_route_rate_limit(route, client_ip(scope)):
             response = Response("Rate limit exceeded", status_code=429, media_type="text/plain")
             response.headers["Retry-After"] = "60"
             await self._send(apply_security_headers(response), scope, receive, send)
