@@ -30,3 +30,6 @@ htmlcov/
 .DS_Store
 .warden/
 .impeccable/
+.github/
+e2e/
+DESIGN.md
