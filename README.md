@@ -1,6 +1,6 @@
 # Warden
 
-[![build](https://github.com/patpadgett/warden/actions/workflows/build.yml/badge.svg)](https://github.com/patpadgett/warden/actions/workflows/build.yml)
+[![tests](https://github.com/patpadgett/warden/actions/workflows/python-app.yml/badge.svg)](https://github.com/patpadgett/warden/actions/workflows/python-app.yml)
 
 **One door to your homelab.**
 
@@ -13,6 +13,27 @@ There is no account database to populate and no password to invent. On first run
 Warden prints a one-time setup code, you create the admin account with a passkey,
 and every service behind `auth: true` shares that sign-in.
 
+## Contents
+
+- [Why](#why)
+- [Quick start (local trial)](#quick-start-local-trial)
+- [Security notes](#security-notes)
+- [Deployment](#deployment)
+- [How requests flow](#how-requests-flow)
+- [Configuration reference](#configuration-reference)
+- [User Access Control](#user-access-control)
+- [API reference](#api-reference)
+- [Monitoring & Metrics](#monitoring--metrics)
+- [Dashboard](#dashboard)
+- [TLS and certificate renewal](#tls-and-certificate-renewal)
+- [WireGuard mesh](#wireguard-mesh)
+- [CLI](#cli)
+- [OTP (One-Time Password)](#otp-one-time-password)
+- [Backup codes UI](#backup-codes-ui)
+- [Backup and recovery](#backup-and-recovery)
+- [Contributing and docs](#contributing-and-docs)
+- [License](#license)
+
 ## Why
 
 - **Passkey-native.** WebAuthn registration and login are implemented directly,
@@ -23,8 +44,8 @@ and every service behind `auth: true` shares that sign-in.
   page. Warden cookies and spoofed identity headers never reach upstreams.
 - **Everything editable.** Routes, access, activity, YAML config, and mesh peers
   are managed from the dashboard. YAML remains the source of truth.
-- **No build step.** The dashboard is server-rendered HTML with a little vanilla
-  JavaScript and one CSS file.
+- **No build step.** The dashboard is server-rendered HTML with vanilla
+  JavaScript and a single CSS file.
 
 ## Quick start (local trial)
 
@@ -56,6 +77,35 @@ is active (for example after it expires), restart Warden to generate a fresh one
 For a non-`localhost` hostname during development, run `warden serve --dev-tls`
 to generate a self-signed certificate under `/tmp/opencode/warden-dev-tls`
 (override with `--tls-dir`). Browsers still need to trust that certificate.
+
+## Security notes
+
+- Warden is **single-admin by default** (one admin account, multiple passkeys
+  allowed). The admin account can manage additional users and toggle their
+  `is_admin` flag through the dashboard. There is no password fallback and no
+  open user self-registration.
+- Multi-user access is through the `is_admin` flag: additional users are created
+  by the admin (`Users` page), must register at least one passkey, and are
+  granted or denied privileged actions by the `is_admin` flag. The built-in admin
+  account created during first-run setup is automatically admin.
+- Sessions are opaque 256-bit tokens stored as SHA-256 hashes in SQLite. Cookies
+  are `HttpOnly`, `SameSite=Lax`, and `Secure` when the request is HTTPS. The
+  session cookie never reaches upstream services.
+- Passkey registration and login challenges are stored server-side and consumed
+  once. Origin, content type, rate limits, and user verification are checked
+  during ceremonies.
+- CSRF protection combines same-origin/`Sec-Fetch-Site` checks with a required
+  `X-Warden-Request: 1` header on admin mutations.
+- Upstreams see sanitized `X-Forwarded-For`, `X-Forwarded-Host`,
+  `X-Forwarded-Proto`, `X-Real-IP`, and (for authenticated routes) identity
+  headers. Client-supplied identity and forwarding headers are stripped.
+- `public_paths` and `auth: false` are deliberate holes. Review them.
+- The SQLite database contains sensitive material (passkey metadata, session
+  hashes, WireGuard private keys). Use file permissions and encrypted backups.
+- Keep Warden to a single process. Sessions and rate limits are process-local;
+  multiple workers would also fight over the same SQLite file and renewal loop.
+- Run behind a network you trust. Warden's own threat model assumes the admin
+  hostname is not exposed on the public internet without TLS.
 
 ## Deployment
 
@@ -112,9 +162,8 @@ you want standard ports. Mount certificates read-only and point
 WireGuard is not container-friendly by default. The example keeps it disabled. If
 you enable it in Docker, the container needs host networking, `/dev/net/tun`,
 `NET_ADMIN`, the WireGuard tools, and a writable config path. Running the mesh on
-the host (or in a privileged sidecar) is usually simpler.
-
-The compose file builds from source, maps ports `8080`/`8443`, and keeps the DB in a named volume. Mesh is disabled by default; enable only with host-network privileges.
+the host (or in a privileged sidecar) is usually simpler. See
+[WireGuard mesh](#wireguard-mesh).
 
 ### Helm (Kubernetes)
 
@@ -280,10 +329,11 @@ fast. All relative paths are resolved from the directory containing
 | `acme_domain` | admin host | Domain requested when `acme_directory` is set. |
 | `renew_command` | unset | Shell command run when renewal is due. |
 | `renew_days_before` | `30` | Run the hook when the certificate has this many days left. |
-| `check_interval_hours` | `12` | How often the renewal loop checks. |Warden never reloads a certificate in place: after renewal, restart the
-process
-(or use a certbot deploy hook that restarts it). The HTTP companion stays up
-during renewal so webroot challenges keep working.
+| `check_interval_hours` | `12` | How often the renewal loop checks. |
+
+Warden never reloads a certificate in place: after renewal, restart the
+process (or use a certbot deploy hook that restarts it). The HTTP companion
+stays up during renewal so webroot challenges keep working.
 
 Setting `acme_directory` lets Warden issue the certificate itself through the
 renewal loop and serve the HTTP-01 key authorization in memory, with no
@@ -393,6 +443,7 @@ See the fully commented example in
 | `denied_ips` | `[]` | CIDR networks explicitly blocked from this route. Checked before `allowed_ips`. |
 | `blocked_user_agents` | `[]` | Substrings matched case-insensitively against `User-Agent`; matches get `403`. |
 | `blocked_paths` | `[]` | Exact paths or `prefix/*` patterns blocked with `403`. |
+| `rate_limit` | unset | Per-route limit in requests per minute. `null` disables per-route limiting (falls back to the global limiter). |
 
 ## User Access Control
 
@@ -455,12 +506,14 @@ All mutations require an authenticated admin session, the admin `Host`, and the
 
 ### Dashboard pages
 
-These HTML pages are served only on the admin host and require an admin session
-(except during first-run setup).
+These HTML pages are served only on the admin host and require a session
+(except during first-run setup). Admin pages additionally require the
+`is_admin` flag; non-admins get the portal and their own credential pages.
 
 | Path | Purpose |
 | --- | --- |
-| `/` | Overview dashboard. |
+| `/` | Overview dashboard (admins; non-admins are redirected to `/portal`). |
+| `/portal` | Signed-in landing page: links to every enabled service, plus the user's own passkeys, sessions, and backup codes. |
 | `/activity` | Audit log, with JSON/CSV export. |
 | `/backup_codes` | Recovery codes and one-time code generation. |
 | `/config` | YAML editor, validation, import/export. |
@@ -495,7 +548,7 @@ These HTML pages are served only on the admin host and require an admin session
 | `GET` | `/_warden/api/backup_codes` | List backup codes. |
 | `POST` | `/_warden/api/backup_codes` | Generate a backup code and return its plaintext once. |
 | `POST` | `/backup_codes/generate` | Dashboard form: generate a code and render it once. |
-| `GET` | `/_warden/api/audit/export` | Export audit events (`limit`, `offset`; JSON or `format=csv`). |
+| `GET` | `/_warden/api/audit/export` | Export audit events (`limit`, `offset`, optional `event`; JSON or `format=csv`). |
 | `POST` | `/_warden/api/mesh/peers` | Add a WireGuard peer. |
 | `GET` | `/_warden/api/mesh/peers/{id}/config` | Download a peer config. |
 | `DELETE` | `/_warden/api/mesh/peers/{id}` | Remove a peer. |
@@ -514,11 +567,8 @@ These HTML pages are served only on the admin host and require an admin session
 
 ## Monitoring & Metrics
 
-The admin API OpenAPI schema is available at `GET /_warden/openapi.json` and an
-interactive Swagger UI is served at `GET /_warden/docs`. Both require the admin
-`Host` and an authenticated admin session.
-
-Warden exposes a rich set of Prometheus metrics at `GET /_warden/metrics`:
+Warden exposes a rich set of Prometheus metrics at `GET /_warden/metrics`
+(admin host, authenticated session):
 
 * `warden_uptime_seconds` – process uptime.
 * Per‑host request, error, latency, and authenticated request counters (`warden_route_*`).
@@ -578,6 +628,9 @@ The admin dashboard has these pages:
   you a restart is required.
 - **Mesh** — create peers, download client configs, apply the hub config, and see
   handshakes when WireGuard is available.
+- **Portal** — the signed-in landing page for every user. Lists all enabled
+  services with deep links and marks which ones are public. Non-admins land here
+  when they open `/`; admins reach it from the sidebar.
 
 Mutations require the `X-Warden-Request: 1` header and a same-origin request.
 The dashboard JavaScript handles both automatically.
@@ -669,10 +722,14 @@ root, all of which containers lack. For in-cluster deployments:
 **Kubernetes** — run Warden as a privileged **DaemonSet** with `hostNetwork: true`:
 
 ```bash
-kubectl apply -f deploy/warden-mesh-daemonset.yaml
+kubectl apply -f deploy/helm/warden-mesh-daemonset.yaml
 ```
 
-The manifest mounts the config volume into the host `/etc/wireguard`, binds `NET_ADMIN` capability, exposes port 51820 (UDP+TCP) for peers dialing the node IP via `mesh.endpoint`, and runs one pod per node so each peer can reach every other node. The Warden proxy stays exposed via a standard Service on ports 8080/8443.
+The manifest runs the container `privileged` with `hostNetwork: true`, mounts the
+host `/etc/wireguard`, and exposes port 51820 (UDP) for peers dialing the node IP
+via `mesh.endpoint`. It runs one pod per node so each peer can reach every other
+node. The Warden proxy stays exposed via the chart's standard Service on ports
+8080/8443.
 
 **Docker Swarm** — same approach with `docker network connect host` / `--restart unless-stopped` and a `deploy.placement: constraints=[node.platform==linux]` rule. Peer `mesh.endpoint` must point at the worker's IP address, not a service DNS name.
 
@@ -729,38 +786,7 @@ mesh peer remove NAME [--yes]
 `WARDEN_CONFIG` sets the config path when `--config` is not given. `warden
 --version` prints the version. `serve` validates TLS files before binding.
 
-## Docker
-
-See the [Docker deployment section](#docker) above for build/run instructions.
-
-## systemd
-
-See the [host deployment section](#host-systemd--bare-metal) above for install instructions.
-
-## Security notes
-
-- Warden is **single-admin by default** (one admin account, multiple passkeys allowed). The admin account can manage additional users and toggle their `is_admin` flag through the dashboard. There is no password fallback and no open user self-registration.
-- Multi-user access is through the `is_admin` flag: additional users are created by the admin (`Users` page), must register at least one passkey, and are granted or denied privileged actions by the `is_admin` flag. The built-in admin account created during first-run setup is automatically admin.
-- Sessions are opaque 256-bit tokens stored as SHA-256 hashes in SQLite. Cookies
-  are `HttpOnly`, `SameSite=Lax`, and `Secure` when the request is HTTPS. The
-  session cookie never reaches upstream services.
-- Passkey registration and login challenges are stored server-side and consumed
-  once. Origin, content type, rate limits, and user verification are checked
-  during ceremonies.
-- CSRF protection combines same-origin/`Sec-Fetch-Site` checks with a required
-  `X-Warden-Request: 1` header on admin mutations.
-- Upstreams see sanitized `X-Forwarded-For`, `X-Forwarded-Host`,
-  `X-Forwarded-Proto`, `X-Real-IP`, and (for authenticated routes) identity
-  headers. Client-supplied identity and forwarding headers are stripped.
-- `public_paths` and `auth: false` are deliberate holes. Review them.
-- The SQLite database contains sensitive material (passkey metadata, session
-  hashes, WireGuard private keys). Use file permissions and encrypted backups.
-- Keep Warden to a single process. Sessions and rate limits are process-local;
-  multiple workers would also fight over the same SQLite file and renewal loop.
-- Run behind a network you trust. Warden's own threat model assumes the admin
-  hostname is not exposed on the public internet without TLS.
-
-## OTP (One‑Time Password)
+## OTP (One-Time Password)
 
 Warden supports optional TOTP‑based two‑factor authentication.
 
@@ -811,67 +837,17 @@ This deletes the admin account, all passkeys, sessions, settings, audit log, and
 mesh peers (complete system reset). To start the whole instance over, remove the
 database as well.
 
-## Versioning and releases
+## Contributing and docs
 
-Warden uses [setuptools-scm](https://setuptools-scm.readthedocs.io/): the version is
-derived from git tags, so there is no hard-coded version number in `pyproject.toml`.
+Development setup, coding style, the test suite, schema migrations, the release
+process, and an architecture glossary live in
+[`CONTRIBUTING.md`](CONTRIBUTING.md). Supporting documents:
 
-- **Tagged release**: create an annotated tag such as `v1.2.3` on `main` and push it:
-
-  ```bash
-  git tag -a v1.2.3 -m "Warden 1.2.3"
-  git push origin v1.2.3
-  ```
-
-  The `Release` workflow builds the sdist/wheel, publishes them to PyPI via
-  trusted publishing (OIDC), and creates a GitHub release with the artifacts.
-
-- **Development checkout**: an untagged commit on `main` reports a development
-  version such as `1.2.4.dev5` (commits since the last tag). `warden --version`
-  prints whatever setuptools-scm resolves.
-
-- **PyPI setup (one-time)**: create the `warden-mesh` project on PyPI and add
-  this repository as a trusted publisher (GitHub Actions, environment `pypi`).
-  Until that is configured, the `publish-pypi` job will fail; the GitHub release
-  job still runs.
-
-PyPI trusted publishing requires no API token secret.
-
-## Development
-
-```bash
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -e '.[dev]'
-pytest
-```
-
-The test suite covers config validation, YAML round-tripping, SQLite persistence,
-TLS inspection, mesh configs, authentication ceremonies (with mocked WebAuthn
-verification), HTTP proxy behavior, admin APIs, WebSockets, and the CLI. It does
-not replace a real browser passkey ceremony.
-
-To run against a development config:
-
-```bash
-WARDEN_CONFIG=./warden.dev.yaml warden serve --host 127.0.0.1
-```
-
-### Glossary (architecture references)
-
-Terms naming seams and modules in this codebase:
-
-- **Route** (`RouteConfig`) — a configured upstream service; the unit of proxy routing, metrics, and health checks.
-- **Order** — not used here; the domain term for a routed proxy request is `RouteConfig` + `TrafficEvent`.
-- **Mesh** (`MeshManager`) — WireGuard peer network managed by Warden; includes hub key, peer config, and apply lifecycle.
-- **MeshPeerIntake** — deepened intake module (DB validation, address assignment, name regex, config render); backed by `MeshApplyAdapter` for apply/status.
-- **MeshApplyAdapter** — apply adapter for WireGuard (`apply`, `status`, `refresh_handshakes`) backed by `wg`/`wg-quick`; routed through `MeshManager` facade.
-- **Peer intake** — the sub-module of mesh responsible for peer validation and DB storage; deepened form is `MeshPeerIntake`.
-- **Metrics module** (`MetricsModule`) — in-memory traffic recording, health monitoring, and Prometheus export; deepened into `MetricsModule` (stats) + `HealthMonitor` adapter (health adapter).
-- **Health adapter** — the adapter that takes health checks from `Stats` and exposes them to external consumers (dashboard / Prometheus).
+- [`SECURITY.md`](SECURITY.md) — vulnerability reporting and disclosure policy.
+- [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) — audit findings and their status.
+- [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) — community expectations.
+- [`PRODUCT.md`](PRODUCT.md) — product positioning and principles.
 
 ## License
 
 MIT. See [LICENSE](LICENSE).
-
-# bump for auto-tag test
