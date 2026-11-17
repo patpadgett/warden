@@ -21,6 +21,8 @@ from warden.config import RouteConfig, WardenConfig
 SESSION_COOKIE = "warden_session"
 CHALLENGE_COOKIE = "warden_challenge"
 RESERVED_COOKIES = {SESSION_COOKIE, CHALLENGE_COOKIE}
+#: Browser cookie prefixes Warden may put in front of its own cookie names.
+COOKIE_NAME_PREFIXES = ("__Host-", "__Secure-")
 INTERNAL_PREFIX = "/_warden"
 
 
@@ -164,6 +166,21 @@ def get_cookie(scope: MutableMapping[str, Any], name: str) -> str | None:
     return parse_cookies(scope).get(name)
 
 
+def is_reserved_cookie(name: str) -> bool:
+    """Return ``True`` for Warden's own cookie names, prefixed or not.
+
+    :func:`session_cookie_name` prefixes the session cookie with ``__Host-``
+    whenever ``Secure`` is required, so matching only against
+    ``RESERVED_COOKIES`` would let the name the browser actually sends through.
+    """
+    bare = name
+    for prefix in COOKIE_NAME_PREFIXES:
+        if bare.startswith(prefix):
+            bare = bare[len(prefix):]
+            break
+    return bare in RESERVED_COOKIES
+
+
 def strip_reserved_cookies(cookie_header: str | None) -> str | None:
     """Remove Warden's own cookies before forwarding a request upstream."""
     if not cookie_header:
@@ -171,7 +188,7 @@ def strip_reserved_cookies(cookie_header: str | None) -> str | None:
     parts = []
     for part in cookie_header.split(";"):
         name = part.split("=", 1)[0].strip()
-        if name in RESERVED_COOKIES:
+        if is_reserved_cookie(name):
             continue
         if part.strip():
             parts.append(part.strip())
@@ -668,3 +685,9 @@ class RedisRateLimiter:
             return bool(result) if result is not None else True
         except Exception:  # noqa: BLE001
             return False
+
+    async def close(self) -> None:
+        """Release the backing client's connection pool."""
+        close = getattr(self._redis, "aclose", None)
+        if close is not None:
+            await close()

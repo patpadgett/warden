@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import sqlite3
+import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,8 +12,9 @@ from starlette.testclient import TestClient
 
 from warden.auth.passkeys import SETUP_EXPIRY_KEY, normalize_setup_code
 from warden.main import create_app
+from warden.utils import RedisRateLimiter
 
-from .conftest import config_dict, count_rows, write_config
+from .conftest import config_dict, count_rows, seed_user, write_config
 
 ADMIN = {"host": "admin.home.lan"}
 SAME_ORIGIN = {**ADMIN, "origin": "http://admin.home.lan"}
@@ -78,6 +80,34 @@ def complete_login(client, challenge: str, credential: dict, *, headers=None):
 
 def db_path(client) -> Path:
     return client.app.state.db.path
+
+
+def test_redis_backed_limiter_blocks_login_after_limit(tmp_path: Path, monkeypatch) -> None:
+    """The Redis-style (coroutine) limiter really blocks sign-in attempts.
+
+    Uses the limiter's in-memory fallback, so no Redis server is needed; the
+    code under test is the production ``RedisRateLimiter`` rather than a fake.
+    """
+    monkeypatch.setitem(sys.modules, "redis.asyncio", None)
+    path = write_config(tmp_path, config_dict(tmp_path))
+    seed_user(tmp_path / "warden.db", credential_count=1)
+    app = create_app(path)
+    with TestClient(app, base_url="http://admin.home.lan") as client:
+        app.state.rate_limiter = RedisRateLimiter("redis://localhost", ttl=300)
+        blocked = None
+        allowed = 0
+        for _ in range(100):
+            response = begin_login(client)
+            if response.status_code == 429:
+                blocked = response
+                break
+            assert response.status_code == 200, response.text
+            allowed += 1
+    assert blocked is not None, "the limiter never blocked"
+    assert allowed > 1
+    assert int(blocked.headers["x-ratelimit-limit"]) == allowed
+    assert blocked.headers["x-ratelimit-remaining"] == "0"
+    assert blocked.json()
 
 
 def test_setup_code_normalization() -> None:

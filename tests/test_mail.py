@@ -13,16 +13,16 @@ from warden.mail import send_email
 
 
 def _config(**kwargs):
-    defaults: dict = dict(
-        enabled=True,
-        host="smtp.example.com",
-        port=587,
-        user="user",
-        password="pass",
-        starttls=True,
-        from_address="noreply@example.com",
-        subject_prefix="Test",
-    )
+    defaults: dict = {
+        "enabled": True,
+        "host": "smtp.example.com",
+        "port": 587,
+        "user": "user",
+        "password": "pass",
+        "starttls": True,
+        "from_address": "noreply@example.com",
+        "subject_prefix": "Test",
+    }
     defaults.update(kwargs)
     return EmailConfig(**defaults)
 
@@ -32,9 +32,11 @@ def test_send_email_delivers_message_with_starttls():
     mock_client = MagicMock()
     mock_client.__enter__ = MagicMock(return_value=mock_client)
     mock_client.__exit__ = MagicMock(return_value=False)
-    with patch("warden.mail.smtplib.SMTP", return_value=mock_client) as mock_smtp:
-        with patch("warden.mail.ssl.create_default_context") as mock_ctx:
-            send_email(cfg, "to@example.com", "Hello", "Body")
+    with (
+        patch("warden.mail.smtplib.SMTP", return_value=mock_client) as mock_smtp,
+        patch("warden.mail.ssl.create_default_context") as mock_ctx,
+    ):
+        send_email(cfg, "to@example.com", "Hello", "Body")
 
     mock_smtp.assert_called_once_with(cfg.host, cfg.port, timeout=10.0)
     mock_ctx.assert_called_once()
@@ -84,9 +86,11 @@ def test_send_email_propagates_smtp_failures():
     mock_client.__enter__ = MagicMock(return_value=mock_client)
     mock_client.__exit__ = MagicMock(return_value=False)
     mock_client.send_message.side_effect = smtplib.SMTPException("boom")
-    with patch("warden.mail.smtplib.SMTP", return_value=mock_client):
-        with pytest.raises(smtplib.SMTPException, match="boom"):
-            send_email(cfg, "to@example.com", "Hello", "Body")
+    with (
+        patch("warden.mail.smtplib.SMTP", return_value=mock_client),
+        pytest.raises(smtplib.SMTPException, match="boom"),
+    ):
+        send_email(cfg, "to@example.com", "Hello", "Body")
 
     mock_client.send_message.assert_called_once()
 

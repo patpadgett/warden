@@ -61,6 +61,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
 from warden.db import (
+    DEFAULT_ACL_GROUP,
+    AclGroup,
     AlreadyExistsError,
     AuditEvent,
     BackupCode,
@@ -72,6 +74,7 @@ from warden.db import (
     Session,
     User,
     _audit,
+    _clean_group_name,
     _credential,
     _session,
     _session_touch_interval,
@@ -202,6 +205,22 @@ mesh_peers = Table(
     Column("enabled", Boolean, nullable=False, default=True),
     Column("created_at", Float, nullable=False),
     Column("last_handshake", Float, nullable=True),
+)
+
+acl_groups = Table(
+    "acl_groups",
+    metadata,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column("name", String, nullable=False),
+    Column("created_at", Float, nullable=False),
+)
+
+acl_members = Table(
+    "acl_members",
+    metadata,
+    Column("group_id", BigInteger, ForeignKey("acl_groups.id"), primary_key=True),
+    Column("user_id", BigInteger, ForeignKey("users.id"), primary_key=True),
+    Column("created_at", Float, nullable=False),
 )
 
 #: Schema-version tracking table (backend-agnostic; mirrors the SQLite
@@ -335,6 +354,28 @@ _MIGRATIONS: dict[int, str] = {
         -- Add user email address for invite delivery and account notices.
         ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT
         """,
+    6: """
+        -- Named groups for per-route ACLs, mirroring the SQLite schema.
+        CREATE TABLE IF NOT EXISTS acl_groups (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            name TEXT NOT NULL,
+            created_at DOUBLE PRECISION NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_acl_groups_name
+        ON acl_groups (lower(name));
+
+        CREATE TABLE IF NOT EXISTS acl_members (
+            group_id BIGINT NOT NULL REFERENCES acl_groups(id) ON DELETE CASCADE,
+            user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            created_at DOUBLE PRECISION NOT NULL,
+            PRIMARY KEY (group_id, user_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_acl_members_user ON acl_members(user_id);
+
+        INSERT INTO acl_groups (name, created_at)
+        VALUES ('Users', EXTRACT(EPOCH FROM NOW()))
+        ON CONFLICT DO NOTHING
+        """,
 }  # type: ignore[assignment]
 
 
@@ -346,7 +387,13 @@ SELECT s.id, s.token_hash, s.user_id, s.created_at, s.expires_at, s.last_seen_at
        u.id AS u_id, u.username AS u_username, u.display_name AS u_display_name,
        u.webauthn_user_id AS u_webauthn_user_id, u.is_admin AS u_is_admin,
        u.created_at AS u_created_at, u.recovery_token AS u_recovery_token,
-       u.email AS u_email
+       u.email AS u_email,
+       COALESCE((
+           SELECT string_agg(g.name, chr(31))
+           FROM acl_members m
+           JOIN acl_groups g ON g.id = m.group_id
+           WHERE m.user_id = u.id
+       ), '') AS u_groups
 FROM sessions s
 JOIN users u ON u.id = s.user_id
 """
@@ -561,7 +608,24 @@ class PostgresDatabase(Database):
                     }
                     if email is not None:
                         values["email"] = email
-                    await session.execute(insert(users).values(**values))
+                    result = await session.execute(
+                        insert(users).values(**values).returning(users.c.id)
+                    )
+                    user_id = int(result.scalar())
+                    default_result = await session.execute(
+                        select(acl_groups.c.id).where(
+                            func.lower(acl_groups.c.name) == DEFAULT_ACL_GROUP.casefold()
+                        )
+                    )
+                    default_group = default_result.scalar()
+                    if default_group is not None:
+                        await session.execute(
+                            insert(acl_members).values(
+                                group_id=default_group,
+                                user_id=user_id,
+                                created_at=created,
+                            )
+                        )
             except IntegrityError:
                 raise AlreadyExistsError("That username is already registered.")
             result = await session.execute(select(users).where(users.c.username == username))
@@ -609,6 +673,20 @@ class PostgresDatabase(Database):
                     ).returning(users.c.id)
                 )
                 user_id = user_result.scalar()
+                default_result = await session.execute(
+                    select(acl_groups.c.id).where(
+                        func.lower(acl_groups.c.name) == DEFAULT_ACL_GROUP.casefold()
+                    )
+                )
+                default_group = default_result.scalar()
+                if default_group is not None:
+                    await session.execute(
+                        insert(acl_members).values(
+                            group_id=default_group,
+                            user_id=user_id,
+                            created_at=created,
+                        )
+                    )
                 transports_json = json.dumps(transports)
                 cred_result = await session.execute(
                     insert(credentials).values(
@@ -672,6 +750,196 @@ class PostgresDatabase(Database):
             row = result.fetchone()
             return _user(row._mapping) if row else None
 
+    # --------------------------------------------------------------- ACL groups
+    async def list_acl_groups(self) -> list[AclGroup]:
+        """Return every ACL group with its current member count."""
+        async with self.session_factory() as session:
+            result = await session.execute(
+                select(
+                    acl_groups.c.id,
+                    acl_groups.c.name,
+                    acl_groups.c.created_at,
+                    func.count(acl_members.c.user_id).label("member_count"),
+                )
+                .select_from(acl_groups)
+                .join(acl_members, acl_members.c.group_id == acl_groups.c.id, isouter=True)
+                .group_by(acl_groups.c.id, acl_groups.c.name, acl_groups.c.created_at)
+                .order_by(acl_groups.c.name)
+            )
+            return [
+                AclGroup(
+                    id=int(row.id),
+                    name=row.name,
+                    created_at=float(row.created_at),
+                    member_count=int(row.member_count),
+                )
+                for row in result.fetchall()
+            ]
+
+    async def get_acl_group(self, group_id: int) -> AclGroup | None:
+        """Fetch a single ACL group, including its member count."""
+        async with self.session_factory() as session:
+            result = await session.execute(
+                select(
+                    acl_groups.c.id,
+                    acl_groups.c.name,
+                    acl_groups.c.created_at,
+                    func.count(acl_members.c.user_id).label("member_count"),
+                )
+                .select_from(acl_groups)
+                .join(acl_members, acl_members.c.group_id == acl_groups.c.id, isouter=True)
+                .where(acl_groups.c.id == group_id)
+                .group_by(acl_groups.c.id, acl_groups.c.name, acl_groups.c.created_at)
+            )
+            row = result.fetchone()
+            if row is None:
+                return None
+            return AclGroup(
+                id=int(row.id),
+                name=row.name,
+                created_at=float(row.created_at),
+                member_count=int(row.member_count),
+            )
+
+    async def get_acl_group_by_name(self, name: str) -> AclGroup | None:
+        """Fetch an ACL group by name (case-insensitive), or ``None``."""
+        try:
+            cleaned = _clean_group_name(name)
+        except ValueError:
+            return None
+        async with self.session_factory() as session:
+            result = await session.execute(
+                select(acl_groups.c.id).where(
+                    func.lower(acl_groups.c.name) == cleaned.casefold()
+                )
+            )
+            row = result.fetchone()
+        return await self.get_acl_group(int(row.id)) if row else None
+
+    async def create_acl_group(self, name: str, *, now: float | None = None) -> AclGroup:
+        """Create a named ACL group. Raises ``AlreadyExistsError`` on a clash."""
+        cleaned = _clean_group_name(name)
+        async with self.session_factory() as session:
+            try:
+                result = await session.execute(
+                    insert(acl_groups)
+                    .values(name=cleaned, created_at=now if now is not None else time.time())
+                    .returning(acl_groups.c.id)
+                )
+                await session.commit()
+            except IntegrityError as exc:
+                raise AlreadyExistsError(f"A group named {cleaned!r} already exists.") from exc
+            group_id = int(result.scalar_one())
+        group = await self.get_acl_group(group_id)
+        if group is None:
+            raise DatabaseError("Group disappeared after creation.")
+        return group
+
+    async def delete_acl_group(self, group_id: int) -> bool:
+        """Delete a group and its memberships. The default group is permanent."""
+        group = await self.get_acl_group(group_id)
+        if group is None or group.name.casefold() == DEFAULT_ACL_GROUP.casefold():
+            return False
+        async with self.session_factory() as session:
+            await session.execute(delete(acl_members).where(acl_members.c.group_id == group_id))
+            result = await session.execute(delete(acl_groups).where(acl_groups.c.id == group_id))
+            await session.commit()
+            return result.rowcount > 0
+
+    async def list_user_acl_groups(self, user_id: int) -> list[str]:
+        """Return the names of the groups *user_id* belongs to."""
+        async with self.session_factory() as session:
+            result = await session.execute(
+                select(acl_groups.c.name)
+                .select_from(acl_members)
+                .join(acl_groups, acl_groups.c.id == acl_members.c.group_id)
+                .where(acl_members.c.user_id == user_id)
+                .order_by(acl_groups.c.name)
+            )
+            return [row.name for row in result.fetchall()]
+
+    async def acl_memberships(self) -> dict[int, list[str]]:
+        """Return ``{user_id: [group names]}`` for every membership."""
+        async with self.session_factory() as session:
+            result = await session.execute(
+                select(acl_members.c.user_id, acl_groups.c.name)
+                .select_from(acl_members)
+                .join(acl_groups, acl_groups.c.id == acl_members.c.group_id)
+                .order_by(acl_groups.c.name)
+            )
+            memberships: dict[int, list[str]] = {}
+            for row in result.fetchall():
+                memberships.setdefault(int(row.user_id), []).append(row.name)
+            return memberships
+
+    async def add_user_to_acl_group(
+        self, user_id: int, group_id: int, *, now: float | None = None
+    ) -> bool:
+        """Add a user to a group. Returns ``False`` if either side is missing."""
+        if await self.get_acl_group(group_id) is None or await self.get_user(user_id) is None:
+            return False
+        async with self.session_factory() as session:
+            await session.execute(
+                insert(acl_members).values(
+                    group_id=group_id,
+                    user_id=user_id,
+                    created_at=now if now is not None else time.time(),
+                )
+            )
+            await session.commit()
+        return True
+
+    async def remove_user_from_acl_group(self, user_id: int, group_id: int) -> bool:
+        """Remove a membership. Members cannot leave the default group."""
+        group = await self.get_acl_group(group_id)
+        if group is None or group.name.casefold() == DEFAULT_ACL_GROUP.casefold():
+            return False
+        async with self.session_factory() as session:
+            result = await session.execute(
+                delete(acl_members).where(
+                    acl_members.c.user_id == user_id, acl_members.c.group_id == group_id
+                )
+            )
+            await session.commit()
+            return result.rowcount > 0
+
+    async def set_user_acl_groups(self, user_id: int, names: list[str]) -> list[str]:
+        """Replace a user's memberships, always keeping the default group."""
+        if await self.get_user(user_id) is None:
+            raise ValueError("That user does not exist.")
+        group_ids: set[int] = set()
+        for name in dict.fromkeys(names):
+            group = await self.get_acl_group_by_name(name)
+            if group is None:
+                raise ValueError(f"No group named {name!r}.")
+            group_ids.add(group.id)
+        default = await self._ensure_default_acl_group()
+        group_ids.add(default.id)
+        async with self.session_factory() as session:
+            await session.execute(delete(acl_members).where(acl_members.c.user_id == user_id))
+            now = time.time()
+            for group_id in sorted(group_ids):
+                await session.execute(
+                    insert(acl_members).values(
+                        group_id=group_id, user_id=user_id, created_at=now
+                    )
+                )
+            await session.commit()
+        return await self.list_user_acl_groups(user_id)
+
+    async def _ensure_default_acl_group(self) -> AclGroup:
+        """Return the built-in group, creating it if the row is missing."""
+        group = await self.get_acl_group_by_name(DEFAULT_ACL_GROUP)
+        if group is not None:
+            return group
+        try:
+            return await self.create_acl_group(DEFAULT_ACL_GROUP)
+        except AlreadyExistsError:
+            group = await self.get_acl_group_by_name(DEFAULT_ACL_GROUP)
+            if group is None:
+                raise
+            return group
+
     async def delete_user(self, user_id: int) -> bool:
         """delete_user."""
         async with self.session_factory() as session:
@@ -679,6 +947,9 @@ class PostgresDatabase(Database):
             # without ``ON DELETE CASCADE``, so remove child rows explicitly
             # before deleting the user.
             await session.execute(delete(invites).where(invites.c.user_id == user_id))
+            await session.execute(
+                delete(acl_members).where(acl_members.c.user_id == user_id)
+            )
             await session.execute(
                 delete(backup_codes).where(backup_codes.c.user_id == user_id)
             )

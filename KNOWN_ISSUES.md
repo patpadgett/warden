@@ -142,7 +142,8 @@ issuance, which is not implemented.
 
 The flow is covered by unit tests with a mocked ACME client and by CLI tests for
 the bootstrap path, and has since been exercised end to end against a local
-Pebble directory (see `ROADMAP.md` §2). That run found three defects the mocks
+Pebble directory (see `ROADMAP.md` §2; rerun with
+`python scripts/pebble_issuance.py`). That run found three defects the mocks
 had hidden — an `acme` 5.x client argument, the challenge published under the
 raw token instead of its base64url encoding, and a `Status` enum compared to a
 string — all fixed; the CA then validated the challenge and the renewal loop
@@ -183,11 +184,10 @@ Only three admin-host pages and two user-scoped API groups are opened up to
 non-admins (`/portal`, `/passkeys`, `/backup_codes`, `/_warden/api/passkeys*`,
 `/_warden/api/sessions*`); each already resolves the target user from the
 session. State-changing requests on those paths keep the same
-`X-Warden-Request` header and origin checks as the admin UI. Service visibility
-is intentionally binary for now — every signed-in user sees every enabled route.
-Per-route ACLs (a grant table plus admin UI for "this user may open this host")
-are a **future feature**, not a defect in the portal; the portal is the natural
-place to render them once they exist.
+`X-Warden-Request` header and origin checks as the admin UI. The portal now
+lists only the routes whose group ACL admits the signed-in user; routes without
+an ACL keep admitting everyone, so nothing changes for instances that never
+configure a group. Per-route ACLs are implemented in item 35.
 
 ### 17. "Add service" opened nothing — Fixed
 
@@ -296,14 +296,169 @@ not: `parse_config_text()` already rejects that configuration with
 `warden/config.py`). The startup warning covers only the unset case, which is
 reachable.
 
+## Third audit pass
+
+Another read-through of the request path, aimed at what the suite mocks away:
+the deployed cookie name, the non-default rate-limiter backend, the WebSocket
+edge, and the metrics text an operator actually scrapes.
+
+### 27. Warden forwarded its own session cookie to every upstream over HTTPS — Fixed
+
+`strip_reserved_cookies()` matched only `warden_session` and
+`warden_challenge`, but `session_cookie_name()` renames the session cookie to
+`__Host-warden_session` whenever `Secure` is in play (every HTTPS deployment).
+The real name therefore survived the filter and the proxy sent the admin's
+session token to every upstream service in its `Cookie` header, where the app,
+its access log, or a bug in it could expose it. `_rewrite_set_cookie()` had the
+mirror bug: an upstream `Set-Cookie: __Host-warden_session=…` was passed to the
+browser instead of dropped.
+
+Both sides now use `utils.is_reserved_cookie()`, which removes the
+`__Host-`/`__Secure-` prefix before comparing. Covered by
+`test_strip_reserved_cookies_handles_browser_prefixes` and
+`test_proxy_rewrite_set_cookie_drops_prefixed_session_cookie`.
+
+### 28. `rate_limiter.backend: redis` broke every auth endpoint — Fixed
+
+`auth/routes._limited()` unpacked `limiter.allow(...)` synchronously, but
+`RedisRateLimiter.allow` is a coroutine. With the Redis backend configured,
+every sign-in, setup, invite, passkey and OTP POST raised
+`TypeError: cannot unpack non-iterable coroutine object` (a 500), and no attempt
+was ever counted — the configured limit silently did not exist. `_limited()` is
+now async and awaits the result only when it is awaitable, and its ten call
+sites await it. `test_auth_routes_await_async_rate_limiter` installs an async
+limiter and expects a 429 with rate-limit headers rather than a 500.
+
+The limiter itself is now covered too: `test_redis_rate_limiter_enforces_window`
+checks per-key windows and the pruning of expired entries, and
+`test_redis_backed_limiter_blocks_login_after_limit` drives the real
+`RedisRateLimiter` through `/_warden/auth/login/begin` until it refuses
+the request; both use the in-memory fallback, so no server is needed.
+
+`tests/test_rate_limiter_redis.py` additionally runs against a real server when
+`WARDEN_TEST_REDIS_URL` (default `redis://localhost:6379/0`) answers — limit,
+TTL, server-side pruning and the endpoint block are all asserted on the keys
+Warden wrote — and the CI workflow starts a `redis:7` service. Without a server
+those three tests skip, so a plain `pytest` still passes.
+
+### 29. WebSocket upgrades bypassed IP allow/deny lists — Fixed
+
+`RouteConfig.allowed_ips`, `denied_ips`, `blocked_user_agents` and
+`blocked_paths` were enforced only in `handle_http()`, so a route restricted to
+an office network could be reached from anywhere by opening a WebSocket to the
+same host — and `blocked_paths` did not stop an upgrade to a blocked path.
+
+Those rules are now three shared helpers (`_ip_denial`, `_user_agent_denial`,
+`_path_denial`) called by both the HTTP and WebSocket paths; a denied upgrade is
+accepted and closed with `4403 Access denied`. Covered by
+`test_proxy_access_denials_cover_ws_rules` and
+`test_websocket_respects_ip_allow_list`.
+
+### 30. Mesh handshake metric made the whole scrape invalid — Fixed
+
+`GET /_warden/metrics` appended
+`warden_mesh_last_handshake_seconds{peer=\"<key>\"} <ts>` — literal backslashes
+before the quotes, because an f-string was written with escaped quotes inside a
+non-raw string. Prometheus rejects a scrape containing that line, so any
+instance with mesh peers lost all metrics, not just this one. The label is now
+built with `stats.escape_label()`, which is also used for the per-host labels.
+
+### 31. Backup-code sign-in dropped the `next` target — Fixed
+
+`/_warden/auth/login/backup` always redirected to `/`, so a user who opened a
+protected service, followed the sign-in redirect, and then chose a recovery
+code lost the page they asked for. `BackupCodeBody` gained an optional `next`,
+sanitised through `safe_next()` like the passkey flow.
+
+### 32. TOTP is implemented everywhere except enforcement — Open
+
+`otp_secrets`, `set_otp_secret()`/`verify_otp()`, `/otp/setup`, `/otp/verify`
+and the `warden_otp_*` metrics all exist and work, but `login_complete()` never
+asks for a code and no page offers enrolment, so the only way to reach the
+endpoints is by hand. `otp_setup()` also stores the new secret before it is
+verified, so an abandoned enrolment silently replaces a working one.
+
+Left **Open** rather than half-fixed: enforcing a second factor needs an
+enrolment page, a recovery story for users who lose the authenticator, and a
+decision about whether backup codes satisfy it. Adding an enforcement check
+without those would lock people out, which is worse than the current state.
+
+### 33. IPv4-mapped IPv6 clients escaped (or failed) per-route IP ACLs — Fixed
+
+A dual-stack listener reports an IPv4 client as `::ffff:192.168.1.5`, and
+`ipaddress` will not match that address against `192.168.1.0/24`. An
+`allowed_ips` route therefore refused the very clients it was meant to admit,
+and a `denied_ips` route let a blocked host in whenever it arrived over IPv6.
+`_ip_denial()` now unwraps `ipv4_mapped` before matching, so both lists compare
+as IPv4. Covered by `test_proxy_ip_denial_unwraps_ipv4_mapped_addresses`.
+
+### 34. `blocked_paths` could be dodged with dot segments — Fixed
+
+The check compared the raw request path, but the proxy forwards that path
+untouched and upstream servers normalise it: `/public/../secret`, `/./secret`,
+`//secret` and `/secret/` all reached a blocked `/secret`, and
+`/admin/./users` reached `/admin/users`. `_path_denial()` now normalises both
+the request path and each configured pattern — collapsing `.`/`..`, duplicate
+and trailing slashes — before comparing; `/*` still blocks everything. Covered
+by `test_proxy_path_denial_normalizes_dot_segments`,
+`test_handle_http_blocked_path_cannot_be_dodged` and
+`test_websocket_respects_blocked_paths`.
+
+Two remaining ACL caveats, left as documented behaviour: path matching is
+case-sensitive (a case-insensitive upstream can still differ), and the client
+address is the socket peer, so deploying Warden behind another proxy makes
+every request appear to come from that proxy (allow-lists then fail closed).
+
+### 35. Per-route ACLs did not exist — Implemented
+
+`RouteConfig` only had IP/user-agent/path rules; there was no way to say "this
+account may open this host". The portal therefore advertised every route to
+every signed-in user. There are now named ACL groups in the database
+(`acl_groups`, `acl_members`, schema version 6), and every account joins the
+built-in `Users` group when it is created — whichever path creates it
+(`create_user`, first-run setup, or invite completion).
+
+A route opts in with `allowed_groups: [Family]`. An empty list is the default
+and keeps the route open to every signed-in user, so ACLs are never required.
+Admins bypass group ACLs. The check is shared by `handle_http` and
+`handle_websocket` (``ProxyEngine._group_denial``) so a WebSocket cannot be used
+to skip a route ACL, and `/portal` filters on the same `RouteConfig.allows_user`
+rule. Group names are case-insensitive and whitespace-normalised. Covered by
+`tests/test_acl_groups.py`.
+
+### Minor cleanups in this pass
+
+Dead `finally: pass` in the proxy's HTTP path, a duplicated `logger` line and a
+mid-file import in `health_adapter.py`, an audit query whose result was thrown
+away on the dashboard, three routes calling `_guard_host()` twice, and the
+invite email building its link from `request.url.scheme`/`netloc` instead of
+`admin_url()` (wrong behind a TLS-terminating proxy).
+
 ## Verification
 
 * `ruff check warden` (the CI lint step): clean. The `S110`/`B023` findings from
   the first pass were fixed in `a2f6311`.
-* Full suite: **404 passed**, **77.90%** coverage (gate 75%), run with
+* Full suite: **427 passed**, **78.12%** coverage (gate 75%), run with
   `-W error::RuntimeWarning` to catch un-awaited coroutines.
+* Third pass: `test_strip_reserved_cookies_handles_browser_prefixes`,
+  `test_proxy_rewrite_set_cookie_drops_prefixed_session_cookie`,
+  `test_proxy_access_denials_cover_ws_rules`,
+  `test_websocket_respects_ip_allow_list`, `test_auth_routes_await_async_rate_limiter`,
+  `test_redis_rate_limiter_enforces_window`,
+  `test_redis_backed_limiter_blocks_login_after_limit`, the live
+  `tests/test_rate_limiter_redis.py`, and the ACL checks
+  `test_proxy_ip_denial_unwraps_ipv4_mapped_addresses`,
+  `test_proxy_path_denial_normalizes_dot_segments`,
+  `test_handle_http_blocked_path_cannot_be_dodged` and
+  `test_websocket_respects_blocked_paths` pin the fixes above (the async limiter
+  test would fail with a 500 before #28).
+* `tests/test_acl_groups.py` pins the ACL work: the seeded `Users` group, both
+  account-creation paths joining it, the default group being undeletable, the
+  unknown-group rejection, open (ACL-free) routes, admin bypass, HTTP/WebSocket
+  enforcement, and the portal hiding routes the user cannot open.
 * New coverage for this pass: per-client rate limiting and stale-window pruning,
-  ACME authorization timeout, expired-token eviction, and the narrowed
+  ACME authorization timeout, expired-token eviction, an order failing
+  finalization after its challenge validated, and the narrowed
   `Origin: null` rule; plus `warden certs bootstrap` (write, `--force`, and both
   guard paths) in `tests/test_cli.py`.
 * Historical: the real-browser E2E run (Chromium + WebAuthn virtual
@@ -313,9 +468,13 @@ reachable.
   which was deleted in `300537b`, so it is no longer runnable from this repo;
   the portal and backup-code paths are now covered by
   `tests/test_admin_security.py` instead.
-* Known lint debt outside the CI target: `ruff check tests` reports 8
-  pre-existing issues (`B017`, `SIM117`, `UP031`, `C408`) in
-  `tests/test_invite_flow.py`, `tests/test_invite_routes.py` and
-  `tests/test_mail.py`. The workflow lints only `warden`, so these do not fail
-  the build; narrowing the blind `pytest.raises(Exception)` assertions is a
-  deliberate follow-up rather than a mechanical fix.
+* Pebble: `python scripts/pebble_issuance.py` passes end to end in ~20s —
+  issuer `CN=Pebble Intermediate CA …`, a two-certificate chain, three 200
+  challenge fetches, and the restart notice.
+* Lint: `ruff check tests warden` is clean. The test suite's eight findings
+  (`B017`, `SIM117`, `UP031`, `C408`) were fixed rather than ignored, and the
+  blind `pytest.raises(Exception)` assertions in `tests/test_invite_flow.py`
+  now name `AuthError` and match the message the flow raises — which is how the
+  narrowing caught that a wrong invite token is rejected as "invalid or has
+  already been used" before the challenge-binding check runs. The workflow
+  still lints only `warden`, so this needs a CI change to stay enforced.

@@ -5,10 +5,15 @@ import hashlib
 import hmac
 import struct
 import time
+from pathlib import Path
 
 import pytest
+from starlette.testclient import TestClient
 
+from warden.main import create_app
 from warden.utils import SESSION_COOKIE
+
+from .conftest import config_dict, seed_user, write_config
 
 
 # Helper to generate a TOTP code compatible with the server's verification logic
@@ -91,3 +96,30 @@ def test_backup_code_usage_increments_metric(client, auth_headers):
     # Verify the metric reflecting backup‑code usage.
     metrics = client.get("/_warden/metrics", headers=auth_headers).text
     assert "warden_backup_code_used_total 1" in metrics
+
+
+def test_auth_routes_await_async_rate_limiter(tmp_path: Path) -> None:
+    """``rate_limiter.backend: redis`` returns a coroutine from ``allow``.
+
+    The in-process limiter is synchronous, so auth routes have to await only
+    when the result is awaitable; otherwise every sign-in request fails with a
+    ``TypeError`` (and the limit is never enforced).
+    """
+
+    class _AsyncLimiter:
+        async def allow(self, key: str, limit: int, window: float) -> tuple[bool, int]:
+            return False, 0
+
+    path = write_config(tmp_path, config_dict(tmp_path))
+    seed_user(tmp_path / "warden.db", credential_count=1)
+    app = create_app(path)
+    with TestClient(app, base_url="http://admin.home.lan") as client:
+        app.state.rate_limiter = _AsyncLimiter()
+        response = client.post(
+            "/_warden/auth/login/begin",
+            json={},
+            headers={"host": "admin.home.lan", "origin": "http://admin.home.lan"},
+        )
+    assert response.status_code == 429
+    assert response.headers["x-ratelimit-limit"] == "30"
+    assert response.headers["x-ratelimit-remaining"] == "0"

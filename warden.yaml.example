@@ -152,6 +152,7 @@ routes:
   #   denied_ips:               CIDR networks blocked from the route
   #   blocked_user_agents:      User-Agent substrings that return 403
   #   blocked_paths:            exact paths or prefix/* patterns that return 403
+  #   allowed_groups:           ACL groups that may open the route (empty = all users)
   #   preserve_host: false       forward the public Host instead of the upstream
   #   verify_tls: true           verify an https upstream certificate
   #   rewrite_redirects: true    rewrite upstream Locations to the public host

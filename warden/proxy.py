@@ -33,12 +33,12 @@ from warden.config import HOP_BY_HOP, ConfigManager, RouteConfig
 from warden.stats import MetricsModule
 from warden.templating import templates
 from warden.utils import (
-    RESERVED_COOKIES,
     apply_security_headers,
     client_ip,
     get_host,
     get_host_header,
     get_port,
+    is_reserved_cookie,
     is_secure_request,
     public_scheme,
     request_wants_json,
@@ -210,6 +210,79 @@ class ProxyEngine:
                     tokens.add(token)
         return tokens
 
+    @staticmethod
+    def _normalized_path(path: str) -> str:
+        """Collapse ``.``/``..`` segments and duplicate slashes for ACL matching.
+
+        Warden forwards the original path, so this is only used to decide
+        whether a blocked path matches: ``/public/../secret`` and ``//secret``
+        must not slip past a blocked ``/secret``.
+        """
+        if not path.startswith("/"):
+            path = "/" + path
+        segments: list[str] = []
+        for segment in path.split("/"):
+            if segment in {"", "."}:
+                continue
+            if segment == "..":
+                if segments:
+                    segments.pop()
+                continue
+            segments.append(segment)
+        return "/" + "/".join(segments)
+
+    @staticmethod
+    def _ip_denial(route: RouteConfig, client: str) -> str | None:
+        """Return why *client* may not reach *route*, or ``None`` when it may.
+
+        Shared by the HTTP and WebSocket paths so an allow-list cannot be
+        bypassed by opening a WebSocket instead of a request.
+        """
+        try:
+            address = ipaddress.ip_address(client)
+        except ValueError:
+            return "Invalid client IP address." if route.allowed_ips else None
+        # A dual-stack listener reports IPv4 clients as ``::ffff:a.b.c.d``,
+        # which never matches an IPv4 network: an allow-list would reject
+        # legitimate clients and a deny-list would let blocked ones through.
+        mapped = getattr(address, "ipv4_mapped", None)
+        if mapped is not None:
+            address = mapped
+        if any(address in ipaddress.ip_network(net) for net in route.denied_ips):
+            return "Your IP address is explicitly blocked from this service."
+        if route.allowed_ips and not any(
+            address in ipaddress.ip_network(net) for net in route.allowed_ips
+        ):
+            return "Your IP address is not authorized to access this service."
+        return None
+
+    @staticmethod
+    def _user_agent_denial(route: RouteConfig, user_agent: str) -> str | None:
+        """Return a denial message for a blocked user agent, or ``None``."""
+        lowered = user_agent.lower()
+        if any(blocked.lower() in lowered for blocked in route.blocked_user_agents):
+            return "This service does not accept requests from your client."
+        return None
+
+    @staticmethod
+    def _path_denial(route: RouteConfig, path: str) -> str | None:
+        """Return a denial message when *path* is blocked on *route*.
+
+        Both sides are normalised first, so a blocked ``/secret`` also matches
+        ``/secret/``, ``//secret`` and ``/public/../secret``.
+        """
+        normalized = ProxyEngine._normalized_path(path)
+        for blocked in route.blocked_paths:
+            if blocked.endswith("/*"):
+                prefix = ProxyEngine._normalized_path(blocked[:-1])
+                if prefix == "/" or normalized == prefix or normalized.startswith(
+                    prefix + "/"
+                ):
+                    return "This path is not allowed."
+            elif normalized == ProxyEngine._normalized_path(blocked):
+                return "This path is not allowed."
+        return None
+
     def _request_headers(
         self,
         scope: MutableMapping[str, Any],
@@ -311,7 +384,7 @@ class ProxyEngine:
         * Adjusts ``Domain`` and ``Secure`` attributes based on the public request.
         """
         name = value.split(";", 1)[0].split("=", 1)[0].strip()
-        if name in RESERVED_COOKIES:
+        if is_reserved_cookie(name):
             return None
         if not route.rewrite_cookies:
             return value
@@ -405,6 +478,18 @@ class ProxyEngine:
         """_send."""
         await response(scope, receive, send)
 
+    @staticmethod
+    def _group_denial(route: RouteConfig, user: Any | None) -> str | None:
+        """Return why *user* may not reach *route*, or ``None`` when it may.
+
+        Shared by the HTTP and WebSocket paths. A route with no
+        ``allowed_groups`` is open to every signed-in user, so a missing ACL
+        cannot accidentally lock a service down.
+        """
+        if route.allows_user(user):
+            return None
+        return "Your account is not in a group allowed to use this service."
+
     # --------------------------------------------------------------------- HTTP
     async def handle_http(
         self,
@@ -448,76 +533,20 @@ class ProxyEngine:
         config = self.manager.config
 
 
-        # IP Access Control.
+        # Access control: IP allow/deny lists, blocked clients, blocked paths.
         client_ip_str = client_ip(scope)
-        try:
-            client_ip_obj = ipaddress.ip_address(client_ip_str)
-            for net in route.denied_ips:
-                if client_ip_obj in ipaddress.ip_network(net):
-                    response = self._error_response(
-                        scope,
-                        status=403,
-                        title="Access denied",
-                        message="Your IP address is explicitly blocked from this service.",
-                    )
-                    await self._send(response, scope, receive, send)
-                    return
-            if route.allowed_ips:  # noqa: SIM102
-                if not any(client_ip_obj in ipaddress.ip_network(net) for net in route.allowed_ips):
-                    response = self._error_response(
-                        scope,
-                        status=403,
-                        title="Access denied",
-                        message="Your IP address is not authorized to access this service.",
-                    )
-                    await self._send(response, scope, receive, send)
-                    return
-        except ValueError:
-            # If we can't parse the IP, we default to blocking if there are allowed_ips
-            if route.allowed_ips:
-                response = self._error_response(
-                    scope,
-                    status=403,
-                    title="Access denied",
-                    message="Invalid client IP address.",
-                )
-                await self._send(response, scope, receive, send)
-                return
-
-        if route.blocked_user_agents:
-            user_agent = headers.get("user-agent", "")
-            blocked_lower = [ua.lower() for ua in route.blocked_user_agents]
-            if any(ua in user_agent.lower() for ua in blocked_lower):
-                response = self._error_response(
-                    scope,
-                    status=403,
-                    title="Access denied",
-                    message="This service does not accept requests from your client.",
-                )
-                await self._send(response, scope, receive, send)
-                return
-
-        if route.blocked_paths:
-            request_path = scope.get("path", "")
-            blocked_match = False
-            for blocked in route.blocked_paths:
-                if blocked.endswith("/*"):
-                    prefix = blocked[:-1]
-                    if request_path == prefix.rstrip("/") or request_path.startswith(prefix.rstrip("/") + "/"):
-                        blocked_match = True
-                        break
-                elif request_path == blocked:
-                    blocked_match = True
-                    break
-            if blocked_match:
-                response = self._error_response(
-                    scope,
-                    status=403,
-                    title="Access denied",
-                    message="This path is not allowed.",
-                )
-                await self._send(response, scope, receive, send)
-                return
+        denial = (
+            self._ip_denial(route, client_ip_str)
+            or self._user_agent_denial(route, headers.get("user-agent", ""))
+            or self._path_denial(route, scope.get("path", ""))
+            or self._group_denial(route, user)
+        )
+        if denial is not None:
+            response = self._error_response(
+                scope, status=403, title="Access denied", message=denial
+            )
+            await self._send(response, scope, receive, send)
+            return
 
         if self.health_monitor is not None:
             # Health state is recorded under the route host (see HealthMonitor),
@@ -677,10 +706,6 @@ class ProxyEngine:
                 message="Warden couldn't complete the request to this service.",
             )
             await self._send(response, scope, receive, send)
-        finally:
-            if upstream is not None:
-                # For streaming responses this is a no-op after the generator closes.
-                pass
 
     # ---------------------------------------------------------------- WebSocket
     def _websocket_headers(
@@ -741,12 +766,25 @@ class ProxyEngine:
         Performs origin checks, enforces authentication (if ``route.auth``), and
         forwards messages bidirectionally between client and upstream.
         """
+        headers = Headers(scope=scope)
+        # The same access rules as the HTTP path: without this an IP allow-list
+        # or blocked path could be bypassed by opening a WebSocket.
+        denial = (
+            self._ip_denial(route, client_ip(scope))
+            or self._user_agent_denial(route, headers.get("user-agent", ""))
+            or self._path_denial(route, scope.get("path", "/"))
+            or self._group_denial(route, user)
+        )
+        if denial is not None:
+            websocket = WebSocket(scope, receive, send)
+            await websocket.accept()
+            await websocket.close(code=4403, reason="Access denied")
+            return
         if not route.websocket:
             websocket = WebSocket(scope, receive, send)
             await websocket.accept()
             await websocket.close(code=1008, reason="WebSockets are disabled for this service")
             return
-        headers = Headers(scope=scope)
         origin = headers.get("origin")
         config = self.manager.config
         if origin and not config.origin_allowed(origin):

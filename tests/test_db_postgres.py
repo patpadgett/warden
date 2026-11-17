@@ -152,6 +152,10 @@ class TestPostgresDatabaseInit:
             # v5: add users.email
             MagicMock(),  # ALTER TABLE users ADD COLUMN email
             insert_result,  # v5 insert version
+            # v6: ACL groups (acl_groups, unique name index, acl_members,
+            # member index, seed the default Users group)
+            MagicMock(), MagicMock(), MagicMock(), MagicMock(), MagicMock(),
+            insert_result,  # v6 insert version
         ]
         # Build a proper async context manager for the engine.begin() call.
         mock_cm = AsyncMock()
@@ -299,8 +303,11 @@ class TestPostgresDatabaseUsers:
         row = _row(id=1, username="alice", display_name="Alice", webauthn_user_id=b"\x01",
                    is_admin=True, created_at=created, recovery_token=None)
         result = _Result(scalar=1, fetchone=row)
+        # The default ACL group lookup returns no row, so no membership is
+        # inserted; then the created user is read back.
+        group_result = _Result(scalar=None)
         session = _MockSession()
-        session.execute.side_effect = [result, result]
+        session.execute.side_effect = [result, group_result, result]
         db, _ = await self._make_db(session=session)
         user = await db.create_user("alice", "Alice", b"\x01", now=NOW)
         assert user.username == "alice"

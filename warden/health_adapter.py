@@ -5,18 +5,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from typing import TYPE_CHECKING
 
 import httpx
 
 from warden.config import ConfigManager, RouteConfig, WardenConfig
-
-logger = logging.getLogger("warden.health")
-
-from typing import TYPE_CHECKING
+from warden.utils import upstream_url
 
 if TYPE_CHECKING:
     from warden.stats import MetricsModule
-from warden.utils import upstream_url
 
 logger = logging.getLogger("warden.health")
 

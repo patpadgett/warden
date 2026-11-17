@@ -443,10 +443,11 @@ See the fully commented example in
 | `icon` | unset | Emoji or short label for the dashboard. |
 | `websocket_subprotocols` | `[]` | Allowed WebSocket subprotocols (e.g., `graphql-ws`). Empty = allow all. |
 | `websocket_max_size` | `16777216` | Maximum size in bytes of a single incoming WebSocket message. |
-| `allowed_ips` | `[]` | CIDR networks allowed to access this route. Unparseable client IPs are denied when this is set. |
-| `denied_ips` | `[]` | CIDR networks explicitly blocked from this route. Checked before `allowed_ips`. |
+| `allowed_ips` | `[]` | CIDR networks allowed to access this route. Unparseable client IPs are denied when this is set, and IPv4-mapped IPv6 addresses (`::ffff:a.b.c.d`) are matched against IPv4 networks. |
+| `denied_ips` | `[]` | CIDR networks explicitly blocked from this route. Checked before `allowed_ips`; IPv4-mapped addresses are compared as IPv4. |
 | `blocked_user_agents` | `[]` | Substrings matched case-insensitively against `User-Agent`; matches get `403`. |
-| `blocked_paths` | `[]` | Exact paths or `prefix/*` patterns blocked with `403`. |
+| `blocked_paths` | `[]` | Exact paths or `prefix/*` patterns blocked with `403`. Matching ignores `.`/`..` segments, duplicate and trailing slashes, so `/public/../secret` is blocked too. |
+| `allowed_groups` | `[]` | ACL groups allowed to reach this route. Empty means every signed-in user, so ACLs stay optional. Requires `auth: true`; admins always pass. |
 | `rate_limit` | unset | Per-route limit in requests per minute. `null` disables per-route limiting (falls back to the global limiter). |
 
 ## User Access Control
@@ -456,6 +457,28 @@ accounts can access the dashboard and manage users, routes, TLS, mesh, or audit
 logs. The `Users` page lets administrators view users and toggle the `is_admin`
 flag. There is no second-tier "roles" system — every privileged action is gated
 on the `is_admin` flag.
+
+### Per-route ACLs
+
+Group ACLs are opt-in. Every account joins the built-in `Users` group when it is
+created, and a route with no `allowed_groups` stays open to every signed-in user,
+so an instance that never touches ACLs behaves exactly as it did before.
+
+To restrict a route, list one or more group names in `allowed_groups`:
+
+```yaml
+routes:
+  - host: media.home.lan
+    upstream: http://192.168.1.20:8096
+    allowed_groups: [Family]
+```
+
+Membership is managed on the `Users` page: create groups there, tick them in a
+user's edit dialog, and set the groups for a service in the dashboard's
+*Advanced routing* section (comma separated). Admins always pass group ACLs.
+Group names are case-insensitive and whitespace-normalised. Deleting a group a
+route still references leaves that route reachable by admins only, so update the
+route before removing the group.
 
 ### Inviting a user
 
@@ -580,7 +603,9 @@ Warden exposes a rich set of Prometheus metrics at `GET /_warden/metrics`
 * OTP counters: `warden_otp_success_total` and `warden_otp_failure_total`.
 * Backup‑code counter: `warden_backup_code_used_total` – total times a backup code was used for login.
 
-A starter Grafana dashboard is provided in `grafana/warden-dashboard.json`. Import it into Grafana (Config → Dashboards → Import) with a `Prometheus` datasource.
+A starter Grafana dashboard is provided in `grafana/warden-dashboard.json`
+(uid `warden-dashboard`, schema version 41). Import it with a `Prometheus`
+datasource.
 
 ### Scraping with Prometheus
 
@@ -611,9 +636,15 @@ The live snapshot is viewable inside the app at `/metrics/view` (admin-host prot
 ### Grafana wiring
 
 1. Add a `Prometheus` datasource in Grafana → `http://prometheus:9090`.
-2. Import `grafana/warden-dashboard.json` (uid `warden-dashboard`).
-3. The dashboard queries `warden_uptime_seconds`, `sum(warden_route_requests_total)`, `warden_auth_success_total`, etc., from the Prometheus server.
-4. No additional Grafana plugin is needed (plain Prometheus expressions).
+2. Import `grafana/warden-dashboard.json`: **Dashboards → New → Import dashboard**
+   (Grafana 13), then **Upload dashboard JSON file**. The file is a plain
+   dashboard model, not a legacy `{"dashboard": …, "overwrite": …}` export
+   envelope — Grafana 13 rejects the wrapped form.
+3. Map the `Prometheus` input (`DS_PROMETHEUS`) to your datasource on the import
+   screen.
+4. The dashboard queries `warden_uptime_seconds`, `sum(warden_route_requests_total)`,
+   `warden_auth_success_total`, etc., from the Prometheus server.
+5. No additional Grafana plugin is needed (plain Prometheus expressions).
 
 ## Dashboard
 

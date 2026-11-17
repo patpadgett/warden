@@ -15,7 +15,7 @@ import logging
 import os
 import sqlite3
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -23,6 +23,14 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 import aiosqlite
+
+#: Built-in ACL group that every account joins on creation. Routes without an
+#: ``allowed_groups`` list are open to every signed-in user, so this group only
+#: matters once an administrator gives a route a different ACL.
+DEFAULT_ACL_GROUP = "Users"
+
+#: Separator used to pack a user's group names into one SQLite column.
+_ACL_GROUP_SEPARATOR = "\x1f"
 
 
 def _sql_statements(script: str) -> list[str]:
@@ -66,6 +74,16 @@ class User:
     created_at: float
     recovery_token: str | None = None
     email: str | None = None
+    groups: tuple[str, ...] = ()
+
+
+@dataclass(slots=True)
+class AclGroup:
+    """A named group used for per-route ACLs."""
+    id: int
+    name: str
+    created_at: float
+    member_count: int = 0
 
 
 @dataclass(slots=True)
@@ -154,6 +172,40 @@ class MeshPeer:
 
 
 
+def _clean_group_name(name: str) -> str:
+    """Normalise an ACL group name.
+
+    Group names are stored as single-line text so they survive YAML/JSON
+    round-trips and can be compared against a route's ``allowed_groups``.
+    """
+    cleaned = " ".join(str(name).split())
+    if not cleaned:
+        raise ValueError("Group name cannot be empty.")
+    if len(cleaned) > 64:
+        raise ValueError("Group names are limited to 64 characters.")
+    return cleaned
+
+
+def _field(row: Any, key: str) -> Any:
+    """Return ``row[key]`` when the column is present, otherwise ``None``."""
+    try:
+        keys = row.keys()
+    except AttributeError:
+        return None
+    if key not in keys:
+        return None
+    return row[key]
+
+
+def _row_groups(row: Any, key: str) -> tuple[str, ...]:
+    """Parse a separator-joined group-name column into a sorted tuple."""
+    raw = _field(row, key)
+    if not raw:
+        return ()
+    names = {part for part in str(raw).split(_ACL_GROUP_SEPARATOR) if part}
+    return tuple(sorted(names))
+
+
 def _user(row: aiosqlite.Row) -> User:
     """_user."""
     return User(
@@ -165,6 +217,7 @@ def _user(row: aiosqlite.Row) -> User:
         created_at=float(row["created_at"]),
         recovery_token=row["recovery_token"],
         email=row["email"] if "email" in row.keys() else None,  # noqa: SIM118
+        groups=_row_groups(row, "groups"),
     )
 
 
@@ -203,6 +256,7 @@ def _session(row: aiosqlite.Row) -> Session:
         created_at=float(row["u_created_at"]),
         recovery_token=row["u_recovery_token"],
         email=row["u_email"] if "u_email" in row.keys() else None,  # noqa: SIM118
+        groups=_row_groups(row, "u_groups"),
     )
     return Session(
         id=row["id"],
@@ -254,7 +308,13 @@ SELECT s.id, s.token_hash, s.user_id, s.created_at, s.expires_at, s.last_seen_at
        u.id AS u_id, u.username AS u_username, u.display_name AS u_display_name,
        u.webauthn_user_id AS u_webauthn_user_id, u.is_admin AS u_is_admin,
        u.created_at AS u_created_at, u.recovery_token AS u_recovery_token,
-       u.email AS u_email
+       u.email AS u_email,
+       COALESCE((
+           SELECT group_concat(g.name, char(31))
+           FROM acl_members m
+           JOIN acl_groups g ON g.id = m.group_id
+           WHERE m.user_id = u.id
+       ), '') AS u_groups
 FROM sessions s
 JOIN users u ON u.id = s.user_id
 """
@@ -342,7 +402,7 @@ class Database:
                 pass
 
     #: Schema version number. Incremented whenever the schema changes.
-    SCHEMA_VERSION = 5
+    SCHEMA_VERSION = 6
 
     #: Per-step migration scripts. Keys are the target schema version.
     #: Each script runs inside a transaction; RAISE(IGNORE) suppresses
@@ -462,12 +522,32 @@ class Database:
         CREATE INDEX IF NOT EXISTS idx_invites_user ON invites(user_id);
         CREATE INDEX IF NOT EXISTS idx_invites_token ON invites(token_hash);
         CREATE INDEX IF NOT EXISTS idx_invites_used ON invites(used);
-        """,
-    5: """\
+        """,        5: """\
         -- Add user email address. ``email`` is nullable so that existing
         -- databases without this column carry on; application code supplies
         -- the address when the account is created/invited.
         ALTER TABLE users ADD COLUMN email TEXT
+        """,
+        6: """
+        -- Named groups for per-route ACLs. Every account is added to the
+        -- built-in "Users" group on creation; a route with no allowed groups
+        -- stays open to all signed-in users.
+        CREATE TABLE IF NOT EXISTS acl_groups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+            created_at REAL NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS acl_members (
+            group_id INTEGER NOT NULL REFERENCES acl_groups(id) ON DELETE CASCADE,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            created_at REAL NOT NULL,
+            PRIMARY KEY (group_id, user_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_acl_members_user ON acl_members(user_id);
+
+        INSERT OR IGNORE INTO acl_groups (name, created_at)
+        VALUES ('Users', CAST(strftime('%s', 'now') AS REAL));
         """,
 })  # type: ignore[assignment]
 
@@ -516,6 +596,9 @@ class Database:
             except Exception:
                 await conn.execute("ROLLBACK")
                 raise
+        # The default group is part of the schema from version 6 onwards; make
+        # sure it exists even if a database was restored without its rows.
+        await self._ensure_default_acl_group()
         self._secure_files()
 
     def _require_conn(self) -> aiosqlite.Connection:
@@ -592,10 +675,11 @@ class Database:
             user_id = await self._write(sql, tuple(vals))
         except sqlite3.IntegrityError as exc:
             raise AlreadyExistsError("That username is already registered.") from exc
+        await self._join_default_acl_group(user_id, now=created)
         user = await self.get_user(user_id)
         if user is None:
             raise DatabaseError("User disappeared after creation.")
-        return user
+        return replace(user, groups=tuple(await self.list_user_acl_groups(user_id)))
 
 
     async def create_invite(
@@ -710,6 +794,16 @@ class Database:
                         "DELETE FROM settings WHERE key IN "
                         "('setup_code_hash', 'setup_code_expires_at')"
                     )
+                async with conn.execute(
+                    "SELECT id FROM acl_groups WHERE name = ?", (DEFAULT_ACL_GROUP,)
+                ) as cursor:
+                    default_group = await cursor.fetchone()
+                if default_group is not None:
+                    await conn.execute(
+                        "INSERT OR IGNORE INTO acl_members (group_id, user_id, created_at) "
+                        "VALUES (?, ?, ?)",
+                        (default_group["id"], user_id, created),
+                    )
                 await conn.commit()
             except Exception:
                 await conn.rollback()
@@ -722,7 +816,10 @@ class Database:
                 credential_row = await cursor.fetchone()
         if user_row is None or credential_row is None:
             raise DatabaseError("User setup failed unexpectedly.")
-        return _user(user_row), _credential(credential_row)
+        return (
+            replace(_user(user_row), groups=tuple(await self.list_user_acl_groups(user_id))),
+            _credential(credential_row),
+        )
 
     async def get_user(self, user_id: int) -> User | None:
         """Fetch a user by its primary key ID. Returns ``None`` if not found."""
@@ -757,6 +854,7 @@ class Database:
             await conn.execute("DELETE FROM backup_codes WHERE user_id = ?", (user_id,))
             await conn.execute("DELETE FROM otp_secrets WHERE user_id = ?", (user_id,))
             await conn.execute("DELETE FROM invites WHERE user_id = ?", (user_id,))
+            await conn.execute("DELETE FROM acl_members WHERE user_id = ?", (user_id,))
             cursor = await conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
             await conn.commit()
             changed = cursor.rowcount
@@ -830,6 +928,193 @@ class Database:
             await cursor.close()
         return bool(changed)
 
+    # --------------------------------------------------------------- ACL groups
+    async def list_acl_groups(self) -> list[AclGroup]:
+        """Return every ACL group with its current member count."""
+        rows = await self._fetchall(
+            "SELECT g.id, g.name, g.created_at, COUNT(m.user_id) AS member_count "
+            "FROM acl_groups g LEFT JOIN acl_members m ON m.group_id = g.id "
+            "GROUP BY g.id, g.name, g.created_at ORDER BY g.name"
+        )
+        return [
+            AclGroup(
+                id=int(row["id"]),
+                name=row["name"],
+                created_at=float(row["created_at"]),
+                member_count=int(row["member_count"]),
+            )
+            for row in rows
+        ]
+
+    async def get_acl_group(self, group_id: int) -> AclGroup | None:
+        """Fetch a single ACL group, including its member count."""
+        row = await self._fetchone(
+            "SELECT g.id, g.name, g.created_at, "
+            "(SELECT COUNT(*) FROM acl_members m WHERE m.group_id = g.id) AS member_count "
+            "FROM acl_groups g WHERE g.id = ?",
+            (group_id,),
+        )
+        if row is None:
+            return None
+        return AclGroup(
+            id=int(row["id"]),
+            name=row["name"],
+            created_at=float(row["created_at"]),
+            member_count=int(row["member_count"]),
+        )
+
+    async def get_acl_group_by_name(self, name: str) -> AclGroup | None:
+        """Fetch an ACL group by name (case-insensitive), or ``None``."""
+        try:
+            cleaned = _clean_group_name(name)
+        except ValueError:
+            return None
+        row = await self._fetchone(
+            "SELECT id FROM acl_groups WHERE name = ?", (cleaned,)
+        )
+        return await self.get_acl_group(int(row["id"])) if row else None
+
+    async def create_acl_group(self, name: str, *, now: float | None = None) -> AclGroup:
+        """Create a named ACL group. Raises ``AlreadyExistsError`` on a clash."""
+        cleaned = _clean_group_name(name)
+        try:
+            group_id = await self._write(
+                "INSERT INTO acl_groups (name, created_at) VALUES (?, ?)",
+                (cleaned, now if now is not None else time.time()),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise AlreadyExistsError(f"A group named {cleaned!r} already exists.") from exc
+        group = await self.get_acl_group(group_id)
+        if group is None:
+            raise DatabaseError("Group disappeared after creation.")
+        return group
+
+    async def delete_acl_group(self, group_id: int) -> bool:
+        """Delete a group and its memberships. The default group is permanent."""
+        group = await self.get_acl_group(group_id)
+        if group is None or group.name.casefold() == DEFAULT_ACL_GROUP.casefold():
+            return False
+        if self._conn is None:
+            await self.init()
+        conn = self._require_conn()
+        async with self._lock:
+            await conn.execute("DELETE FROM acl_members WHERE group_id = ?", (group_id,))
+            cursor = await conn.execute("DELETE FROM acl_groups WHERE id = ?", (group_id,))
+            await conn.commit()
+            changed = cursor.rowcount
+            await cursor.close()
+        return bool(changed)
+
+    async def list_user_acl_groups(self, user_id: int) -> list[str]:
+        """Return the names of the groups *user_id* belongs to."""
+        rows = await self._fetchall(
+            "SELECT g.name FROM acl_members m JOIN acl_groups g ON g.id = m.group_id "
+            "WHERE m.user_id = ? ORDER BY g.name",
+            (user_id,),
+        )
+        return [row["name"] for row in rows]
+
+    async def acl_memberships(self) -> dict[int, list[str]]:
+        """Return ``{user_id: [group names]}`` for every membership."""
+        rows = await self._fetchall(
+            "SELECT m.user_id, g.name FROM acl_members m "
+            "JOIN acl_groups g ON g.id = m.group_id ORDER BY g.name"
+        )
+        memberships: dict[int, list[str]] = {}
+        for row in rows:
+            memberships.setdefault(int(row["user_id"]), []).append(row["name"])
+        return memberships
+
+    async def add_user_to_acl_group(
+        self, user_id: int, group_id: int, *, now: float | None = None
+    ) -> bool:
+        """Add a user to a group. Returns ``False`` if either side is missing."""
+        if await self.get_acl_group(group_id) is None or await self.get_user(user_id) is None:
+            return False
+        await self._write(
+            "INSERT OR IGNORE INTO acl_members (group_id, user_id, created_at) "
+            "VALUES (?, ?, ?)",
+            (group_id, user_id, now if now is not None else time.time()),
+        )
+        return True
+
+    async def remove_user_from_acl_group(self, user_id: int, group_id: int) -> bool:
+        """Remove a membership. Members cannot leave the default group."""
+        group = await self.get_acl_group(group_id)
+        if group is None or group.name.casefold() == DEFAULT_ACL_GROUP.casefold():
+            return False
+        if self._conn is None:
+            await self.init()
+        conn = self._require_conn()
+        async with self._lock:
+            cursor = await conn.execute(
+                "DELETE FROM acl_members WHERE user_id = ? AND group_id = ?",
+                (user_id, group_id),
+            )
+            await conn.commit()
+            changed = cursor.rowcount
+            await cursor.close()
+        return bool(changed)
+
+    async def set_user_acl_groups(self, user_id: int, names: list[str]) -> list[str]:
+        """Replace a user's memberships, always keeping the default group.
+
+        Unknown group names raise ``ValueError`` rather than being silently
+        dropped, so a typo in the admin UI surfaces instead of locking the user
+        out of a route.
+        """
+        if await self.get_user(user_id) is None:
+            raise ValueError("That user does not exist.")
+        group_ids: set[int] = set()
+        for name in dict.fromkeys(names):
+            group = await self.get_acl_group_by_name(name)
+            if group is None:
+                raise ValueError(f"No group named {name!r}.")
+            group_ids.add(group.id)
+        default = await self._ensure_default_acl_group()
+        group_ids.add(default.id)
+        if self._conn is None:
+            await self.init()
+        conn = self._require_conn()
+        async with self._lock:
+            await conn.execute("BEGIN IMMEDIATE")
+            try:
+                await conn.execute("DELETE FROM acl_members WHERE user_id = ?", (user_id,))
+                now = time.time()
+                for group_id in sorted(group_ids):
+                    await conn.execute(
+                        "INSERT OR IGNORE INTO acl_members (group_id, user_id, created_at) "
+                        "VALUES (?, ?, ?)",
+                        (group_id, user_id, now),
+                    )
+                await conn.commit()
+            except Exception:
+                await conn.rollback()
+                raise
+        return await self.list_user_acl_groups(user_id)
+
+    async def _ensure_default_acl_group(self) -> AclGroup:
+        """Return the built-in group, creating it if the row is missing."""
+        group = await self.get_acl_group_by_name(DEFAULT_ACL_GROUP)
+        if group is not None:
+            return group
+        try:
+            return await self.create_acl_group(DEFAULT_ACL_GROUP)
+        except AlreadyExistsError:
+            group = await self.get_acl_group_by_name(DEFAULT_ACL_GROUP)
+            if group is None:
+                raise
+            return group
+
+    async def _join_default_acl_group(self, user_id: int, *, now: float | None = None) -> None:
+        """Add a freshly created account to the built-in group."""
+        group = await self._ensure_default_acl_group()
+        await self._write(
+            "INSERT OR IGNORE INTO acl_members (group_id, user_id, created_at) "
+            "VALUES (?, ?, ?)",
+            (group.id, user_id, now if now is not None else time.time()),
+        )
+
     async def reset_auth(self) -> None:
         """Delete all users, passkeys, sessions, settings, audit log, challenges,
         backup codes, OTP secrets, and mesh peers (auth reset)."""
@@ -841,6 +1126,8 @@ class Database:
             await conn.execute("DELETE FROM backup_codes")
             await conn.execute("DELETE FROM otp_secrets")
             await conn.execute("DELETE FROM invites")
+            await conn.execute("DELETE FROM acl_members")
+            await conn.execute("DELETE FROM acl_groups WHERE name <> ?", (DEFAULT_ACL_GROUP,))
             await conn.execute("DELETE FROM settings")
             await conn.execute("DELETE FROM audit")
             await conn.execute("DELETE FROM users")

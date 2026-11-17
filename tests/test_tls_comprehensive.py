@@ -800,6 +800,80 @@ class TestRequestCertificate:
             tls_mod.acme_client = original_acme_client
 
     @pytest.mark.asyncio
+    async def test_issuance_failure_after_validation_writes_nothing(
+        self, manager: ACMEManager
+    ) -> None:
+        """The challenge can validate and the order still fail to issue.
+
+        A CA that stalls or refuses at finalization must surface the error and
+        leave the existing certificate pair untouched, rather than failing
+        halfway through writing a new one.
+        """
+        from unittest.mock import create_autospec
+
+        from acme import challenges as acme_challenges
+        from acme import errors as acme_errors
+        from acme import messages as acme_messages
+
+        import warden.tls as tls_mod
+
+        original_acme_client = tls_mod.acme_client
+        mock_client = MagicMock()
+        mock_order = MagicMock()
+        mock_authz = MagicMock()
+        # Validation succeeds; the order dies afterwards.
+        mock_authz.body.status = acme_messages.STATUS_VALID
+        http01_chall = create_autospec(acme_challenges.HTTP01, instance=True)
+        http01_chall.token = b"test-token"
+        http01_chall.encode = MagicMock(return_value="test-token")
+        http01_chall.key_authorization = MagicMock(
+            return_value="test-token.dummy-thumbprint"
+        )
+        http01_chall.response = MagicMock(return_value="dummy-key-authorization")
+        mock_chall = MagicMock()
+        mock_chall.chall = http01_chall
+        mock_authz.body.challenges = [mock_chall]
+        mock_order.authorizations = [mock_authz]
+
+        mock_net = MagicMock()
+        directory_response = MagicMock()
+        directory_response.json.return_value = {
+            "newNonce": "https://acme.example.com/new-nonce",
+            "newAccount": "https://acme.example.com/new-account",
+            "newOrder": "https://acme.example.com/new-order",
+            "revokeCert": "https://acme.example.com/revoke-cert",
+            "keyChange": "https://acme.example.com/key-change",
+        }
+        mock_net.get = MagicMock(return_value=directory_response)
+        mock_net.new_order = MagicMock(return_value=mock_order)
+        mock_net.new_account = MagicMock()
+        mock_net.poll = MagicMock(return_value=(mock_authz, None))
+        mock_net.answer_challenge = MagicMock()
+        mock_net.finalize_order = MagicMock(
+            side_effect=acme_errors.TimeoutError("order never became valid")
+        )
+        mock_client.ClientNetwork = MagicMock(return_value=mock_net)
+        mock_client.ClientV2 = MagicMock(return_value=mock_net)
+
+        tls_mod.acme_client = mock_client
+        try:
+            with pytest.raises(acme_errors.TimeoutError):
+                await manager.request_certificate(
+                    "admin.home.lan", "https://acme.example.com"
+                )
+        finally:
+            tls_mod.acme_client = original_acme_client
+
+        # The challenge was answered and polled to validity, so the failure is
+        # squarely in issuance and not a validation problem.
+        assert mock_net.answer_challenge.called
+        assert mock_net.poll.called
+        # No half-written pair on disk for the next startup to trip over.
+        config = manager.manager.config
+        assert not config.certfile_path.exists()
+        assert not config.keyfile_path.exists()
+
+    @pytest.mark.asyncio
     async def test_request_certificate_no_acme_client(self, manager: ACMEManager) -> None:
         import warden.tls as tls_mod
         original_acme_client = tls_mod.acme_client

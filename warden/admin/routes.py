@@ -23,13 +23,15 @@ from warden.config import (
     WardenConfig,
     restart_required,
 )
-from warden.db import AlreadyExistsError, DatabaseError, Session, User
+from warden.db import DEFAULT_ACL_GROUP, AlreadyExistsError, DatabaseError, Session, User
 from warden.mail import send_email
 from warden.mesh_peer import MeshError
+from warden.stats import escape_label
 from warden.templating import templates
 from warden.tls import certificate_status
 from warden.utils import (
     add_page_headers,
+    admin_url,
     client_ip,
     external_url,
     get_host,
@@ -81,6 +83,7 @@ class ServicePayload(BaseModel):
     rate_limit: int | None = None
     blocked_user_agents: list[str] = Field(default_factory=list)
     blocked_paths: list[str] = Field(default_factory=list)
+    allowed_groups: list[str] = Field(default_factory=list)
 
 
 class ServiceUpdatePayload(ServicePayload):
@@ -124,6 +127,18 @@ class UserUpdatePayload(BaseModel):
     display_name: str | None = Field(default=None, max_length=128)
     email: str | None = None
     is_admin: bool | None = None
+
+
+class GroupPayload(BaseModel):
+    """GroupPayload."""
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(..., min_length=1, max_length=64)
+
+
+class UserGroupsPayload(BaseModel):
+    """UserGroupsPayload."""
+    model_config = ConfigDict(extra="forbid")
+    groups: list[str] = Field(default_factory=list)
 
 
 class InviteCreateBody(BaseModel):
@@ -306,6 +321,7 @@ def _service_context(route: RouteConfig, config: WardenConfig, snapshot: dict[st
             "verify_tls": route.verify_tls,
             "health_path": route.health_path,
             "public_paths": ", ".join(route.public_paths),
+            "allowed_groups": ", ".join(route.allowed_groups),
             "icon": route.icon or "",
         },
     }
@@ -338,10 +354,10 @@ async def swagger_ui(request: Request) -> Response:
 @router.get("/metrics/view")
 async def metrics_view(request: Request) -> Response:
     """metrics_view."""
-    _guard_host(request)
+    config = _guard_host(request)
     _app = _get_fastapi_app(request)
     stats = _app.state.stats
-    snapshot = stats.snapshot(_guard_host(request))
+    snapshot = stats.snapshot(config)
     context = _base_context(request, page="metrics", title="Metrics")
     context.update({"stats": snapshot})
     return _render(request, "metrics.html", context)
@@ -373,8 +389,11 @@ async def metrics_api(request: Request) -> Response:
         if status.get("available") and status.get("applied"):
             for peer_key, info in status.get("peers", {}).items():
                 if info.last_handshake is not None:
-                    # Export as gauge with peer public key label
-                    content += f"\nwarden_mesh_last_handshake_seconds{{peer=\\\"{peer_key}\\\"}} {info.last_handshake}"
+                    # Export as a gauge labelled with the peer's public key.
+                    content += (
+                        "\nwarden_mesh_last_handshake_seconds"
+                        f'{{peer="{escape_label(peer_key)}"}} {info.last_handshake}'
+                    )
     except Exception:
         logger.exception("Mesh handshake metrics export failed")
     return Response(
@@ -393,8 +412,10 @@ async def users_page(request: Request) -> Response:
     _guard_host(request)
     db = _db(request)
     users = await db.list_users()
+    groups = await db.list_acl_groups()
+    memberships = await db.acl_memberships()
     context = _base_context(request, page="users", title="Users")
-    context.update({"users": users})
+    context.update({"users": users, "groups": groups, "memberships": memberships})
     return _render(request, "users.html", context)
 
 @router.post("/_warden/api/users")
@@ -435,7 +456,7 @@ async def create_invite(request: Request, body: InviteCreateBody) -> JSONRespons
       to the user (email/SMS/printed). Once the invite is used, it cannot be
       replayed.
     """
-    _guard_host(request)
+    config = _guard_host(request)
     db = _db(request)
     try:
         user = await db.get_user(body.user_id)
@@ -452,7 +473,7 @@ async def create_invite(request: Request, body: InviteCreateBody) -> JSONRespons
         # Deliver the token to the user's email address (if email is configured).
         email_sent = False
         try:
-            email_cfg = _get_fastapi_app(request).state.config.email
+            email_cfg = config.email
             if email_cfg.enabled and user.email:
                 await asyncio.to_thread(
                     send_email,
@@ -465,7 +486,8 @@ async def create_invite(request: Request, body: InviteCreateBody) -> JSONRespons
                         f"Expires in: {body.expires_in} seconds.\n"
                         "Please keep this token secret. It is the only way to "
                         "complete your first-login passkey registration.\n\n"
-                        f"Complete setup at: {request.url.scheme}://{request.url.netloc}/_warden/invite/complete?token={token}"
+                        "Complete setup at: "
+                        f"{admin_url(request.scope, config)}/_warden/invite/complete?token={token}"
                     ),
                 )
                 email_sent = True
@@ -536,6 +558,71 @@ async def delete_user(request: Request, user_id: int) -> JSONResponse:
     
     await _audit(request, "user_deleted", f"User ID {user_id}")
     return JSONResponse({"ok": True})
+
+
+@router.get("/_warden/api/groups")
+async def list_groups(request: Request) -> JSONResponse:
+    """List ACL groups and their member counts (admin-only)."""
+    _guard_host(request)
+    groups = await _db(request).list_acl_groups()
+    return JSONResponse(
+        {
+            "groups": [
+                {"id": group.id, "name": group.name, "members": group.member_count}
+                for group in groups
+            ]
+        }
+    )
+
+
+@router.post("/_warden/api/groups")
+async def create_group(request: Request, payload: GroupPayload) -> JSONResponse:
+    """Create an ACL group (admin-only)."""
+    _guard_host(request)
+    try:
+        group = await _db(request).create_acl_group(payload.name)
+    except (AlreadyExistsError, DatabaseError, ValueError) as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=400)
+    await _audit(request, "acl_group_created", group.name)
+    return JSONResponse({"ok": True, "group": {"id": group.id, "name": group.name}})
+
+
+@router.delete("/_warden/api/groups/{group_id}")
+async def delete_group(request: Request, group_id: int) -> JSONResponse:
+    """Delete an ACL group. The built-in group cannot be removed."""
+    _guard_host(request)
+    db = _db(request)
+    group = await db.get_acl_group(group_id)
+    if group is None:
+        return JSONResponse({"detail": "Group not found."}, status_code=404)
+    if group.name.casefold() == DEFAULT_ACL_GROUP.casefold():
+        return JSONResponse(
+            {"detail": f"The {DEFAULT_ACL_GROUP} group cannot be deleted."}, status_code=400
+        )
+    if not await db.delete_acl_group(group_id):
+        return JSONResponse({"detail": "Group not found."}, status_code=404)
+    await _audit(request, "acl_group_deleted", group.name)
+    return JSONResponse({"ok": True})
+
+
+@router.put("/_warden/api/users/{user_id}/groups")
+async def set_user_groups(
+    request: Request, user_id: int, payload: UserGroupsPayload
+) -> JSONResponse:
+    """Replace a user's ACL memberships (admin-only).
+
+    The built-in ``Users`` group is always kept, so removing a user from a
+    route ACL is done by editing the route rather than the account.
+    """
+    _guard_host(request)
+    try:
+        names = await _db(request).set_user_acl_groups(user_id, payload.groups)
+    except ValueError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=400)
+    await _audit(request, "user_groups_updated", f"user:{user_id} groups:{','.join(names)}")
+    return JSONResponse({"ok": True, "groups": names})
+
+
 @router.get("/portal")
 async def portal(request: Request) -> Response:
     """Render the signed-in user's portal.
@@ -550,7 +637,7 @@ async def portal(request: Request) -> Response:
     credentials = await _db(request).list_credentials(user.id)
     services: list[dict[str, Any]] = []
     for route in config.routes:
-        if not route.enabled:
+        if not route.enabled or not route.allows_user(user):
             continue
         name = route.display_name
         services.append(
@@ -586,7 +673,6 @@ async def dashboard(request: Request) -> Response:
     ]
     credentials = await db.list_credentials(user.id)
     sessions = await db.list_sessions(user.id, current_token_hash=session.token_hash)
-    await db.list_audit(60)
     last_login_row = await db.list_audit(1, event="login_succeeded")
     last_login = last_login_row[0] if last_login_row else None
     since = time.time() - 86400
@@ -719,7 +805,6 @@ async def activity_page(request: Request) -> Response:
 async def tls_page(request: Request) -> Response:
     """Render a page showing TLS certificate status and renewal configuration.
     """
-    _guard_host(request)
     config = _guard_host(request)
     tls_info = _cert_context(request, config)
     context = _base_context(request, page="tls", title="TLS")
@@ -1077,9 +1162,8 @@ async def delete_passkey(request: Request, credential_id: int) -> JSONResponse:
 @router.delete("/_warden/api/sessions/{session_id}")
 async def revoke_session(request: Request, session_id: int) -> JSONResponse:
     """revoke_session."""
-    _guard_host(request)
-    session = _session(request)
     config = _guard_host(request)
+    session = _session(request)
     if session_id == session.id:
         await _db(request).revoke_session(session.user_id, session_id)
         response = JSONResponse({"ok": True, "redirect": login_url(request.scope, config, "/")})
@@ -1105,8 +1189,8 @@ async def revoke_other_sessions(request: Request) -> JSONResponse:
 # -------------------------------------------------------------------- mesh
 def _mesh(request: Request):
     """_mesh."""
-    _guard_host(request)
-    if not _guard_host(request).mesh.enabled:
+    config = _guard_host(request)
+    if not config.mesh.enabled:
         raise HTTPException(400, "WireGuard mesh is disabled in warden.yaml.")
     _app = _get_fastapi_app(request)
     return _app.state.mesh

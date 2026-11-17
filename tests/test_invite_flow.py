@@ -4,6 +4,8 @@ from unittest.mock import patch
 
 import pytest
 
+from warden.auth.passkeys import AuthError
+
 # Verifier stub used to isolate the invite flow from WebAuthn response
 # verification. The trust boundary is: invite validation, challenge
 # consumption and credential storage -- all handled before/without the
@@ -110,7 +112,10 @@ async def test_invite_expired(app_and_path):
     token = "INVITE-EXPIRED-9999"
     await db.create_invite(user.id, token, time.time() - 3600)
 
-    with patch("warden.auth.passkeys.verify_registration_response"), pytest.raises(Exception):
+    with (
+        patch("warden.auth.passkeys.verify_registration_response"),
+        pytest.raises(AuthError, match="That invite has expired"),
+    ):
         await pk.complete_invite_registration(
             credential=_credential(),
             challenge_id="dead",
@@ -166,15 +171,17 @@ async def test_invite_binding(app_and_path):
     assert result["credential"] is not None
 
     # A mismatched invite token must be rejected.
-    with patch("warden.auth.passkeys.verify_registration_response", return_value=VERIFY_STUB):
-        with pytest.raises(Exception):
-            await pk.complete_invite_registration(
-                credential=cred,
-                challenge_id=challenge_id,
-                origin=origin,
-                config=app.state.config,
-                invite_token="WRONG-TOKEN",
-            )
+    with (
+        patch("warden.auth.passkeys.verify_registration_response", return_value=VERIFY_STUB),
+        pytest.raises(AuthError, match="That invite is invalid or has already been used"),
+    ):
+        await pk.complete_invite_registration(
+            credential=cred,
+            challenge_id=challenge_id,
+            origin=origin,
+            config=app.state.config,
+            invite_token="WRONG-TOKEN",
+        )
 
 
 def hash_token(token: str) -> str:

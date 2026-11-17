@@ -7,6 +7,7 @@ import logging
 import os
 import time
 from functools import wraps
+from inspect import isawaitable
 from typing import Any
 
 from fastapi import APIRouter, FastAPI, HTTPException, Request
@@ -73,6 +74,7 @@ class InviteBeginBody(BaseModel):
 class BackupCodeBody(BaseModel):
     """BackupCodeBody."""
     code: str
+    next: str | None = None
 
 class OTPSetupPayload(BaseModel):
     """Payload for OTP setup endpoint (OpenAPI schema stability)."""
@@ -198,11 +200,21 @@ def _origin_ok(request: Request) -> bool:
     """_origin_ok."""
     return check_origin(request.scope, _config(request))
 
-def _limited(request: Request, action: str, limit: int, window: float = 60.0) -> tuple[bool, dict[str, str]]:
-    """Apply the configured rate limiter and return (allowed, headers)."""
+async def _limited(
+    request: Request, action: str, limit: int, window: float = 60.0
+) -> tuple[bool, dict[str, str]]:
+    """Apply the configured rate limiter and return (allowed, headers).
+
+    ``server.rate_limiter.backend: redis`` installs a limiter whose ``allow``
+    is a coroutine, while the in-process one is synchronous, so the result is
+    awaited only when it is awaitable.
+    """
     _app = _get_fastapi_app(request)
     limiter = _app.state.rate_limiter
-    allowed, remaining = limiter.allow(f"{client_ip(request.scope)}:{action}", limit, window)
+    result = limiter.allow(f"{client_ip(request.scope)}:{action}", limit, window)
+    if isawaitable(result):
+        result = await result
+    allowed, remaining = result
     if allowed:
         _app.state.stats.inc_rate_limit_allowed()
     else:
@@ -277,7 +289,7 @@ async def otp_verify(request: Request, payload: OTPVerifyPayload) -> JSONRespons
     * Returns ``{"ok": True}`` on success, otherwise a 401 response with
       ``{"ok": False, "detail": "Invalid OTP"}``.
     """
-    allowed, rate_headers = _limited(request, "otp-verify", 30)
+    allowed, rate_headers = await _limited(request, "otp-verify", 30)
     if not allowed:
         response = _error("Too many OTP attempts. Wait a minute and try again.", 429)
         response.headers.update(rate_headers)
@@ -377,7 +389,7 @@ async def setup_begin(request: Request) -> JSONResponse:
     * Enforces same‑origin request.
     * Returns a JSON payload with the publicKey ceremony options.
     """
-    allowed, rate_headers = _limited(request, "setup-begin", 8, 600)
+    allowed, rate_headers = await _limited(request, "setup-begin", 8, 600)
     if not allowed:
         response = _error("Too many setup attempts. Wait a few minutes and try again.", 429)
 
@@ -413,7 +425,7 @@ async def setup_complete(request: Request) -> JSONResponse:
     * Consumes the challenge, creates user and session, audits the event.
     * Returns JSON with redirect target for post‑setup navigation.
     """
-    allowed, rate_headers = _limited(request, "setup-complete", 12, 600)
+    allowed, rate_headers = await _limited(request, "setup-complete", 12, 600)
     if not allowed:
         response = _error("Too many setup attempts. Wait a minute and try again.", 429)
 
@@ -462,7 +474,7 @@ async def invite_begin(request: Request) -> JSONResponse:
     * Requires the caller to supply a valid, unused invite token.
     * Returns a JSON payload with the publicKey ceremony options.
     """
-    allowed, rate_headers = _limited(request, "invite-begin", 12)
+    allowed, rate_headers = await _limited(request, "invite-begin", 12)
     if not allowed:
         response = _error("Too many registration attempts. Wait a minute and try again.", 429)
         response.headers.update(rate_headers)
@@ -506,7 +518,7 @@ async def invite_complete(request: Request) -> JSONResponse:
       creates a session and signs the user in.
     * Returns JSON with a redirect target.
     """
-    allowed, rate_headers = _limited(request, "invite-complete", 12)
+    allowed, rate_headers = await _limited(request, "invite-complete", 12)
     if not allowed:
         response = _error("Too many registration attempts. Wait a minute and try again.", 429)
         response.headers.update(rate_headers)
@@ -581,7 +593,7 @@ async def login_begin(request: Request) -> JSONResponse:
     * Enforces same‑origin request.
     * Returns a JSON payload with the publicKey ceremony options.
     """
-    allowed, rate_headers = _limited(request, "login-begin", 30)
+    allowed, rate_headers = await _limited(request, "login-begin", 30)
     if not allowed:
         response = _error("Too many sign-in attempts. Wait a minute and try again.", 429)
 
@@ -616,7 +628,7 @@ async def login_backup(request: Request) -> JSONResponse:
     * Validates the provided backup code and establishes a session.
     * Returns a JSON response with redirect target on success.
     """
-    allowed, rate_headers = _limited(request, "login-backup", 15)
+    allowed, rate_headers = await _limited(request, "login-backup", 15)
     if not allowed:
         response = _error("Too many recovery attempts. Wait a minute and try again.", 429)
 
@@ -645,8 +657,7 @@ async def login_backup(request: Request) -> JSONResponse:
         user_agent=user_agent(request.scope),
         detail="Recovery code sign‑in",
     )
-    # Redirect is fixed to root after backup-code recovery; add `next` to BackupCodeBody if needed.
-    response = _json_response({"ok": True, "redirect": safe_next("/", "/")})
+    response = _json_response({"ok": True, "redirect": safe_next(body.next, "/")})
     _app = _get_fastapi_app(request)
     _app.state.stats.inc_backup_code_used()
     set_session_cookie(response, token, request.scope, config)
@@ -660,7 +671,7 @@ async def login_complete(request: Request) -> JSONResponse:
     * Validates the credential, creates a session, and audits success.
     * Returns JSON with redirect target.
     """
-    allowed, rate_headers = _limited(request, "login-complete", 30)
+    allowed, rate_headers = await _limited(request, "login-complete", 30)
     if not allowed:
         response = _error("Too many sign-in attempts. Wait a minute and try again.", 429)
 
@@ -712,7 +723,7 @@ async def register_begin(request: Request) -> JSONResponse:
     * Requires the user to be signed in (session required).
     * Returns a JSON payload with the publicKey ceremony options.
     """
-    allowed, rate_headers = _limited(request, "register-begin", 12)
+    allowed, rate_headers = await _limited(request, "register-begin", 12)
     if not allowed:
         response = _error("Too many registration attempts. Wait a minute and try again.", 429)
 
@@ -748,7 +759,7 @@ async def register_complete(request: Request) -> JSONResponse:
     * Validates the credential and creates a new passkey entry for the user.
     * Audits the registration event and redirects to the passkeys page.
     """
-    allowed, rate_headers = _limited(request, "register-complete", 12)
+    allowed, rate_headers = await _limited(request, "register-complete", 12)
     if not allowed:
         response = _error("Too many registration attempts. Wait a minute and try again.", 429)
 

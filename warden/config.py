@@ -397,6 +397,9 @@ class RouteConfig(BaseModel):
     rate_limit: int | None = Field(default=None, ge=1)
     blocked_user_agents: list[str] = Field(default_factory=list)
     blocked_paths: list[str] = Field(default_factory=list)
+    #: ACL groups allowed to reach this route. Empty means any signed-in user
+    #: may use it, so ACLs stay opt-in; admins bypass the check.
+    allowed_groups: list[str] = Field(default_factory=list)
 
     @field_validator("host")
     @classmethod
@@ -495,6 +498,31 @@ class RouteConfig(BaseModel):
                 raise ValueError(f"invalid CIDR in denied_ips: {ip!r}")
         return cleaned
 
+    @field_validator("allowed_groups")
+    @classmethod
+    def _validate_allowed_groups(cls, value: list[str]) -> list[str]:
+        """Normalise ACL group names and drop case-insensitive duplicates."""
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            name = " ".join(str(item).split())
+            if not name:
+                raise ValueError("allowed_groups entries cannot be empty")
+            if len(name) > 64:
+                raise ValueError("allowed_groups entries are limited to 64 characters")
+            key = name.casefold()
+            if key not in seen:
+                seen.add(key)
+                cleaned.append(name)
+        return cleaned
+
+    @model_validator(mode="after")
+    def _validate_group_acl(self) -> RouteConfig:
+        """A group ACL needs a signed-in user whose groups can be checked."""
+        if self.allowed_groups and not self.auth:
+            raise ValueError("allowed_groups requires auth: true")
+        return self
+
     @property
     def display_name(self) -> str:
         """display_name."""
@@ -530,6 +558,24 @@ class RouteConfig(BaseModel):
         from fnmatch import fnmatch
 
         return any(fnmatch(path, pattern) for pattern in self.public_paths)
+
+    def allows_user(self, user: Any | None) -> bool:
+        """Return ``True`` when *user* may open this route.
+
+        A route without ``allowed_groups`` is open to everyone who passes the
+        ``auth`` gate. Admins bypass group ACLs so a mistyped group cannot lock
+        an administrator out of a service they manage.
+        """
+        if not self.allowed_groups:
+            return True
+        if user is None:
+            return False
+        if getattr(user, "is_admin", False):
+            return True
+        allowed = {name.casefold() for name in self.allowed_groups}
+        return any(
+            name.casefold() in allowed for name in getattr(user, "groups", ())
+        )
 
 
 class MeshConfig(BaseModel):

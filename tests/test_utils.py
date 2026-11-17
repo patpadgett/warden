@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import sys
 import time
 from pathlib import Path
 
@@ -8,9 +10,11 @@ import pytest
 from warden.config import RouteConfig, parse_config_text
 from warden.utils import (
     RateLimiter,
+    RedisRateLimiter,
     check_origin,
     get_host,
     get_port,
+    is_reserved_cookie,
     parse_cookies,
     parse_user_agent,
     relative_time,
@@ -76,6 +80,16 @@ def test_parse_cookies_and_strip_reserved() -> None:
     assert strip_reserved_cookies(None) is None
 
 
+def test_strip_reserved_cookies_handles_browser_prefixes() -> None:
+    # Over HTTPS the session cookie is issued as ``__Host-warden_session``, so
+    # matching only the bare names let the token reach every upstream.
+    assert strip_reserved_cookies("__Host-warden_session=abc; theme=dark") == "theme=dark"
+    assert strip_reserved_cookies("__Secure-warden_challenge=x; other=1") == "other=1"
+    assert strip_reserved_cookies("__Host-warden_session=abc") is None
+    assert is_reserved_cookie("__Host-warden_session") is True
+    assert is_reserved_cookie("theme") is False
+
+
 def test_safe_next_rejects_absolute_and_tricky_urls() -> None:
     assert safe_next("/services?x=1") == "/services?x=1"
     assert safe_next(None) == "/"
@@ -129,6 +143,35 @@ def test_upstream_url_joins_base_path_and_query() -> None:
         upstream_url(plain, b"/x", b"", websocket=True)
         == "wss://example.internal/x"
     )
+
+
+def _offline_redis_limiter(monkeypatch, *, ttl: int = 300) -> RedisRateLimiter:
+    """Build a ``RedisRateLimiter`` on its in-memory fallback.
+
+    Blocking the ``redis.asyncio`` import makes the test independent of both
+    redis-py and a running server, while still executing the real limiter.
+    """
+    monkeypatch.setitem(sys.modules, "redis.asyncio", None)
+    return RedisRateLimiter("redis://localhost", ttl=ttl)
+
+
+def test_redis_rate_limiter_enforces_window(monkeypatch) -> None:
+    limiter = _offline_redis_limiter(monkeypatch)
+    clock = {"now": 1_000.0}
+    monkeypatch.setattr("warden.utils.time.time", lambda: clock["now"])
+
+    clock["now"] = 1_000.0
+    assert asyncio.run(limiter.allow("1.2.3.4:login", 2, 60.0)) == (True, 1)
+    clock["now"] = 1_001.0
+    assert asyncio.run(limiter.allow("1.2.3.4:login", 2, 60.0)) == (True, 0)
+    clock["now"] = 1_002.0
+    # Over-limit attempts are refused and do not extend the window.
+    assert asyncio.run(limiter.allow("1.2.3.4:login", 2, 60.0)) == (False, 0)
+    # Limits are tracked per key.
+    assert asyncio.run(limiter.allow("5.6.7.8:login", 2, 60.0)) == (True, 1)
+    # Entries older than the window are pruned, so a client recovers.
+    clock["now"] = 1_070.0
+    assert asyncio.run(limiter.allow("1.2.3.4:login", 2, 60.0)) == (True, 1)
 
 
 def test_rate_limiter_window() -> None:

@@ -213,3 +213,60 @@ def test_websocket_subprotocol_filter(ws_client) -> None:
     # Create route with restricted subprotocol; offering wrong one should close
     # (requires modifying config — skip for now; documented in feature spec)
     pass
+
+
+def test_websocket_respects_ip_allow_list(tmp_path: Path) -> None:
+    """A route restricted by IP must reject the upgrade, not just HTTP requests."""
+    with websocket_upstream() as upstream:
+        data = config_dict(
+            tmp_path,
+            routes=[
+                {
+                    "host": "ws-locked.home.lan",
+                    "upstream": upstream,
+                    "auth": False,
+                    "allowed_ips": ["10.0.0.0/8"],
+                },
+            ],
+        )
+        path = write_config(tmp_path, data)
+        seed_user(tmp_path / "warden.db", credential_count=1)
+        app = create_app(path)
+        with (
+            TestClient(app, base_url="http://admin.home.lan") as client,
+            pytest.raises(WebSocketDisconnect) as excinfo,
+            client.websocket_connect(
+                "/echo", headers={"host": "ws-locked.home.lan"}
+            ) as websocket,
+        ):
+            websocket.receive_text()
+    assert excinfo.value.code == 4403
+    assert "Access denied" in excinfo.value.reason
+
+
+def test_websocket_respects_blocked_paths(tmp_path: Path) -> None:
+    """A blocked path must stop the upgrade, not just plain HTTP requests."""
+    with websocket_upstream() as upstream:
+        data = config_dict(
+            tmp_path,
+            routes=[
+                {
+                    "host": "ws-blocked.home.lan",
+                    "upstream": upstream,
+                    "auth": False,
+                    "blocked_paths": ["/echo"],
+                },
+            ],
+        )
+        path = write_config(tmp_path, data)
+        seed_user(tmp_path / "warden.db", credential_count=1)
+        app = create_app(path)
+        with (
+            TestClient(app, base_url="http://admin.home.lan") as client,
+            pytest.raises(WebSocketDisconnect) as excinfo,
+            client.websocket_connect(
+                "/echo", headers={"host": "ws-blocked.home.lan"}
+            ) as websocket,
+        ):
+            websocket.receive_text()
+    assert excinfo.value.code == 4403

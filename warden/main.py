@@ -355,6 +355,8 @@ def create_app(
                 except TimeoutError:
                     logger.warning("Background task %s did not exit within shutdown timeout", task.get_name())
             await monitor.stop()
+            if isinstance(app.state.rate_limiter, RedisRateLimiter):
+                await app.state.rate_limiter.close()
             await engine.close()
             await database.close()
             app.state.background_tasks = []

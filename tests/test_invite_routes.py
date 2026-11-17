@@ -64,9 +64,9 @@ class TestInviteBeginRoute:
         app, _ = app_and_path
         db = app.state.db
 
-        username = "used-invite-%d" % int(time.time() * 1000)
+        username = f"used-invite-{int(time.time() * 1000)}"
         user = await db.create_user(username, "Used", b"U" * 16, is_admin=False)
-        token = "USED-INVITE-%d" % user.id
+        token = f"USED-INVITE-{user.id}"
         invite_id = await db.create_invite(user.id, token, time.time() + 3600)
         await db.mark_invite_used(invite_id)
 

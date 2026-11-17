@@ -127,6 +127,73 @@ def test_proxy_rewrite_set_cookie_drops_secure_on_http() -> None:
     assert "Secure" not in rewritten
 
 
+def test_proxy_rewrite_set_cookie_drops_prefixed_session_cookie() -> None:
+    manager = MagicMock(spec=ConfigManager)
+    manager.config = WardenConfig()
+    engine = ProxyEngine(manager, MetricsModule())
+    route = RouteConfig(host="app.local", upstream="http://192.168.1.5:3000")
+    scope = {"scheme": "https", "headers": [(b"host", b"app.local")]}
+    assert engine._rewrite_set_cookie("__Host-warden_session=abc; Path=/", scope, route) is None
+    assert engine._rewrite_set_cookie("__Host-warden_challenge=abc; Path=/", scope, route) is None
+
+
+def test_proxy_access_denials_cover_ws_rules() -> None:
+    route = RouteConfig(
+        host="app.local",
+        upstream="http://192.168.1.5:3000",
+        allowed_ips=["10.0.0.0/8"],
+        denied_ips=["10.9.9.9/32"],
+        blocked_paths=["/admin/*", "/secret"],
+        blocked_user_agents=["BadBot"],
+    )
+    assert ProxyEngine._ip_denial(route, "10.1.2.3") is None
+    assert "explicitly blocked" in ProxyEngine._ip_denial(route, "10.9.9.9")
+    assert "not authorized" in ProxyEngine._ip_denial(route, "192.0.2.1")
+    # An unparseable client address is denied whenever an allow-list exists.
+    assert ProxyEngine._ip_denial(route, "unknown") == "Invalid client IP address."
+    assert ProxyEngine._user_agent_denial(route, "curl/8 badbot") is not None
+    assert ProxyEngine._user_agent_denial(route, "Mozilla/5.0") is None
+    assert ProxyEngine._path_denial(route, "/admin/users") is not None
+    assert ProxyEngine._path_denial(route, "/secret") is not None
+    assert ProxyEngine._path_denial(route, "/administrator") is None
+
+
+def test_proxy_ip_denial_unwraps_ipv4_mapped_addresses() -> None:
+    # A dual-stack listener reports IPv4 clients as ``::ffff:a.b.c.d``; an
+    # allow-list must still accept them and a deny-list must still block them.
+    route = RouteConfig(
+        host="app.local",
+        upstream="http://192.168.1.5:3000",
+        allowed_ips=["10.0.0.0/8"],
+    )
+    assert ProxyEngine._ip_denial(route, "::ffff:10.1.2.3") is None
+    blocked = RouteConfig(
+        host="app.local",
+        upstream="http://192.168.1.5:3000",
+        denied_ips=["10.9.9.9/32"],
+    )
+    assert "explicitly blocked" in ProxyEngine._ip_denial(blocked, "::ffff:10.9.9.9")
+
+
+def test_proxy_path_denial_normalizes_dot_segments() -> None:
+    route = RouteConfig(
+        host="app.local",
+        upstream="http://192.168.1.5:3000",
+        blocked_paths=["/secret", "/admin/*"],
+    )
+    for path in ("/secret/", "//secret", "/./secret", "/public/../secret"):
+        assert ProxyEngine._path_denial(route, path) is not None, path
+    assert ProxyEngine._path_denial(route, "/admin/./users") is not None
+    assert ProxyEngine._path_denial(route, "/public/secret") is None
+    assert ProxyEngine._path_denial(route, "/administrator") is None
+    # ``/*`` still blocks everything, as it did before normalisation.
+    everything = RouteConfig(
+        host="app.local", upstream="http://192.168.1.5:3000", blocked_paths=["/*"]
+    )
+    assert ProxyEngine._path_denial(everything, "/") is not None
+    assert ProxyEngine._path_denial(everything, "/anything") is not None
+
+
 def test_proxy_rewrite_set_cookie_drops_unreachable_domain() -> None:
     manager = MagicMock(spec=ConfigManager)
     manager.config = WardenConfig()
@@ -338,6 +405,19 @@ class TestProxyHandleHttp:
         route = self._route(allowed_ips=["10.0.0.0/8"])
         scope = self._scope(client=("not-an-ip", 12345))
         upstream = self._upstream(status=403)
+        engine._client = MagicMock(return_value=self._client(upstream))
+        with patch("warden.proxy.Request", return_value=self._make_request()):
+            await self._call(engine, scope, AsyncMock(), MagicMock(), route)
+        engine._client.assert_not_called()
+        engine._send.assert_awaited_once()
+        assert engine._send.call_args[0][0].status_code == 403
+
+    async def test_handle_http_blocked_path_cannot_be_dodged(self, engine):
+        # ``/public/../secret`` reaches the upstream as ``/secret`` but must
+        # still be refused before the request is forwarded.
+        route = self._route(blocked_paths=["/secret"])
+        scope = self._scope(path="/public/../secret")
+        upstream = self._upstream(status=200)
         engine._client = MagicMock(return_value=self._client(upstream))
         with patch("warden.proxy.Request", return_value=self._make_request()):
             await self._call(engine, scope, AsyncMock(), MagicMock(), route)

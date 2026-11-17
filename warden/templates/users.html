@@ -21,13 +21,14 @@
       <tr>
         <th>User</th>
         <th>Role</th>
+        <th>Groups</th>
         <th>Joined</th>
         <th class="text-right">Actions</th>
       </tr>
     </thead>
     <tbody>
       {% for user in users %}
-      <tr data-user-id="{{ user.id }}" class="user-row">
+      <tr data-user-id="{{ user.id }}" class="user-row" data-groups="{{ (memberships.get(user.id) or []) | join(',') }}">
         <td>
           <div class="user-info">
             <span class="user-name">{{ user.display_name }}</span>
@@ -41,6 +42,13 @@
           <span class="badge {{ 'badge-accent' if user.is_admin else 'badge-indigo' }}">
             {{ 'Administrator' if user.is_admin else 'User' }}
           </span>
+        </td>
+        <td>
+          <div class="group-badges" style="display: flex; flex-wrap: wrap; gap: 6px;">
+            {% for group in memberships.get(user.id, []) %}
+            <span class="badge badge-indigo">{{ group }}</span>
+            {% endfor %}
+          </div>
         </td>
         <td class="mono">{{ user.created_at | relative_time }}</td>
         <td class="text-right">
@@ -56,6 +64,36 @@
     </tbody>
   </table>
 </div>
+
+<section class="panel" style="margin-top: 18px;">
+  <div class="panel-body">
+    <p class="panel-title">Access groups</p>
+    <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px;">
+      Every user belongs to <strong>Users</strong>. Give a route an ACL by listing groups on it;
+      routes without one stay open to every signed-in user.
+    </p>
+    <form id="group-form" class="form-row" style="align-items: flex-end;">
+      <label class="field" style="flex: 1;">
+        <span class="field-label">New group</span>
+        <input class="input" name="name" type="text" maxlength="64" placeholder="Family" required autocomplete="off">
+      </label>
+      <button class="btn btn-secondary" type="submit" id="group-submit">Create group</button>
+    </form>
+    <div id="group-list" style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px;">
+      {% for group in groups %}
+      <span class="badge badge-indigo" data-group-id="{{ group.id }}" data-group-name="{{ group.name }}">
+        {{ group.name }} · {{ group.member_count }}
+        {% if group.name != 'Users' %}
+        <button class="group-delete" type="button" aria-label="Delete {{ group.name }}" style="background: none; border: 0; color: inherit; cursor: pointer; padding: 0 0 0 4px;">×</button>
+        {% endif %}
+      </span>
+      {% endfor %}
+    </div>
+    <div id="group-error" class="hidden panel" style="border-color: var(--red); background: var(--red-soft); margin-top: 12px;">
+      <div class="panel-body" style="color: var(--red-text); font-size: 12px;"></div>
+    </div>
+  </div>
+</section>
 
 <div class="modal-overlay" id="user-modal-overlay" hidden>
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="user-modal-title">
@@ -120,6 +158,18 @@
         <span class="switch-track"></span>
         <span class="switch-copy"><strong>Administrator</strong><span>Full access to all settings</span></span>
       </label>
+      <fieldset class="field" style="border: 0; padding: 0; margin: 0; min-width: 0;">
+        <legend class="field-label" style="padding: 0;">Access groups</legend>
+        <div data-group-choices style="display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 8px;">
+          {% for group in groups %}
+          <label style="display: flex; align-items: center; gap: 6px; font-size: 13px;">
+            <input type="checkbox" name="groups" value="{{ group.name }}" {% if group.name == 'Users' %}checked disabled{% endif %}>
+            <span>{{ group.name }}</span>
+          </label>
+          {% endfor %}
+        </div>
+        <span class="field-hint">Routes without a group ACL stay open to every signed-in user. Admins always have access.</span>
+      </fieldset>
       <div class="form-actions">
         <button class="btn btn-ghost" type="button" data-close-modal>Cancel</button>
         <button class="btn btn-primary" type="submit" id="edit-user-submit">Save changes</button>

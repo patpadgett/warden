@@ -303,6 +303,11 @@
                   <input class="input" id="service-public-paths" name="public_paths" type="text" placeholder="/assets/*, /health" autocomplete="off">
                 </label>
               </div>
+              <label class="field">
+                <span class="field-label">Allowed groups <span class="optional">comma separated — empty means every signed-in user</span></span>
+                <input class="input" id="service-allowed-groups" name="allowed_groups" type="text" placeholder="Users, Family" autocomplete="off">
+                <span class="field-hint">Restrict this route to members of these groups. Admins always have access.</span>
+              </label>
               <div class="form-row">
                 <label class="switch">
                   <input type="checkbox" id="service-websocket" name="websocket" checked>

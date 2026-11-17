@@ -74,6 +74,7 @@
       form.elements.icon.value = data.icon || "";
       form.elements.health_path.value = data.health_path || "/";
       form.elements.public_paths.value = data.public_paths || "";
+      form.elements.allowed_groups.value = data.allowed_groups || "";
       W.$("#service-auth").checked = Boolean(data.auth);
       W.$("#service-enabled").checked = Boolean(data.enabled);
       W.$("#service-websocket").checked = Boolean(data.websocket);
@@ -134,6 +135,10 @@
         .split(",")
         .map((item) => item.trim())
         .filter(Boolean);
+      const allowedGroups = form.elements.allowed_groups.value
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
       const payload = {
         host: form.elements.host.value.trim(),
         upstream: form.elements.upstream.value.trim(),
@@ -146,6 +151,7 @@
         verify_tls: W.$("#service-verify-tls").checked,
         health_path: form.elements.health_path.value.trim() || "/",
         public_paths: publicPaths,
+        allowed_groups: allowedGroups,
       };
       W.setBusy(submit, true, editingHost ? "Saving…" : "Adding…");
       try {
@@ -882,6 +888,10 @@
       editForm.elements.display_name.value = name;
       editForm.elements.email.value = email;
       editForm.elements.is_admin.checked = isAdmin;
+      const groups = (row.dataset.groups || "").split(",").filter(Boolean);
+      editForm.querySelectorAll('input[name="groups"]').forEach((input) => {
+        input.checked = groups.includes(input.value);
+      });
       hide(editError);
       W.openOverlay(editModal);
       editForm.elements.display_name.focus();
@@ -904,11 +914,18 @@
         email: editForm.elements.email.value.trim() || null,
         is_admin: editForm.elements.is_admin.checked,
       };
+      const groups = Array.from(
+        editForm.querySelectorAll('input[name="groups"]:checked')
+      ).map((input) => input.value);
       W.setBusy(editSubmit, true, "Saving…");
       try {
         await W.fetchJSON(`/_warden/api/users/${encodeURIComponent(userId)}`, {
           method: "PATCH",
           body: payload,
+        });
+        await W.fetchJSON(`/_warden/api/users/${encodeURIComponent(userId)}/groups`, {
+          method: "PUT",
+          body: { groups },
         });
         const row = W.$(`[data-user-id="${userId}"]`);
         if (row) {
@@ -925,6 +942,17 @@
           }
           const promoteBtn = row.querySelector(".toggle-admin");
           if (promoteBtn) promoteBtn.textContent = payload.is_admin ? 'Demote' : 'Promote';
+          row.dataset.groups = groups.join(",");
+          const badges = row.querySelector(".group-badges");
+          if (badges) {
+            badges.replaceChildren();
+            groups.slice().sort().forEach((name) => {
+              const badge = document.createElement("span");
+              badge.className = "badge badge-indigo";
+              badge.textContent = name;
+              badges.appendChild(badge);
+            });
+          }
         }
         W.closeOverlay(editModal);
         W.toast("User updated.");
@@ -933,6 +961,87 @@
         showFailure(editError, error);
       } finally {
         W.setBusy(editSubmit, false);
+      }
+    });
+
+    const groupForm = W.$("#group-form");
+    const groupError = W.$("#group-error");
+    const groupList = W.$("#group-list");
+    const groupSubmit = W.$("#group-submit");
+
+    const addGroupChoice = (name) => {
+      const holder = editForm?.querySelector("[data-group-choices]");
+      if (!holder) return;
+      const label = document.createElement("label");
+      label.style.cssText = "display: flex; align-items: center; gap: 6px; font-size: 13px;";
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.name = "groups";
+      input.value = name;
+      const text = document.createElement("span");
+      text.textContent = name;
+      label.append(input, text);
+      holder.appendChild(label);
+    };
+
+    groupForm?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      hide(groupError);
+      const name = groupForm.elements.name.value.trim();
+      if (!name) return;
+      W.setBusy(groupSubmit, true, "Creating…");
+      try {
+        const data = await W.fetchJSON("/_warden/api/groups", {
+          method: "POST",
+          body: { name },
+        });
+        const group = data.group;
+        if (groupList) {
+          const badge = document.createElement("span");
+          badge.className = "badge badge-indigo";
+          badge.dataset.groupId = group.id;
+          badge.dataset.groupName = group.name;
+          badge.append(document.createTextNode(`${group.name} · 0 `));
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.className = "group-delete";
+          remove.setAttribute("aria-label", `Delete ${group.name}`);
+          remove.textContent = "×";
+          remove.style.cssText = "background: none; border: 0; color: inherit; cursor: pointer; padding: 0 0 0 4px;";
+          badge.appendChild(remove);
+          groupList.appendChild(badge);
+        }
+        addGroupChoice(group.name);
+        groupForm.reset();
+        W.toast(`Group ${group.name} created.`, { title: "Access groups" });
+      } catch (error) {
+        if (handleExpiredSession(error)) return;
+        showFailure(groupError, error);
+      } finally {
+        W.setBusy(groupSubmit, false);
+      }
+    });
+
+    groupList?.addEventListener("click", async (event) => {
+      const button = event.target.closest(".group-delete");
+      if (!button) return;
+      const badge = button.closest("[data-group-id]");
+      if (!badge) return;
+      const name = badge.dataset.groupName;
+      if (!(await W.confirm(`Delete the group ${name}? Routes limited to it will deny everyone except admins.`, { danger: true, confirmLabel: "Delete" }))) {
+        return;
+      }
+      button.disabled = true;
+      try {
+        await W.fetchJSON(`/_warden/api/groups/${encodeURIComponent(badge.dataset.groupId)}`, {
+          method: "DELETE",
+        });
+        badge.remove();
+        W.toast(`Group ${name} deleted.`);
+      } catch (error) {
+        button.disabled = false;
+        if (handleExpiredSession(error)) return;
+        W.toast(error.message, { title: "Could not delete group", type: "error" });
       }
     });
 

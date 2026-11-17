@@ -14,6 +14,11 @@ from warden.utils import truncate
 logger = logging.getLogger("warden.health")
 
 
+def escape_label(value: Any) -> str:
+    """Escape a Prometheus label value (backslash, quote, newline)."""
+    return str(value).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+
 @dataclass(slots=True)
 class RouteMetrics:
     """Route metrics per host."""
@@ -206,10 +211,6 @@ class MetricsModule:
 
     def prometheus_metrics(self) -> str:
         """Export metrics in Prometheus text format."""
-        def _escape(value: str) -> str:
-            """_escape."""
-            return str(value).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
-
         lines = []
         now = time.time()
         
@@ -220,7 +221,7 @@ class MetricsModule:
         
         # Route metrics
         for host, m in self.metrics.items():
-            host_label = _escape(host)
+            host_label = escape_label(host)
             lines.append(f'# HELP warden_route_requests_total Total requests for {host}')
             lines.append('# TYPE warden_route_requests_total counter')
             lines.append(f'warden_route_requests_total{{host="{host_label}"}} {m.requests}')
