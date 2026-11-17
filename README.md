@@ -16,6 +16,7 @@ and every service behind `auth: true` shares that sign-in.
 ## Contents
 
 - [Why](#why)
+- [Screenshots](#screenshots)
 - [Quick start (local trial)](#quick-start-local-trial)
 - [Security notes](#security-notes)
 - [Deployment](#deployment)
@@ -46,6 +47,32 @@ and every service behind `auth: true` shares that sign-in.
   are managed from the dashboard. YAML remains the source of truth.
 - **No build step.** The dashboard is server-rendered HTML with vanilla
   JavaScript and a single CSS file.
+
+## Screenshots
+
+The admin interface runs on the reserved `admin_host` and is reachable only
+after a passkey sign-in.
+
+![Warden services dashboard](assets/screenshots/dashboard.png)
+
+*Services dashboard — routes, live health, proxied request counts, and recent traffic.*
+
+<details>
+<summary>More of the admin interface</summary>
+
+![Warden audit log](assets/screenshots/activity.png)
+
+*Audit log — sign-ins, config changes, and mesh actions, newest first.*
+
+![Warden WireGuard mesh](assets/screenshots/mesh.png)
+
+*WireGuard mesh — peers, handshakes, and hub key management.*
+
+![Warden passkeys and sessions](assets/screenshots/passkeys.png)
+
+*Access — registered passkeys and active sessions.*
+
+</details>
 
 ## Quick start (local trial)
 
