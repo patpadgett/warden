@@ -1,7 +1,6 @@
 # Warden
 
 [![tests](https://github.com/patpadgett/warden/actions/workflows/python-app.yml/badge.svg)](https://github.com/patpadgett/warden/actions/workflows/python-app.yml)
-[![Powered by DartNode](https://dartnode.com/branding/DN-Open-Source-sm.png)](https://dartnode.com "Powered by DartNode - Free VPS for Open Source")
 
 **One door to your homelab.**
 
@@ -951,12 +950,15 @@ process, and an architecture glossary live in
 [`CONTRIBUTING.md`](CONTRIBUTING.md). Supporting documents:
 
 - [`SECURITY.md`](SECURITY.md) — vulnerability reporting and disclosure policy.
-- [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) — audit findings and their status.
 - [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) — community expectations.
-- [`PRODUCT.md`](PRODUCT.md) — product positioning and principles.
 
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+## Sponsors
+
+[![Powered by DartNode](dartnode-logo.png)](https://dartnode.com/open-source "Powered by DartNode - Free VPS for Open Source")
+
 
 <!-- Verified on DartNode: DNOS-111A35E3 -->
