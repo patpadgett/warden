@@ -30,7 +30,9 @@ htmlcov/
 .DS_Store
 .warden/
 .impeccable/
-.github/
+# Local agent config stays out of the repo; the CI workflows are tracked.
+.github/*
+!.github/workflows/
 e2e/
 DESIGN.md
 PRODUCT.md

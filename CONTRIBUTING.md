@@ -112,6 +112,30 @@ inspection, mesh configs, authentication ceremonies (with mocked WebAuthn
 verification), HTTP proxy behavior, admin APIs, WebSockets, and the CLI. It does
 not replace a real browser passkey ceremony.
 
+ACME issuance has a second, opt-in check that the suite cannot host: it starts a
+real Pebble CA and a real `warden serve`. Run it after touching `warden/tls.py`,
+the challenge route, or the renewal loop:
+
+```bash
+python scripts/pebble_issuance.py
+```
+
+The first run downloads the pinned Pebble binary into `tmp/pebble-cache/`; both
+processes bind free loopback ports. It exits non-zero and keeps its scratch
+directory when a check fails.
+
+The Redis rate limiter has a similar opt-in check. `tests/test_rate_limiter_redis.py`
+runs against a real server and skips when none answers, so point it at one (CI
+starts a `redis:7` service):
+
+```bash
+redis-server --daemonize yes   # or export WARDEN_TEST_REDIS_URL
+pytest tests/test_rate_limiter_redis.py
+```
+
+Without a server those tests skip silently; they fail only when Warden writes
+nothing to Redis or stops blocking after the configured limit.
+
 To run against a development config:
 
 ```bash

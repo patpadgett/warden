@@ -1,0 +1,54 @@
+name: Pebble ACME
+
+# The suite mocks the ACME server, so this job runs the real thing on a
+# schedule: a Pebble CA, a live `warden serve`, and an actual HTTP-01 order.
+# It is kept out of the push/PR workflow because it downloads a binary and
+# binds loopback ports. See ROADMAP.md §2 and scripts/pebble_issuance.py.
+
+on:
+  schedule:
+    - cron: "17 4 * * 1"  # Mondays, 04:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pebble:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Cache the Pebble release
+        uses: actions/cache@v4
+        with:
+          path: tmp/pebble-cache
+          # Keep in step with PEBBLE_VERSION in scripts/pebble_issuance.py so a
+          # version bump downloads the new release instead of a stale cache.
+          key: pebble-${{ runner.os }}-v2.10.3
+      - name: Run the issuance check
+        id: pebble
+        run: |
+          set -o pipefail
+          python scripts/pebble_issuance.py 2>&1 | tee pebble-check.txt
+      - name: Report the result
+        if: always()
+        run: |
+          {
+            echo "### Pebble ACME issuance: ${{ steps.pebble.outcome }}"
+            echo
+            if [ -f pebble-check.txt ]; then
+              echo '```'
+              cat pebble-check.txt
+              echo '```'
+            else
+              echo "The check did not run; see the job log."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

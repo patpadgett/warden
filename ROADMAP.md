@@ -43,6 +43,16 @@ deadline. With those fixed the CA validated the challenge, the order finalized,
 and the renewal loop wrote a two-certificate chain issued by
 `CN=Pebble Intermediate CA …` and set `restart_required`.
 
+**Repeatable.** `python scripts/pebble_issuance.py` reruns the same check from
+a clean checkout. It caches the pinned Pebble v2.10.3 binary under
+`tmp/pebble-cache/`, generates a throwaway CA for Pebble's own HTTPS directory,
+starts both processes on free ports, and asserts the Pebble issuer, a
+certificate chain carrying the intermediate, three challenge fetches answered
+200, and the restart notice in the log. It stays out of `pytest` because it
+downloads a binary and binds loopback ports; run it after changing
+`warden/tls.py`, the challenge route, or the renewal loop. The `Pebble ACME`
+workflow runs it weekly (and on demand) and puts the result in the job summary.
+
 Not yet exercised against a real CA: production rate limits, and an order that
 fails issuance *after* validation (that error path is unit-tested only).
 
@@ -56,10 +66,11 @@ Not worth building without a specific deployment that needs it.
 
 ## 4. Smaller items
 
-* **Blind `pytest.raises(Exception)`** in `tests/test_invite_flow.py` is lint
-  debt in the CI-ignored target and can mask real failures (`B017`). Worth
-  narrowing to the expected exception before trusting those tests as
-  regression cover.
+* **Lint the tests in CI.** The suite is clean now: the eight `B017`, `SIM117`,
+  `UP031` and `C408` findings are fixed, and the blind `pytest.raises(Exception)`
+  assertions in `tests/test_invite_flow.py` name `AuthError` and match the
+  message the flow raises. The workflow still lints only `warden`, so widening
+  that step is what stops the debt coming back.
 * **Self-hosted webfont.** Every page loads JetBrains Mono from
   `fonts.googleapis.com`, which KNOWN_ISSUES #12 added to the CSP. Serving it
   from `static/` would remove the third-party request and let the CSP drop two
