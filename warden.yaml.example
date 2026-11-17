@@ -30,6 +30,12 @@ server:
   # external_scheme: https
   # public_url: https://warden.home.lan
 
+  # Optional bearer token for the Prometheus metrics endpoint. When set,
+  # GET /_warden/metrics accepts `Authorization: Bearer <token>` (or
+  # `?token=<token>`) without a passkey session, so Prometheus can scrape it.
+  # Generate a long random value, e.g. `openssl rand -hex 32`.
+  # metrics_token: change-me
+
   # Only enable when Warden is behind a reverse proxy you control. Otherwise a
   # client can spoof X-Forwarded-* headers.
   # trust_proxy_headers: false
@@ -48,6 +54,11 @@ server:
   # max_vacuum_bytes: 104857600
   # max_body_size_mb: 10
   # max_sessions_per_user: 10
+
+  # Require every admin to enrol TOTP. An admin without an authenticator can
+  # only open the passkeys page until they enrol one, so this cannot lock a
+  # deployment out of its own dashboard.
+  # require_otp_for_admins: true
 
   # Logging. log_rotation is "size" or "time".
   # log_level: info
@@ -106,6 +117,8 @@ webauthn:
 #   user: warden
 #   password: secret
 #   starttls: true
+#   # Implicit TLS (port 465) instead of STARTTLS; cannot be combined with it.
+#   ssl: false
 #   from_address: warden@example.com
 #   subject_prefix: Your first-login invite
 

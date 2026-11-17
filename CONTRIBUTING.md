@@ -80,7 +80,7 @@ do not edit a version string in `pyproject.toml`.
 
 Warden ships with an embedded, transactional schema-migration system so that
 upgrading between versions never leaves the database behind. The current schema
-version is defined by the `SCHEMA_VERSION` constant (currently `5`). Each upgrade
+version is defined by the `SCHEMA_VERSION` constant (currently `8`). Each upgrade
 step is a plain-SQL script stored in the `_MIGRATIONS` dictionary, keyed by the
 target version:
 
@@ -89,6 +89,9 @@ target version:
 - **v3** – Credentials, sessions, challenges, backup codes, and OTP secrets (passkeys and MFA).
 - **v4** – `invites` table for first-login passkey registration.
 - **v5** – `users.email` column for invite delivery and account notices.
+- **v6** – `acl_groups` / `acl_members` for per-route ACLs; every account joins the seeded `Users` group.
+- **v7** – `otp_secrets.verified`, `pending_secret`, `pending_created_at`, so an enrolment never clobbers a working authenticator.
+- **v8** – `otp_secrets.last_used_counter`, so an accepted TOTP code cannot be replayed inside its drift window.
 
 When `Database.init()` runs, it reads the highest `version` already recorded in
 `schema_migrations` and applies every script for versions greater than that, in

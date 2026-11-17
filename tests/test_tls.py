@@ -11,6 +11,7 @@ from cryptography.x509.oid import NameOID
 
 from warden.config import parse_config_text
 from warden.tls import (
+    ACMEManager,
     TLSError,
     certificate_status,
     read_certificate,
@@ -147,3 +148,46 @@ def test_validate_runtime_files(tmp_path: Path) -> None:
     key_path.unlink()
     with pytest.raises(TLSError, match="private key not found"):
         validate_runtime_files(config)
+
+
+def test_validate_runtime_files_rejects_unusable_keys(tmp_path: Path) -> None:
+    """A readable key is not enough: it has to parse, be unencrypted, and match."""
+    cert_path, key_path = make_certificate(tmp_path)
+    config = tls_config(tmp_path, cert_path, key_path)
+
+    key_path.write_text("not a private key", encoding="utf-8")
+    with pytest.raises(TLSError, match="Could not parse TLS private key"):
+        validate_runtime_files(config)
+
+    other_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    key_path.write_bytes(
+        other_key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.TraditionalOpenSSL,
+            serialization.BestAvailableEncryption(b"secret"),
+        )
+    )
+    with pytest.raises(TLSError, match="passphrase-protected"):
+        validate_runtime_files(config)
+
+    key_path.write_bytes(
+        other_key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.TraditionalOpenSSL,
+            serialization.NoEncryption(),
+        )
+    )
+    with pytest.raises(TLSError, match="does not match the certificate"):
+        validate_runtime_files(config)
+
+
+def test_expired_acme_tokens_are_pruned_on_insert() -> None:
+    """Challenge tokens do not accumulate for every renewal the CA fetched."""
+    from unittest.mock import MagicMock
+
+    acme = ACMEManager(MagicMock())
+    acme.set_challenge_token("stale", "stale.key-authorization", validity=0)
+    acme.set_challenge_token("live", "live.key-authorization")
+
+    assert "stale" not in acme._tokens
+    assert acme.get_challenge_response("live") == "live.key-authorization"

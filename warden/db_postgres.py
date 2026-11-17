@@ -156,7 +156,11 @@ otp_secrets = Table(
     "otp_secrets",
     metadata,
     Column("user_id", BigInteger, primary_key=True),
-    Column("secret", String, nullable=False),
+    Column("secret", String, nullable=False, default=""),
+    Column("verified", Integer, nullable=False, default=0),
+    Column("pending_secret", String, nullable=True),
+    Column("pending_created_at", Float, nullable=True),
+    Column("last_used_counter", BigInteger, nullable=True),
     Column("created_at", Float, nullable=False),
 )
 
@@ -333,7 +337,10 @@ _MIGRATIONS: dict[int, str] = {
 
         CREATE TABLE IF NOT EXISTS otp_secrets (
             user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-            secret TEXT NOT NULL,
+            secret TEXT NOT NULL DEFAULT '',
+            verified INTEGER NOT NULL DEFAULT 0,
+            pending_secret TEXT,
+            pending_created_at DOUBLE PRECISION,
             created_at DOUBLE PRECISION NOT NULL
         );
         """,
@@ -375,6 +382,17 @@ _MIGRATIONS: dict[int, str] = {
         INSERT INTO acl_groups (name, created_at)
         VALUES ('Users', EXTRACT(EPOCH FROM NOW()))
         ON CONFLICT DO NOTHING
+        """,
+    7: """\
+        ALTER TABLE otp_secrets ADD COLUMN IF NOT EXISTS verified INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE otp_secrets ADD COLUMN IF NOT EXISTS pending_secret TEXT;
+        ALTER TABLE otp_secrets ADD COLUMN IF NOT EXISTS pending_created_at DOUBLE PRECISION;
+        UPDATE otp_secrets SET verified = 1 WHERE secret IS NOT NULL AND secret <> '';
+        """,
+    8: """\
+        -- Remember the last accepted TOTP step so a code cannot be replayed
+        -- inside the drift window.
+        ALTER TABLE otp_secrets ADD COLUMN IF NOT EXISTS last_used_counter BIGINT;
         """,
 }  # type: ignore[assignment]
 
@@ -1165,13 +1183,29 @@ class PostgresDatabase(Database):
             await session.commit()
             return result.rowcount > 0
 
-    async def delete_credential(self, user_id: int, credential_row_id: int) -> bool:
-        """delete_credential."""
+    async def delete_credential(
+        self, user_id: int, credential_row_id: int, *, keep_last: bool = False
+    ) -> bool:
+        """Delete a credential row.
+
+        With ``keep_last`` the "never remove the only passkey" rule runs inside
+        the DELETE, so two concurrent removals cannot both see two keys and
+        between them delete the last one.
+        """
         async with self.session_factory() as session:
-            result = await session.execute(
-                delete(credentials)
-                .where(credentials.c.user_id == user_id, credentials.c.id == credential_row_id)
-            )
+            if keep_last:
+                result = await session.execute(
+                    text(
+                        "DELETE FROM credentials WHERE id = :id AND user_id = :user_id "
+                        "AND (SELECT COUNT(*) FROM credentials WHERE user_id = :user_id) > 1"
+                    ),
+                    {"id": credential_row_id, "user_id": user_id},
+                )
+            else:
+                result = await session.execute(
+                    delete(credentials)
+                    .where(credentials.c.user_id == user_id, credentials.c.id == credential_row_id)
+                )
             await session.commit()
             return result.rowcount > 0
 
@@ -1409,6 +1443,44 @@ class PostgresDatabase(Database):
                 }
             )
 
+    async def get_challenge(
+        self, challenge_id: str, kind: str, *, now: float | None = None
+    ) -> Challenge | None:
+        """Return a live challenge without consuming it.
+
+        Used by flows that verify a value before spending the challenge (the
+        TOTP second factor), so a mistyped code does not restart the ceremony.
+        """
+        current = now if now is not None else time.time()
+        async with self.session_factory() as session:
+            result = await session.execute(
+                select(challenges).where(
+                    and_(
+                        challenges.c.id == challenge_id,
+                        challenges.c.kind == kind,
+                        challenges.c.expires_at > current,
+                    )
+                )
+            )
+            row = result.fetchone()
+            if row is None:
+                return None
+            row_data = dict(row._mapping)
+            raw_payload = row_data["payload"]
+            try:
+                payload = json.loads(raw_payload) if raw_payload else {}
+            except (TypeError, ValueError):
+                payload = {}
+            return _challenge(
+                {
+                    "id": row_data["id"],
+                    "kind": row_data["kind"],
+                    "payload": payload,
+                    "created_at": row_data["created_at"],
+                    "expires_at": row_data["expires_at"],
+                }
+            )
+
     async def delete_expired_challenges(self) -> int:
         """delete_expired_challenges."""
         async with self.session_factory() as session:
@@ -1565,56 +1637,129 @@ class PostgresDatabase(Database):
             await session.commit()
 
     # ------------------------------------------------------------------ OTP
-    async def set_otp_secret(self, user_id: int, secret: str, now: float | None = None) -> None:
-        """set_otp_secret."""
+    async def set_pending_otp_secret(self, user_id: int, secret: str, now: float | None = None) -> None:
+        """Store a *pending* OTP secret without touching any verified one."""
         created = now if now is not None else time.time()
         async with self.session_factory() as session:
             await session.execute(
                 text(
-                    "INSERT INTO otp_secrets (user_id, secret, created_at) VALUES (:user_id, :secret, :created_at) "
-                    "ON CONFLICT (user_id) DO UPDATE SET secret = :secret, created_at = :created_at"
+                    "INSERT INTO otp_secrets (user_id, secret, verified, pending_secret, pending_created_at, created_at) "
+                    "VALUES (:user_id, '', 0, :secret, :created, :created) "
+                    "ON CONFLICT (user_id) DO UPDATE SET "
+                    "pending_secret = :secret, pending_created_at = :created"
                 ),
-                {
-                    "user_id": user_id,
-                    "secret": secret,
-                    "created_at": created,
-                },
+                {"user_id": user_id, "secret": secret, "created": created},
+            )
+            await session.commit()
+
+    async def set_otp_secret(self, user_id: int, secret: str, now: float | None = None) -> None:
+        """set_otp_secret (promote a secret directly, marked verified)."""
+        created = now if now is not None else time.time()
+        async with self.session_factory() as session:
+            await session.execute(
+                text(
+                    "INSERT INTO otp_secrets (user_id, secret, verified, created_at) VALUES (:user_id, :secret, 1, :created) "
+                    "ON CONFLICT (user_id) DO UPDATE SET "
+                    "secret = :secret, verified = 1, pending_secret = NULL, "
+                    "pending_created_at = NULL, last_used_counter = NULL, "
+                    "created_at = :created"
+                ),
+                {"user_id": user_id, "secret": secret, "created": created},
             )
             await session.commit()
 
     async def get_otp_secret(self, user_id: int) -> str | None:
-        """get_otp_secret."""
+        """Return the active (verified) OTP secret, if any."""
         async with self.session_factory() as session:
             result = await session.execute(
-                select(otp_secrets.c.secret).where(otp_secrets.c.user_id == user_id)
+                select(otp_secrets.c.secret).where(
+                    otp_secrets.c.user_id == user_id, otp_secrets.c.verified == 1
+                )
             )
             row = result.fetchone()
-            return row._mapping["secret"] if row else None
+            value = row._mapping["secret"] if row else None
+            return value if value else None
 
-    async def verify_otp(self, user_id: int, code: str, *, window: int = 1) -> bool:
-        """verify_otp."""
-        secret = await self.get_otp_secret(user_id)
-        if not secret:
-            return False
-        try:
-            import base64
-            import binascii
-            import hashlib
-            import hmac
-            import struct
+    async def get_pending_otp_secret(self, user_id: int) -> str | None:
+        """Return the pending (unverified) OTP secret, if any."""
+        async with self.session_factory() as session:
+            result = await session.execute(
+                select(otp_secrets.c.pending_secret).where(otp_secrets.c.user_id == user_id)
+            )
+            row = result.fetchone()
+            return row._mapping["pending_secret"] if row else None
 
-            key = base64.b32decode(secret.upper().replace(" ", ""), casefold=True)
-            interval = int(time.time() // 30)
-            for offset in range(-window, window + 1):
-                counter = interval + offset
-                msg = struct.pack(">Q", counter)
-                h = hmac.new(key, msg, hashlib.sha1).digest()
-                o = h[-1] & 0x0F
-                token = (struct.unpack(">I", h[o : o + 4])[0] & 0x7fffffff) % 1000000
-                if f"{token:06d}" == code:
-                    return True
-        except (binascii.Error, TypeError, struct.error):
-            return False
+    async def clear_pending_otp_secret(self, user_id: int) -> None:
+        """Discard a pending OTP secret."""
+        async with self.session_factory() as session:
+            await session.execute(
+                text("UPDATE otp_secrets SET pending_secret = NULL, pending_created_at = NULL WHERE user_id = :user_id"),
+                {"user_id": user_id},
+            )
+            await session.commit()
+
+    async def clear_otp_secret(self, user_id: int) -> None:
+        """Remove a user's TOTP enrolment entirely (pending and active)."""
+        async with self.session_factory() as session:
+            await session.execute(delete(otp_secrets).where(otp_secrets.c.user_id == user_id))
+            await session.commit()
+
+    async def otp_user_ids(self) -> set[int]:
+        """Return the ids of every user with a verified TOTP secret."""
+        async with self.session_factory() as session:
+            result = await session.execute(
+                select(otp_secrets.c.user_id).where(
+                    otp_secrets.c.verified == 1, otp_secrets.c.secret != ""
+                )
+            )
+            return {int(row[0]) for row in result.fetchall()}
+
+    async def verify_otp(
+        self, user_id: int, code: str, *, window: int = 1, at: float | None = None
+    ) -> bool:
+        """Verify *code* and spend the time-step it matched.
+
+        Mirrors :meth:`warden.db.Database.verify_otp`: the pending secret is
+        tried first and promoted on success, and the matched step is written to
+        ``last_used_counter`` by the same ``UPDATE`` that accepts the code, so a
+        replay is refused and two concurrent requests cannot both win.
+        """
+        active = await self.get_otp_secret(user_id)
+        pending = await self.get_pending_otp_secret(user_id)
+        for secret, is_pending in ((pending, True), (active, False)):
+            if not secret:
+                continue
+            counter = self.totp_match_counter(secret, code, window=window, at=at)
+            if counter is None:
+                continue
+            async with self.session_factory() as session:
+                if is_pending:
+                    result = await session.execute(
+                        text(
+                            "UPDATE otp_secrets SET secret = :secret, verified = 1, "
+                            "pending_secret = NULL, pending_created_at = NULL, "
+                            "created_at = :created, last_used_counter = :counter "
+                            "WHERE user_id = :user_id"
+                        ),
+                        {
+                            "secret": secret,
+                            "created": time.time(),
+                            "counter": counter,
+                            "user_id": user_id,
+                        },
+                    )
+                else:
+                    result = await session.execute(
+                        text(
+                            "UPDATE otp_secrets SET last_used_counter = :counter "
+                            "WHERE user_id = :user_id "
+                            "AND (last_used_counter IS NULL OR last_used_counter < :counter)"
+                        ),
+                        {"counter": counter, "user_id": user_id},
+                    )
+                await session.commit()
+            if result.rowcount:
+                return True
         return False
 
     # ------------------------------------------------------------------ mesh (extra)

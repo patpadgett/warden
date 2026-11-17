@@ -34,5 +34,6 @@ htmlcov/
 .github/*
 !.github/workflows/
 e2e/
+docs/
 DESIGN.md
 PRODUCT.md

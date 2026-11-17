@@ -23,13 +23,12 @@ from urllib.parse import urlsplit
 import httpx
 from starlette.background import BackgroundTask
 from starlette.datastructures import Headers
-from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from starlette.websockets import WebSocket
 from websockets.asyncio.client import connect as ws_connect
 from websockets.exceptions import ConnectionClosed, InvalidHandshake, InvalidStatus
 
-from warden.config import HOP_BY_HOP, ConfigManager, RouteConfig
+from warden.config import HOP_BY_HOP, ConfigManager, RouteConfig, normalize_path
 from warden.stats import MetricsModule
 from warden.templating import templates
 from warden.utils import (
@@ -37,7 +36,7 @@ from warden.utils import (
     client_ip,
     get_host,
     get_host_header,
-    get_port,
+    host_port,
     is_reserved_cookie,
     is_secure_request,
     public_scheme,
@@ -99,6 +98,28 @@ class _BoundedReceive:
             if self._total > self._max_bytes:
                 raise _BodyTooLarge
         return message
+
+
+class _BoundedStream(httpx.AsyncByteStream):
+    """Stream an ASGI request body upstream, enforcing the byte limit as it flows.
+
+    Responses already stream; buffering requests meant a large upload sat in
+    Warden's memory in full before a single byte reached the upstream.
+    """
+
+    def __init__(self, receive: Any, max_bytes: int) -> None:
+        self._bounded = _BoundedReceive(receive, max_bytes)
+
+    async def __aiter__(self):
+        while True:
+            message = await self._bounded()
+            if message.get("type") == "http.disconnect":
+                break
+            body = message.get("body", b"")
+            if body:
+                yield body
+            if not message.get("more_body", False):
+                break
 
 
 class ProxyEngine:
@@ -216,20 +237,10 @@ class ProxyEngine:
 
         Warden forwards the original path, so this is only used to decide
         whether a blocked path matches: ``/public/../secret`` and ``//secret``
-        must not slip past a blocked ``/secret``.
+        must not slip past a blocked ``/secret``. The same helper backs
+        ``public_paths`` so the deny and allow rules cannot disagree.
         """
-        if not path.startswith("/"):
-            path = "/" + path
-        segments: list[str] = []
-        for segment in path.split("/"):
-            if segment in {"", "."}:
-                continue
-            if segment == "..":
-                if segments:
-                    segments.pop()
-                continue
-            segments.append(segment)
-        return "/" + "/".join(segments)
+        return normalize_path(path)
 
     @staticmethod
     def _ip_denial(route: RouteConfig, client: str) -> str | None:
@@ -271,15 +282,15 @@ class ProxyEngine:
         Both sides are normalised first, so a blocked ``/secret`` also matches
         ``/secret/``, ``//secret`` and ``/public/../secret``.
         """
-        normalized = ProxyEngine._normalized_path(path)
+        normalized = ProxyEngine._normalized_path(path).casefold()
         for blocked in route.blocked_paths:
             if blocked.endswith("/*"):
-                prefix = ProxyEngine._normalized_path(blocked[:-1])
+                prefix = ProxyEngine._normalized_path(blocked[:-1]).casefold()
                 if prefix == "/" or normalized == prefix or normalized.startswith(
                     prefix + "/"
                 ):
                     return "This path is not allowed."
-            elif normalized == ProxyEngine._normalized_path(blocked):
+            elif normalized == ProxyEngine._normalized_path(blocked).casefold():
                 return "This path is not allowed."
         return None
 
@@ -333,7 +344,10 @@ class ProxyEngine:
                 ("x-real-ip", ip),
             ]
         )
-        port = get_port(scope)
+        # Only the port the client used: behind a TLS terminator the listener
+        # port is not reachable from outside, so forwarding it makes apps build
+        # absolute URLs against an address that does not exist for the user.
+        port = host_port(scope)
         if port:
             output.append(("x-forwarded-port", str(port)))
         if route.auth and user is not None:
@@ -366,8 +380,13 @@ class ProxyEngine:
             return location
         if not target.netloc or not upstream.hostname:
             return location
-        target_port = target.port or (443 if target.scheme == "https" else 80)
-        upstream_port = upstream.port or (443 if upstream.scheme == "https" else 80)
+        try:
+            target_port = target.port or (443 if target.scheme == "https" else 80)
+            upstream_port = upstream.port or (443 if upstream.scheme == "https" else 80)
+        except ValueError:
+            # A malformed port (out of range, non-numeric) makes the header
+            # unparseable; pass it through instead of failing the request.
+            return location
         if (target.hostname or "").lower() != upstream.hostname.lower() or target_port != upstream_port:
             return location
         public = f"{public_scheme(scope, self.manager.config)}://{get_host_header(scope)}"
@@ -398,6 +417,10 @@ class ProxyEngine:
                 continue
             attr_name = attr.split("=", 1)[0].strip().lower()
             if attr_name == "domain":
+                if "=" not in attr:
+                    # A bare ``Domain`` attribute carries no value; drop it
+                    # rather than raising.
+                    continue
                 domain = attr.split("=", 1)[1].strip().lstrip(".").lower()
                 if domain and (
                     public_host == domain or public_host.endswith("." + domain)
@@ -490,6 +513,28 @@ class ProxyEngine:
             return None
         return "Your account is not in a group allowed to use this service."
 
+    def _record_edge(
+        self,
+        route: RouteConfig,
+        scope: MutableMapping[str, Any],
+        status: int,
+        user: Any | None,
+    ) -> None:
+        """Record a response Warden generated itself (denial, limit, 413/503).
+
+        These never reach the upstream, so without this they were invisible in
+        the dashboard and in ``warden_route_requests_total``: a route under a
+        brute-force or scan attempt reported zero requests.
+        """
+        self.stats.record_request(
+            route,
+            method=scope.get("method", "GET"),
+            path=scope.get("path", "/"),
+            status=status,
+            latency_ms=0.0,
+            user=str(user.username) if user else None,
+        )
+
     # --------------------------------------------------------------------- HTTP
     async def handle_http(
         self,
@@ -506,13 +551,10 @@ class ProxyEngine:
         * Streams the upstream response back to the client, handling redirects,
           ``Set‑Cookie`` rewriting and error cases.
         """
-        # ACME challenge response.
         path = scope.get("path", "")
-        if self._per_route_rate_limit(route, client_ip(scope)):
-            response = Response("Rate limit exceeded", status_code=429, media_type="text/plain")
-            response.headers["Retry-After"] = "60"
-            await self._send(apply_security_headers(response), scope, receive, send)
-            return
+        # Serve ACME challenges before the per-route rate limit: a CA fetching
+        # `/.well-known/acme-challenge/...` must not be refused because the
+        # route is under a scan, or a renewal fails for an unrelated reason.
         if path.startswith("/.well-known/acme-challenge/"):
             token = path[len("/.well-known/acme-challenge/"):]
             response_token = None
@@ -529,6 +571,13 @@ class ProxyEngine:
                 await self._send(response, scope, receive, send)
                 return
 
+        if self._per_route_rate_limit(route, client_ip(scope)):
+            self._record_edge(route, scope, 429, user)
+            response = Response("Rate limit exceeded", status_code=429, media_type="text/plain")
+            response.headers["Retry-After"] = "60"
+            await self._send(apply_security_headers(response), scope, receive, send)
+            return
+
         headers = Headers(scope=scope)
         config = self.manager.config
 
@@ -542,6 +591,7 @@ class ProxyEngine:
             or self._group_denial(route, user)
         )
         if denial is not None:
+            self._record_edge(route, scope, 403, user)
             response = self._error_response(
                 scope, status=403, title="Access denied", message=denial
             )
@@ -553,6 +603,7 @@ class ProxyEngine:
             # so look it up by route.host rather than the upstream hostname.
             health = self.stats.health.get(route.host)
             if health is not None and health.online is False and health.checked_at is not None:
+                self._record_edge(route, scope, 503, user)
                 response = self._error_response(
                     scope,
                     status=503,
@@ -574,6 +625,7 @@ class ProxyEngine:
             try:
                 length_bytes = int(content_length)
                 if length_bytes > max_bytes:
+                    self._record_edge(route, scope, 413, user)
                     response = self._error_response(
                         scope,
                         status=413,
@@ -584,32 +636,32 @@ class ProxyEngine:
                     return
             except ValueError:
                 pass
-        request = Request(scope, _BoundedReceive(receive, max_bytes))
-        try:
-            request_body = await request.body()
-        except _BodyTooLarge:
-            response = self._error_response(
-                scope,
-                status=413,
-                title="Request entity too large",
-                message=f"Request body exceeds the maximum limit of {config.server.max_body_size_mb} MB.",
-            )
-            await self._send(response, scope, receive, send)
-            return
+        # Stream the request body with the same bounded receive, so large
+        # uploads no longer sit in memory in full before being forwarded.
         url = upstream_url(route, scope.get("raw_path"), scope.get("query_string", b""))
         timeout_seconds = route.timeout_seconds or config.server.request_timeout_seconds
         timeout = httpx.Timeout(timeout_seconds, connect=min(10.0, timeout_seconds))
         started = time.perf_counter()
-        method = request.method
+        method = scope.get("method", "GET")
         upstream: httpx.Response | None = None
         try:
             client = self._client(route.verify_tls)
             request_headers = self._request_headers(scope, route, user)
+            if content_length and not transfer_encoding:
+                # A streamed body has no length of its own, so httpx would switch
+                # the forwarded request to chunked encoding and drop the declared
+                # length. Upstreams that read exactly Content-Length bytes (many
+                # WSGI servers and hand-written handlers) would then see an empty
+                # body, so keep the original length when one was declared.
+                request_headers = [
+                    (key, value) for key, value in request_headers if key.lower() != "content-length"
+                ]
+                request_headers.append(("content-length", content_length))
             upstream_request = client.build_request(
                 method,
                 url,
                 headers=request_headers,
-                content=request_body,
+                content=_BoundedStream(receive, max_bytes),
                 timeout=timeout,
             )
             upstream = await client.send(upstream_request, stream=True, follow_redirects=False)
@@ -620,7 +672,7 @@ class ProxyEngine:
             self.stats.record_request(
                 route,
                 method=method,
-                path=request.url.path,
+                path=scope.get("path", "/"),
                 status=upstream.status_code,
                 latency_ms=elapsed,
                 user=str(user.username) if user else None,
@@ -653,13 +705,25 @@ class ProxyEngine:
             if upstream is not None:
                 await upstream.aclose()
             raise
+        except _BodyTooLarge:
+            # The limit was exceeded while streaming the body to the upstream.
+            if upstream is not None:
+                await upstream.aclose()
+            self._record_edge(route, scope, 413, user)
+            response = self._error_response(
+                scope,
+                status=413,
+                title="Request entity too large",
+                message=f"Request body exceeds the maximum limit of {config.server.max_body_size_mb} MB.",
+            )
+            await self._send(response, scope, receive, send)
         except httpx.TimeoutException:
             elapsed = (time.perf_counter() - started) * 1000
             logger.warning("Upstream timeout for %s %s", route.host, scope.get("path"))
             self.stats.record_request(
                 route,
                 method=method,
-                path=request.url.path,
+                path=scope.get("path", "/"),
                 status=504,
                 latency_ms=elapsed,
                 user=str(user.username) if user else None,
@@ -683,7 +747,7 @@ class ProxyEngine:
             self.stats.record_request(
                 route,
                 method=method,
-                path=request.url.path,
+                path=scope.get("path", "/"),
                 status=502,
                 latency_ms=elapsed,
                 user=str(user.username) if user else None,
@@ -737,7 +801,7 @@ class ProxyEngine:
         output.append(("x-forwarded-for", client_ip(scope)))
         output.append(("x-forwarded-host", get_host_header(scope)))
         output.append(("x-forwarded-proto", public_scheme(scope, self.manager.config)))
-        port = get_port(scope)
+        port = host_port(scope)
         if port:
             output.append(("x-forwarded-port", str(port)))
         if route.auth and user is not None:
@@ -766,6 +830,21 @@ class ProxyEngine:
         Performs origin checks, enforces authentication (if ``route.auth``), and
         forwards messages bidirectionally between client and upstream.
         """
+        if self._per_route_rate_limit(route, client_ip(scope)):
+            # The HTTP path enforces `route.rate_limit`; without this the limit
+            # could be skipped entirely by opening a WebSocket instead.
+            websocket = WebSocket(scope, receive, send)
+            await websocket.accept()
+            await websocket.close(code=4429, reason="Rate limit exceeded")
+            self.stats.record_request(
+                route,
+                method="WS",
+                path=scope.get("path", "/"),
+                status=429,
+                latency_ms=0.0,
+                user=str(user.username) if user else None,
+            )
+            return
         headers = Headers(scope=scope)
         # The same access rules as the HTTP path: without this an IP allow-list
         # or blocked path could be bypassed by opening a WebSocket.
@@ -841,6 +920,27 @@ class ProxyEngine:
                 method="WS",
                 path=scope.get("path", "/"),
                 status=502,
+                latency_ms=(time.perf_counter() - started) * 1000,
+                user=str(user.username) if user else None,
+            )
+            return
+
+        chosen = upstream.subprotocol
+        if chosen and route.websocket_subprotocols and chosen not in route.websocket_subprotocols:
+            # The pre-flight check only proves that *some* offered protocol is
+            # allowed; the upstream is free to pick another offered one, so the
+            # selection has to be checked before the client is told it won.
+            logger.warning(
+                "WebSocket upstream chose disallowed subprotocol %r for %s", chosen, route.host
+            )
+            await upstream.close()
+            await websocket.accept()
+            await websocket.close(code=1008, reason="Subprotocol not allowed")
+            self.stats.record_request(
+                route,
+                method="WS",
+                path=scope.get("path", "/"),
+                status=403,
                 latency_ms=(time.perf_counter() - started) * 1000,
                 user=str(user.username) if user else None,
             )

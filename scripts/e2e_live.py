@@ -9,6 +9,7 @@ and passkey login.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
@@ -23,15 +24,16 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 import httpx
+from websockets.exceptions import WebSocketException
 from websockets.sync.client import connect as ws_connect
 from websockets.sync.server import serve as ws_serve
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from tests.conftest import UpstreamHandler, config_dict, write_config  # noqa: E402
-from tests.test_tls import make_certificate  # noqa: E402
-from tests.test_ws import _handler, _select_subprotocol  # noqa: E402
+from tests.conftest import UpstreamHandler, config_dict, write_config
+from tests.test_tls import make_certificate
+from tests.test_ws import _handler, _select_subprotocol
 
 CHROME = os.environ.get("CHROME") or shutil.which("google-chrome") or shutil.which("chromium") or "/usr/bin/google-chrome"
 SETUP_TOKEN = "LIVE-SETUP-CODE-2026"
@@ -64,7 +66,7 @@ def wait_http(url: str, timeout: float = 20.0) -> None:
         try:
             urllib.request.urlopen(url, timeout=0.5).read()
             return
-        except Exception:
+        except OSError:  # connection refused/timeout while the server boots
             time.sleep(0.1)
     raise RuntimeError(f"{url} did not answer")
 
@@ -107,7 +109,8 @@ class CDP:
         while time.time() < deadline:
             try:
                 last = self.evaluate(expression)
-            except Exception as exc:  # navigation can destroy the context
+            except (OSError, RuntimeError, ValueError, WebSocketException) as exc:
+                # Navigation can destroy the execution context mid-call.
                 last = f"error: {exc}"
             if last:
                 return last
@@ -126,10 +129,8 @@ class CDP:
         return events
 
     def close(self) -> None:
-        try:
+        with contextlib.suppress(OSError, WebSocketException):
             self.ws.close()
-        except Exception:
-            pass
 
 
 def chrome_target(port: int) -> str:

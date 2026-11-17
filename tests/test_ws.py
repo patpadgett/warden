@@ -209,10 +209,73 @@ def test_websocket_subprotocol(ws_client) -> None:
         websocket.send_text("hi")
         assert websocket.receive_text() == "hi"
 
-def test_websocket_subprotocol_filter(ws_client) -> None:
-    # Create route with restricted subprotocol; offering wrong one should close
-    # (requires modifying config — skip for now; documented in feature spec)
-    pass
+def test_websocket_is_rate_limited(tmp_path: Path) -> None:
+    """`routes[].rate_limit` applies to upgrades, not only to HTTP requests."""
+    with websocket_upstream() as upstream:
+        data = config_dict(
+            tmp_path,
+            routes=[
+                {
+                    "host": "ws-limited.home.lan",
+                    "upstream": upstream,
+                    "auth": False,
+                    "rate_limit": 1,
+                },
+            ],
+        )
+        path = write_config(tmp_path, data)
+        seed_user(tmp_path / "warden.db", credential_count=1)
+        app = create_app(path)
+        with TestClient(app, base_url="http://admin.home.lan") as client:
+            with client.websocket_connect(
+                "/echo", headers={"host": "ws-limited.home.lan"}
+            ) as websocket:
+                websocket.send_text("first")
+                assert websocket.receive_text() == "first"
+            with (
+                pytest.raises(WebSocketDisconnect) as excinfo,
+                client.websocket_connect(
+                    "/echo", headers={"host": "ws-limited.home.lan"}
+                ) as websocket,
+            ):
+                websocket.receive_text()
+    assert excinfo.value.code == 4429
+
+
+def test_websocket_rejects_an_unlisted_upstream_subprotocol(tmp_path: Path) -> None:
+    """The upstream cannot select a protocol the route did not allow.
+
+    The pre-flight check only proves that one of the offered protocols is
+    allowed; offering an allowed one alongside another let an upstream choose
+    the other and have it accepted.
+    """
+    with websocket_upstream() as upstream:
+        data = config_dict(
+            tmp_path,
+            routes=[
+                {
+                    "host": "ws-subprotocol.home.lan",
+                    "upstream": upstream,
+                    "auth": False,
+                    "websocket_subprotocols": ["other"],
+                },
+            ],
+        )
+        path = write_config(tmp_path, data)
+        seed_user(tmp_path / "warden.db", credential_count=1)
+        app = create_app(path)
+        with (
+            TestClient(app, base_url="http://admin.home.lan") as client,
+            pytest.raises(WebSocketDisconnect) as excinfo,
+            client.websocket_connect(
+                "/echo",
+                headers={"host": "ws-subprotocol.home.lan"},
+                subprotocols=["other", "chat"],
+            ) as websocket,
+        ):
+            websocket.receive_text()
+    assert excinfo.value.code == 1008
+    assert "Subprotocol" in excinfo.value.reason
 
 
 def test_websocket_respects_ip_allow_list(tmp_path: Path) -> None:

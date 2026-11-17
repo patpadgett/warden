@@ -16,7 +16,7 @@ def status(url: str, context: ssl.SSLContext | None = None) -> int | None:
             return int(response.status)
     except urllib.error.HTTPError as exc:
         return int(exc.code)
-    except Exception:
+    except (OSError, ValueError):  # refused, timeout, TLS failure or bad URL
         return None
 
 

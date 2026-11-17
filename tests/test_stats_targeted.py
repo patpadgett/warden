@@ -121,6 +121,21 @@ def test_prometheus_metrics_includes_routes_and_counters() -> None:
     assert "warden_rate_limit_allowed_total" in lines
     assert "warden_rate_limit_blocked_total" in lines
 
+
+def test_prometheus_declares_each_metric_family_once() -> None:
+    """HELP/TYPE describe a family: repeating them per sample is invalid."""
+    s = MetricsModule()
+    for host in ("a.local", "b.local"):
+        route = RouteConfig(
+            host=host, upstream="http://localhost", health_path="/", verify_tls=False
+        )
+        s.record_request(route, method="GET", path="/", status=200, latency_ms=1.0, user=None)
+    lines = s.prometheus_metrics()
+    assert lines.count("# HELP warden_route_requests_total") == 1
+    assert lines.count("# TYPE warden_route_requests_total") == 1
+    assert lines.count("# HELP warden_route_latency_ms") == 1
+    assert lines.count("# TYPE warden_route_latency_ms") == 1
+
 def test_health_monitor_stop() -> None:
     monitor = HealthMonitor(MetricsModule(), MagicMock())
     asyncio.run(monitor.stop())  # should not raise

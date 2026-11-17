@@ -288,18 +288,24 @@ class MeshPeerIntake:
     async def write_config(self) -> Path:
         """Write the generated server configuration to ``mesh.config_path``.
 
-        * Ensures the parent directory exists with ``0o700`` permissions.
+        * Creates the parent directory with ``0o700`` permissions if needed.
         * Writes to a temporary file then atomically replaces the target.
         * Returns the ``Path`` to the final config file.
         """
         self._require_enabled()
         path = self._config_file()
         content = await self.render_server_config()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            os.chmod(path.parent, 0o700)
-        except OSError:
-            pass
+        parent = path.parent
+        existed = parent.exists()
+        parent.mkdir(parents=True, exist_ok=True)
+        if not existed:
+            # Only lockdown a directory Warden created. ``mesh.config_path`` can
+            # point into /etc/wireguard or a shared directory, and chmod-ing an
+            # existing one strips group/other access from unrelated files.
+            try:
+                os.chmod(parent, 0o700)
+            except OSError:
+                pass
         temp = path.with_name(f".{path.name}.warden-tmp")
         temp.write_text(content, encoding="utf-8")
         os.chmod(temp, 0o600)

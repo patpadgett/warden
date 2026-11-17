@@ -74,7 +74,10 @@
       form.elements.icon.value = data.icon || "";
       form.elements.health_path.value = data.health_path || "/";
       form.elements.public_paths.value = data.public_paths || "";
-      form.elements.allowed_groups.value = data.allowed_groups || "";
+      const allowed = new Set((data.allowed_groups || "").split(",").map((item) => item.trim()).filter(Boolean));
+      form.querySelectorAll('input[name="allowed_groups"]').forEach((input) => {
+        input.checked = allowed.has(input.value);
+      });
       W.$("#service-auth").checked = Boolean(data.auth);
       W.$("#service-enabled").checked = Boolean(data.enabled);
       W.$("#service-websocket").checked = Boolean(data.websocket);
@@ -135,10 +138,9 @@
         .split(",")
         .map((item) => item.trim())
         .filter(Boolean);
-      const allowedGroups = form.elements.allowed_groups.value
-        .split(",")
-        .map((item) => item.trim())
-        .filter(Boolean);
+      const allowedGroups = Array.from(
+        form.querySelectorAll('input[name="allowed_groups"]:checked')
+      ).map((input) => input.value);
       const payload = {
         host: form.elements.host.value.trim(),
         upstream: form.elements.upstream.value.trim(),
@@ -725,6 +727,24 @@
       if (key) W.copy(key.textContent.trim());
     });
 
+    W.$("#hub-rotate")?.addEventListener("click", async (event) => {
+      const warning = "Rotate the hub private key? Every enrolled peer config will stop working until you download new client files and apply the hub config again.";
+      if (!(await W.confirm(warning, { confirmLabel: "Rotate key", danger: true }))) return;
+      const button = event.currentTarget;
+      W.setBusy(button, true, "Rotating…");
+      try {
+        await W.fetchJSON("/_warden/api/mesh/rotate-hub-key", { method: "POST", body: {} });
+        W.toast("Hub key rotated. Download new peer configs and apply the hub config.", {
+          title: "Hub key rotated",
+        });
+        window.setTimeout(() => window.location.reload(), 800);
+      } catch (error) {
+        W.setBusy(button, false);
+        if (handleExpiredSession(error)) return;
+        W.toast(error.message, { title: "Could not rotate hub key", type: "error" });
+      }
+    });
+
     W.$("#mesh-apply")?.addEventListener("click", async (event) => {
       if (!(await W.confirm("Write the WireGuard config and apply it to the host interface now?", { confirmLabel: "Apply" }))) return;
       const button = event.currentTarget;
@@ -1068,6 +1088,29 @@
           W.toast(error.message, { title: "Could not update role", type: "error" });
         } finally {
           button.disabled = false;
+        }
+      });
+    });
+
+    W.$$(".reset-otp").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const row = button.closest("tr[data-user-id]");
+        if (!row) return;
+        const userId = row.dataset.userId;
+        const name = row.querySelector(".user-name")?.textContent || "this user";
+        if (!(await W.confirm(`Remove ${name}'s authenticator?\n\nThey can sign in with a passkey and enrol a new one. Their password is not affected — Warden has none.`, { danger: true, confirmLabel: "Reset 2FA" }))) return;
+        button.disabled = true;
+        try {
+          await W.fetchJSON(`/_warden/api/users/${encodeURIComponent(userId)}/otp/reset`, {
+            method: "POST",
+          });
+          row.querySelector(".otp-badge")?.remove();
+          button.remove();
+          W.toast(`Two-factor reset for ${name}.`);
+        } catch (error) {
+          button.disabled = false;
+          if (handleExpiredSession(error)) return;
+          W.toast(error.message, { title: "Could not reset two-factor", type: "error" });
         }
       });
     });

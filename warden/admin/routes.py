@@ -378,24 +378,33 @@ async def metrics_api(request: Request) -> Response:
     health = getattr(_app.state, "health_monitor", None)
     if health is not None:
         content += "\n# HEALTH adapter active\nwarden_health_adapter_active 1\n"
-    # Add mesh handshake metrics if mesh is enabled
+    # Add mesh handshake metrics if mesh is enabled. A Prometheus scrape every
+    # 15 seconds must not shell out to `wg show` and rewrite handshake rows on
+    # every request, so the rendered block is cached briefly.
     mesh = _app.state.mesh
     adapter = getattr(mesh, "adapter", None)
-    try:
-        if adapter is not None:
-            status = await adapter.refresh_handshakes()
-        else:
-            status = await mesh.refresh_handshakes()
-        if status.get("available") and status.get("applied"):
-            for peer_key, info in status.get("peers", {}).items():
-                if info.last_handshake is not None:
-                    # Export as a gauge labelled with the peer's public key.
-                    content += (
-                        "\nwarden_mesh_last_handshake_seconds"
-                        f'{{peer="{escape_label(peer_key)}"}} {info.last_handshake}'
-                    )
-    except Exception:
-        logger.exception("Mesh handshake metrics export failed")
+    cache = getattr(_app.state, "mesh_metrics_cache", None)
+    now = time.time()
+    if cache is None or now - cache[0] >= 15 or cache[2] != id(mesh):
+        lines = ""
+        try:
+            if adapter is not None:
+                status = await adapter.refresh_handshakes()
+            else:
+                status = await mesh.refresh_handshakes()
+            if status.get("available") and status.get("applied"):
+                for peer_key, info in status.get("peers", {}).items():
+                    if info.last_handshake is not None:
+                        # Export as a gauge labelled with the peer's public key.
+                        lines += (
+                            "\nwarden_mesh_last_handshake_seconds"
+                            f'{{peer="{escape_label(peer_key)}"}} {info.last_handshake}'
+                        )
+        except Exception:
+            logger.exception("Mesh handshake metrics export failed")
+        cache = (now, lines, id(mesh))
+        _app.state.mesh_metrics_cache = cache
+    content += cache[1]
     return Response(
         content=content,
         media_type="text/plain; version=0.0.4",
@@ -410,12 +419,21 @@ async def users_page(request: Request) -> Response:
     * Retrieves all users from the database and renders the ``users.html`` template.
     """
     _guard_host(request)
+    user = _user(request)
     db = _db(request)
     users = await db.list_users()
     groups = await db.list_acl_groups()
     memberships = await db.acl_memberships()
     context = _base_context(request, page="users", title="Users")
-    context.update({"users": users, "groups": groups, "memberships": memberships})
+    context.update(
+        {
+            "users": users,
+            "groups": groups,
+            "memberships": memberships,
+            "otp_users": await db.otp_user_ids(),
+            "current_user_id": user.id,
+        }
+    )
     return _render(request, "users.html", context)
 
 @router.post("/_warden/api/users")
@@ -623,6 +641,32 @@ async def set_user_groups(
     return JSONResponse({"ok": True, "groups": names})
 
 
+@router.post("/_warden/api/users/{user_id}/otp/reset")
+async def reset_user_otp(request: Request, user_id: int) -> JSONResponse:
+    """Remove another user's TOTP enrolment (admin-only).
+
+    A lost authenticator otherwise leaves the operator with
+    ``warden auth reset``, which wipes the whole instance. Removing your *own*
+    second factor is refused here: that requires a current code on the passkeys
+    page, so a stolen admin session cannot silently drop it.
+    """
+    _guard_host(request)
+    current_user = _user(request)
+    if user_id == current_user.id:
+        return JSONResponse(
+            {"detail": "Use the passkeys page to remove your own two-factor."},
+            status_code=400,
+        )
+    db = _db(request)
+    user = await db.get_user(user_id)
+    if user is None:
+        return JSONResponse({"detail": "User not found."}, status_code=404)
+    had_otp = await db.get_otp_secret(user_id) is not None
+    await db.clear_otp_secret(user_id)
+    await _audit(request, "otp_reset", f"user:{user.username} (had_otp: {had_otp})")
+    return JSONResponse({"ok": True, "reset": had_otp})
+
+
 @router.get("/portal")
 async def portal(request: Request) -> Response:
     """Render the signed-in user's portal.
@@ -693,10 +737,12 @@ async def dashboard(request: Request) -> Response:
         warnings.append(
             "TLS is off. Passkeys require a secure context — use HTTPS or open Warden on localhost."
         )
+    groups = await db.list_acl_groups()
     context = _base_context(request, page="dashboard", title="Services")
     context.update(
         {
             "services": services,
+            "groups": groups,
             "stats": snapshot["totals"],
             "traffic": snapshot["traffic"],
             "passkey_count": len(credentials),
@@ -733,6 +779,7 @@ async def passkeys_page(request: Request) -> Response:
             "current_session_id": session.id,
             "passkey_count": len(credentials),
             "added": request.query_params.get("added"),
+            "otp_required": request.query_params.get("otp_required") == "1",
             "session_ttl_hours": config.server.session_ttl_hours,
         }
     )
@@ -751,6 +798,9 @@ EVENT_META: dict[str, tuple[str, str, str]] = {
     "passkey_deleted": ("Passkey removed", "warn", "key"),
     "passkey_renamed": ("Passkey renamed", "neutral", "key"),
     "passkey_failed": ("Passkey registration failed", "warn", "alert"),
+    "otp_enrolled": ("Two-factor enabled", "good", "shield"),
+    "otp_disabled": ("Two-factor disabled", "warn", "shield"),
+    "otp_reset": ("Two-factor reset by an admin", "warn", "shield"),
     "session_revoked": ("Session revoked", "warn", "shield"),
     "sessions_revoked": ("Other sessions revoked", "warn", "shield"),
     "config_saved": ("Configuration saved", "neutral", "file"),
@@ -1146,15 +1196,16 @@ async def delete_passkey(request: Request, credential_id: int) -> JSONResponse:
     user = _user(request)
     db = _db(request)
     credentials = await db.list_credentials(user.id)
-    if len(credentials) <= 1:
+    target = next((credential for credential in credentials if credential.id == credential_id), None)
+    if target is None:
+        return JSONResponse({"detail": "Passkey not found."}, status_code=404)
+    # The "keep one passkey" rule lives inside the DELETE, so two concurrent
+    # removals cannot each see two keys and between them delete the last one.
+    if not await db.delete_credential(user.id, credential_id, keep_last=True):
         return JSONResponse(
             {"detail": "Add another passkey before removing your only one."},
             status_code=409,
         )
-    target = next((credential for credential in credentials if credential.id == credential_id), None)
-    if target is None:
-        return JSONResponse({"detail": "Passkey not found."}, status_code=404)
-    await db.delete_credential(user.id, credential_id)
     await _audit(request, "passkey_deleted", target.name)
     return JSONResponse({"ok": True})
 

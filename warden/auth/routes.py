@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import logging
 import os
+import secrets
 import time
 from functools import wraps
 from inspect import isawaitable
@@ -75,6 +76,11 @@ class BackupCodeBody(BaseModel):
     """BackupCodeBody."""
     code: str
     next: str | None = None
+
+class LoginOtpBody(BaseModel):
+    """LoginOtpBody."""
+    challenge: str
+    code: str
 
 class OTPSetupPayload(BaseModel):
     """Payload for OTP setup endpoint (OpenAPI schema stability)."""
@@ -264,12 +270,14 @@ async def otp_setup(request: Request) -> JSONResponse:
 
     * Requires an authenticated session (enforced by ``_user`` and ``@csrf_protected``).
     * Returns a 32-character Base32 secret (160-bit entropy) and an ``otpauth://`` URL.
-    * The secret is stored in the database via ``set_otp_secret``.
+    * The secret is stored as *pending* and only becomes the active second
+      factor once ``otp_verify`` accepts a code from it, so an abandoned
+      enrolment leaves any working secret untouched.
     """
     user = _user(request)
     raw = os.urandom(20)  # 160 bits
     secret = base64.b32encode(raw).decode("utf-8").replace("=", "")
-    await _db(request).set_otp_secret(user.id, secret)
+    await _db(request).set_pending_otp_secret(user.id, secret)
     otpauth = f"otpauth://totp/Warden:{user.username}?secret={secret}&issuer=Warden"
     return JSONResponse({"ok": True, "secret": secret, "otpauth_url": otpauth})
 
@@ -296,17 +304,97 @@ async def otp_verify(request: Request, payload: OTPVerifyPayload) -> JSONRespons
         return response
     if not _origin_ok(request):
         return _error("Cross-origin request blocked.", 403)
+    db = _db(request)
     user = _user(request)
-    ok = await _db(request).verify_otp(user.id, payload.code)
+    enrolling = await db.get_pending_otp_secret(user.id) is not None
+    ok = await db.verify_otp(user.id, payload.code)
     if ok:
         _app = _get_fastapi_app(request)
         _app.state.stats.inc_otp_success()
+        if enrolling:
+            await db.audit(
+                "otp_enrolled",
+                user_id=user.id,
+                username=user.username,
+                ip=client_ip(request.scope),
+                user_agent=user_agent(request.scope),
+                detail="TOTP second factor enabled",
+            )
         return JSONResponse({"ok": True})
     else:
         _app = _get_fastapi_app(request)
         _app.state.stats.inc_otp_failure()
         await _audit_failure(request, "otp_failed", "Invalid OTP code")
         return JSONResponse({"ok": False, "detail": "Invalid OTP"}, status_code=401)
+
+
+class OTPDisablePayload(BaseModel):
+    """OTPDisablePayload."""
+    code: str
+
+
+@router.get("/_warden/auth/otp/status")
+async def otp_status(request: Request) -> JSONResponse:
+    """Report the current user's two-factor state for the passkeys page."""
+    user = _user(request)
+    db = _db(request)
+    enabled = await db.get_otp_secret(user.id) is not None
+    pending = await db.get_pending_otp_secret(user.id) is not None
+    return _json_response({"enabled": enabled, "pending": pending})
+
+
+@router.post("/_warden/auth/otp/disable")
+@csrf_protected
+async def otp_disable(request: Request, payload: OTPDisablePayload) -> JSONResponse:
+    """Remove the current user's TOTP enrolment.
+
+    A valid code is required so a stolen session cannot quietly drop the second
+    factor. Before this endpoint existed the only way to undo an enrolment was
+    ``warden auth reset``, which deletes every account and passkey.
+    """
+    allowed, rate_headers = await _limited(request, "otp-disable", 10)
+    if not allowed:
+        response = _error("Too many OTP attempts. Wait a minute and try again.", 429)
+        response.headers.update(rate_headers)
+        return response
+    user = _user(request)
+    db = _db(request)
+    if await db.get_otp_secret(user.id) is None:
+        return _error("Two-factor authentication is not enabled.", 400)
+    if not await db.verify_otp(user.id, payload.code):
+        _app = _get_fastapi_app(request)
+        _app.state.stats.inc_otp_failure()
+        await _audit_failure(request, "otp_failed", "Invalid OTP code")
+        return JSONResponse({"ok": False, "detail": "Invalid OTP"}, status_code=401)
+    await db.clear_otp_secret(user.id)
+    await db.audit(
+        "otp_disabled",
+        user_id=user.id,
+        username=user.username,
+        ip=client_ip(request.scope),
+        user_agent=user_agent(request.scope),
+        detail="TOTP second factor removed",
+    )
+    return _json_response({"ok": True, "enabled": False})
+
+
+@router.get("/_warden/otp")
+async def otp_page(request: Request) -> Response:
+    """Render the TOTP enrolment and recovery page for the signed-in user."""
+    _config(request)
+    user = _user(request)
+    db = _db(request)
+    enabled = await db.get_otp_secret(user.id) is not None
+    pending = await db.get_pending_otp_secret(user.id) is not None
+    context = {
+        "page": "otp",
+        "page_title": "Two-factor authentication",
+        "user": user,
+        "otp_enabled": enabled,
+        "otp_pending": pending,
+    }
+    return templates.TemplateResponse(request, "otp.html", context)
+
 
 # ---------------------------------------------------------------------------
 # Authentication flow (login, register, logout)
@@ -648,6 +736,9 @@ async def login_backup(request: Request) -> JSONResponse:
             raise AuthError("Account not found.", 401)
     except AuthError as exc:
         return await _handle_auth_error(request, exc, audit="backup_failed")
+    # A recovery code is a second factor in its own right (single-use, 64 bits),
+    # so it deliberately finishes sign-in even when TOTP is enrolled. Otherwise
+    # a lost authenticator would need `warden auth reset` on the server.
     token, _ = await create_session(_db(request), user, request.scope, config)
     await _db(request).audit(
         "login_backup_succeeded",
@@ -695,6 +786,25 @@ async def login_complete(request: Request) -> JSONResponse:
         )
     except AuthError as exc:
         return await _handle_auth_error(request, exc, audit="login_failed")
+
+    # If the user has TOTP enrolled, do not issue a session yet: require the
+    # second factor first. A short-lived challenge bridges the two steps.
+    if await _db(request).get_otp_secret(user.id) is not None:
+        pending_id = secrets.token_urlsafe(32)
+        await _db(request).create_challenge(
+            pending_id,
+            "login_otp",
+            {"user_id": user.id, "next": target},
+            300,
+        )
+        _app = _get_fastapi_app(request)
+        # The passkey ceremony itself succeeded; the OTP step is a separate gate.
+        response = _json_response(
+            {"ok": True, "otp_required": True, "login_challenge": pending_id, "challenge": pending_id}
+        )
+        clear_challenge_cookie(response, request.scope, config)
+        return response
+
     token, _ = await create_session(_db(request), user, request.scope, config)
     await _db(request).audit(
         "login_succeeded",
@@ -710,6 +820,67 @@ async def login_complete(request: Request) -> JSONResponse:
     set_session_cookie(response, token, request.scope, config)
     clear_challenge_cookie(response, request.scope, config)
     return response
+
+@router.post("/_warden/auth/login/otp")
+async def login_otp(request: Request) -> JSONResponse:
+    """Complete a passkey login that requires a TOTP second factor.
+
+    * Consumes the short-lived challenge issued by ``login_complete``.
+    * Verifies the OTP code against the user's enrolled (verified) secret.
+    * On success creates a session and returns the redirect target.
+    """
+    # One challenge can be retried after a mistyped code, so the per-IP window is
+    # tighter than the other sign-in steps (a TOTP code has ~3 valid values in
+    # a million per attempt; 10/min still leaves a legitimate user room).
+    allowed, rate_headers = await _limited(request, "login-otp", 10)
+    if not allowed:
+        response = _error("Too many sign-in attempts. Wait a minute and try again.", 429)
+        response.headers.update(rate_headers)
+        return response
+    if not _origin_ok(request):
+        await _audit_failure(request, "login_blocked", "cross-origin request")
+        return _error("Cross-origin request blocked.", 403)
+    config = _config(request)
+    try:
+        body = await _body(request, LoginOtpBody)
+        assert isinstance(body, LoginOtpBody)
+    except AuthError as exc:
+        return await _handle_auth_error(request, exc, audit="login_failed")
+    # Peek instead of consume: a mistyped code must not send the user back
+    # through the passkey ceremony. The challenge is spent only on success.
+    challenge = await _db(request).get_challenge(body.challenge, "login_otp")
+    if challenge is None:
+        return _error("Your sign-in attempt expired. Reload the page and try again.", 400)
+    user_id = challenge.payload.get("user_id")
+    if not isinstance(user_id, int):
+        return _error("Your sign-in attempt expired. Reload the page and try again.", 400)
+    user = await _db(request).get_user(user_id)
+    if user is None:
+        return _error("Account not found.", 401)
+    ok = await _db(request).verify_otp(user.id, body.code)
+    if not ok:
+        _app = _get_fastapi_app(request)
+        _app.state.stats.inc_otp_failure()
+        await _audit_failure(request, "login_failed", "Invalid OTP code", username=user.username)
+        return JSONResponse({"ok": False, "detail": "Invalid OTP"}, status_code=401)
+    await _db(request).consume_challenge(body.challenge, "login_otp")
+    target = safe_next(challenge.payload.get("next"), "/")
+    token, _ = await create_session(_db(request), user, request.scope, config)
+    await _db(request).audit(
+        "login_succeeded",
+        user_id=user.id,
+        username=user.username,
+        ip=client_ip(request.scope),
+        user_agent=user_agent(request.scope),
+        detail="Passkey + OTP sign-in",
+    )
+    _app = _get_fastapi_app(request)
+    _app.state.stats.inc_auth_success()
+    _app.state.stats.inc_otp_success()
+    response = _json_response({"ok": True, "redirect": safe_next(target, "/")})
+    set_session_cookie(response, token, request.scope, config)
+    return response
+
 
 # ---------------------------------------------------------------------------
 # Passkey management (add / remove)

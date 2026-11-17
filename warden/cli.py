@@ -11,6 +11,7 @@ import logging.handlers
 import os
 import re
 import signal
+import sqlite3
 import sys
 from collections.abc import Sequence
 from datetime import datetime
@@ -220,10 +221,18 @@ class HttpsRedirectApp:
             return None
         return target
 
-    def _location(self, scope: dict[str, Any]) -> str:
-        """_location."""
+    def _location(self, scope: dict[str, Any]) -> str | None:
+        """Build the HTTPS target, or ``None`` for a host Warden does not serve.
+
+        The plain-HTTP listener answers any ``Host`` header, so echoing that
+        header into ``Location`` turns an exposed HTTP port into an open
+        redirect. Only the admin host and hosts with a configured route are
+        redirected; anything else is rejected.
+        """
         config = self.manager.config
         host = get_host(scope)
+        if host != config.server.admin_host and config.match_route(host) is None:
+            return None
         path = scope.get("raw_path") or scope.get("path", "/")
         if isinstance(path, bytes):
             path = path.decode("latin-1")
@@ -270,9 +279,13 @@ class HttpsRedirectApp:
             else:
                 response = PlainTextResponse(content)
         else:
-            response = Response(status_code=308)
-            response.headers["Location"] = self._location(scope)
-            response.headers["Cache-Control"] = "no-store"
+            location = self._location(scope)
+            if location is None:
+                response = PlainTextResponse("Unknown host", status_code=404)
+            else:
+                response = Response(status_code=308)
+                response.headers["Location"] = location
+                response.headers["Cache-Control"] = "no-store"
         apply_security_headers(response)
         await response(scope, receive, send)
 
@@ -387,8 +400,13 @@ def cmd_serve(args: argparse.Namespace) -> int:
     # Dev TLS mode: generate a temporary self‑signed certificate if requested.
     if getattr(args, "dev_tls", False):
         # Use a deterministic location under --tls-dir for dev files.
-        dev_dir = Path(args.tls_dir)
+        dev_dir = Path(args.tls_dir).expanduser()
         dev_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            # The directory holds a private key; keep other users out of it.
+            os.chmod(dev_dir, 0o700)
+        except OSError:
+            pass
         cert_path = dev_dir / "cert.pem"
         key_path = dev_dir / "key.pem"
         if not cert_path.is_file() or not key_path.is_file():
@@ -494,6 +512,31 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 
 # ----------------------------------------------------------------------- check
+def _sqlite_problems(path: Path) -> list[str]:
+    """Return problems opening *path* as a SQLite database, read-only.
+
+    ``warden check`` validated the YAML and TLS files but never opened the
+    database, so a corrupt or non-database file still printed "valid" — which
+    is exactly when an operator runs it.
+    """
+
+    if not path.exists():
+        # A missing database is normal: startup creates it.
+        return []
+    try:
+        connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            connection.execute("PRAGMA schema_version").fetchone()
+            result = connection.execute("PRAGMA quick_check").fetchone()
+        finally:
+            connection.close()
+    except sqlite3.Error as exc:
+        return [f"Database {path} is not a usable SQLite file: {exc}"]
+    if result and result[0] != "ok":
+        return [f"Database {path} failed SQLite's integrity check: {result[0]}"]
+    return []
+
+
 def cmd_check(args: argparse.Namespace) -> int:
     """Validate config and paths."""
     try:
@@ -512,6 +555,8 @@ def cmd_check(args: argparse.Namespace) -> int:
     except TLSError as exc:
         problems.append(str(exc))
     db_path = config.database_path if config.database.type != "postgres" else None
+    if db_path is not None:
+        problems.extend(_sqlite_problems(Path(db_path)))
     db_display = (
         config.database.url if config.database.type == "postgres" else str(db_path)
     )
@@ -716,7 +761,6 @@ def cmd_backup(args: argparse.Namespace) -> int:
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     backup_path = db_path.with_name(f"{db_path.name}.backup-{timestamp}")
     try:
-        import sqlite3
         src = sqlite3.connect(str(db_path))
         dst = sqlite3.connect(str(backup_path))
         try:
@@ -773,7 +817,7 @@ async def _reset_auth(config: WardenConfig) -> int:
         print(f"Removed {users} account{'s' if users != 1 else ''}, their passkeys, and all sessions.")
         print("Restart Warden to generate a fresh first-run setup code.")
         return 0
-    except (DatabaseError, OSError) as exc:
+    except (DatabaseError, OSError, sqlite3.Error) as exc:
         _print_error(str(exc))
         return 1
     finally:
@@ -797,12 +841,19 @@ def cmd_mesh(args: argparse.Namespace) -> int:
     except (ConfigError, MeshError) as exc:
         _print_error(str(exc))
         return 1
+
+    async def _run() -> int:
+        try:
+            return await _mesh_command(args, manager, db, mesh)
+        finally:
+            # Always close the connection. An aiosqlite worker thread left
+            # alive keeps the interpreter from exiting after an error, so a
+            # failure here would hang the CLI instead of returning non-zero.
+            await db.close()
+
     try:
-        return asyncio.run(_mesh_command(args, manager, db, mesh))
-    except MeshError as exc:
-        _print_error(str(exc))
-        return 1
-    except DatabaseError as exc:
+        return asyncio.run(_run())
+    except (MeshError, DatabaseError, sqlite3.Error) as exc:
         _print_error(str(exc))
         return 1
 
@@ -930,7 +981,11 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--port", type=int, default=None, help="HTTP port override")
     serve.add_argument("--https-port", type=int, default=None, help="HTTPS port override")
     serve.add_argument("--dev-tls", action="store_true", help="Generate a temporary self‑signed certificate and enable TLS for local development")
-    serve.add_argument("--tls-dir", default="/tmp/opencode/warden-dev-tls", help="Directory for dev TLS certificates (default: /tmp/opencode/warden-dev-tls)")
+    serve.add_argument(
+        "--tls-dir",
+        default=".warden/dev-tls",
+        help="directory for --dev-tls cert/key (default: .warden/dev-tls)",
+    )
     serve.add_argument("--no-access-log", action="store_true", help="disable uvicorn access log")
     serve.set_defaults(func=cmd_serve)
 
@@ -1003,6 +1058,12 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def cmd_config_show(args: argparse.Namespace) -> int:
+    """Print the effective configuration file."""
+    print(_load_manager(args).read_text())
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI entry point."""
     parser = build_parser()
@@ -1012,7 +1073,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ConfigError as exc:
         _print_error(exc.pretty())
         return 1
-    except (TLSError, MeshError, DatabaseError, OSError) as exc:
+    except (TLSError, MeshError, DatabaseError, OSError, sqlite3.Error) as exc:
         _print_error(str(exc))
         return 1
     except KeyboardInterrupt:
@@ -1021,10 +1082,3 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-
-def cmd_config_show(args):
-    """Print effective configuration."""
-    manager = ConfigManager.from_file(_config_path(args))
-    text = manager.read_text()
-    print(text)

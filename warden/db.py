@@ -367,13 +367,18 @@ class Database:
             except OSError as exc:
                 raise DatabaseError(f"Could not open database {self.path}: {exc}") from exc
             conn.row_factory = aiosqlite.Row
-            await conn.execute("PRAGMA foreign_keys = ON")
-            await conn.execute("PRAGMA busy_timeout = 5000")
-            if not self.is_memory:
-                await conn.execute("PRAGMA journal_mode = WAL")
-                await conn.execute("PRAGMA synchronous = NORMAL")
+            # Publish the connection *before* running any statement: the PRAGMA
+            # calls below can raise (a corrupt or non-database file fails on the
+            # first one), and the cleanup path needs ``self._conn`` set in order
+            # to close it. A connection left open keeps aiosqlite's worker thread
+            # alive, which stops the interpreter from ever exiting.
             self._conn = conn
             try:
+                await conn.execute("PRAGMA foreign_keys = ON")
+                await conn.execute("PRAGMA busy_timeout = 5000")
+                if not self.is_memory:
+                    await conn.execute("PRAGMA journal_mode = WAL")
+                    await conn.execute("PRAGMA synchronous = NORMAL")
                 # Create the schema_migrations tracking table (backend-agnostic;
                 # used by all database backends to track applied schema versions).
                 await conn.execute(
@@ -402,7 +407,7 @@ class Database:
                 pass
 
     #: Schema version number. Incremented whenever the schema changes.
-    SCHEMA_VERSION = 6
+    SCHEMA_VERSION = 8
 
     #: Per-step migration scripts. Keys are the target schema version.
     #: Each script runs inside a transaction; RAISE(IGNORE) suppresses
@@ -505,7 +510,10 @@ class Database:
 
         CREATE TABLE IF NOT EXISTS otp_secrets (
             user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-            secret TEXT NOT NULL,
+            secret TEXT NOT NULL DEFAULT '',
+            verified INTEGER NOT NULL DEFAULT 0,
+            pending_secret TEXT,
+            pending_created_at REAL,
             created_at REAL NOT NULL
         );
         """,
@@ -549,6 +557,19 @@ class Database:
         INSERT OR IGNORE INTO acl_groups (name, created_at)
         VALUES ('Users', CAST(strftime('%s', 'now') AS REAL));
         """,
+        7: """
+        -- Track whether an OTP secret is verified and keep a pending secret so
+        -- that an abandoned enrolment never clobbers an already-working one.
+        ALTER TABLE otp_secrets ADD COLUMN verified INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE otp_secrets ADD COLUMN pending_secret TEXT;
+        ALTER TABLE otp_secrets ADD COLUMN pending_created_at REAL;
+        UPDATE otp_secrets SET verified = 1 WHERE secret IS NOT NULL AND secret <> '';
+        """,
+    8: """
+        -- Remember the last accepted TOTP step so a code cannot be replayed
+        -- inside the drift window.
+        ALTER TABLE otp_secrets ADD COLUMN last_used_counter INTEGER;
+        """,
 })  # type: ignore[assignment]
 
     async def _migrate(self) -> None:
@@ -580,6 +601,28 @@ class Database:
                 async with conn.execute("PRAGMA table_info(users)") as cursor:
                     columns = {row["name"] for row in await cursor.fetchall()}
                 if "email" in columns:
+                    statements = []
+            # Version 7 adds OTP enrolment columns; skip any that already exist.
+            if target_version == 7:
+                async with conn.execute("PRAGMA table_info(otp_secrets)") as cursor:
+                    columns = {row["name"] for row in await cursor.fetchall()}
+                filtered: list[str] = []
+                for statement in statements:
+                    upper = statement.upper()
+                    if "ADD COLUMN VERIFIED" in upper and "verified" in columns:
+                        continue
+                    if "ADD COLUMN PENDING_SECRET" in upper and "pending_secret" in columns:
+                        continue
+                    if "ADD COLUMN PENDING_CREATED_AT" in upper and "pending_created_at" in columns:
+                        continue
+                    filtered.append(statement)
+                statements = filtered
+            # Version 8 adds the TOTP replay counter; skip it when a development
+            # build already created the column.
+            if target_version == 8:
+                async with conn.execute("PRAGMA table_info(otp_secrets)") as cursor:
+                    columns = {row["name"] for row in await cursor.fetchall()}
+                if "last_used_counter" in columns:
                     statements = []
             # ``executescript`` would implicitly commit before running, so run
             # each statement inside an explicit transaction and record the
@@ -644,6 +687,18 @@ class Database:
             lastrowid = cursor.lastrowid
             await cursor.close()
             return int(lastrowid or 0)
+
+    async def _write_count(self, sql: str, params: tuple[Any, ...] = ()) -> int:
+        """Run a statement and return the number of rows it changed."""
+        if self._conn is None:
+            await self.init()
+        conn = self._require_conn()
+        async with self._lock:
+            cursor = await conn.execute(sql, params)
+            await conn.commit()
+            count = cursor.rowcount
+            await cursor.close()
+            return int(count or 0)
 
     # ------------------------------------------------------------------- users
     async def user_count(self) -> int:
@@ -1279,16 +1334,30 @@ class Database:
             await cursor.close()
         return bool(changed)
 
-    async def delete_credential(self, user_id: int, credential_row_id: int) -> bool:
-        """delete_credential."""
+    async def delete_credential(
+        self, user_id: int, credential_row_id: int, *, keep_last: bool = False
+    ) -> bool:
+        """Delete a credential row.
+
+        With ``keep_last`` the "never remove the only passkey" rule runs inside
+        the DELETE, so two concurrent removals cannot both see two keys and
+        between them delete the last one.
+        """
         if self._conn is None:
             await self.init()
         conn = self._require_conn()
         async with self._lock:
-            cursor = await conn.execute(
-                "DELETE FROM credentials WHERE id = ? AND user_id = ?",
-                (credential_row_id, user_id),
-            )
+            if keep_last:
+                cursor = await conn.execute(
+                    "DELETE FROM credentials WHERE id = ? AND user_id = ? "
+                    "AND (SELECT COUNT(*) FROM credentials WHERE user_id = ?) > 1",
+                    (credential_row_id, user_id, user_id),
+                )
+            else:
+                cursor = await conn.execute(
+                    "DELETE FROM credentials WHERE id = ? AND user_id = ?",
+                    (credential_row_id, user_id),
+                )
             await conn.commit()
             changed = cursor.rowcount
             await cursor.close()
@@ -1443,6 +1512,36 @@ class Database:
             if row is None:
                 await conn.execute("DELETE FROM challenges WHERE id = ?", (challenge_id,))
             await conn.commit()
+        if row is None:
+            return None
+        try:
+            payload = json.loads(row["payload"])
+        except (TypeError, ValueError):
+            return None
+        return Challenge(
+            id=row["id"],
+            kind=row["kind"],
+            payload=payload,
+            created_at=float(row["created_at"]),
+            expires_at=float(row["expires_at"]),
+        )
+
+    async def get_challenge(
+        self, challenge_id: str, kind: str, *, now: float | None = None
+    ) -> Challenge | None:
+        """Return a live challenge without consuming it.
+
+        A flow that verifies a value before deciding whether to spend the
+        challenge (the TOTP second factor) uses this so a mistyped code does
+        not force the whole ceremony to restart. Expired and wrong-kind rows
+        are simply not returned; the cleanup loop removes them.
+        """
+        current = now if now is not None else time.time()
+        row = await self._fetchone(
+            "SELECT id, kind, payload, created_at, expires_at FROM challenges "
+            "WHERE id = ? AND kind = ? AND expires_at > ?",
+            (challenge_id, kind, current),
+        )
         if row is None:
             return None
         try:
@@ -1676,43 +1775,155 @@ class Database:
         await self._write("DELETE FROM backup_codes WHERE user_id = ?", (user_id,))
 
     # OTP secret management
-    async def set_otp_secret(self, user_id: int, secret: str, now: float | None = None) -> None:
-        """set_otp_secret."""
+    async def set_pending_otp_secret(self, user_id: int, secret: str, now: float | None = None) -> None:
+        """Store a *pending* OTP secret without touching any verified one.
+
+        An enrolment is only promoted to the active secret by
+        :meth:`verify_otp`, so abandoning the flow leaves the previous
+        (working) secret untouched.
+        """
         created = now if now is not None else time.time()
         await self._write(
-            "INSERT INTO otp_secrets (user_id, secret, created_at) VALUES (?, ?, ?) "
-            "ON CONFLICT(user_id) DO UPDATE SET secret = excluded.secret, created_at = excluded.created_at",
+            "INSERT INTO otp_secrets (user_id, secret, verified, pending_secret, pending_created_at, created_at) "
+            "VALUES (?, '', 0, ?, ?, ?) "
+            "ON CONFLICT(user_id) DO UPDATE SET "
+            "pending_secret = excluded.pending_secret, "
+            "pending_created_at = excluded.pending_created_at",
+            (user_id, secret, created, created),
+        )
+
+    async def set_otp_secret(self, user_id: int, secret: str, now: float | None = None) -> None:
+        """set_otp_secret (promote a secret directly, marked verified)."""
+        created = now if now is not None else time.time()
+        await self._write(
+            "INSERT INTO otp_secrets (user_id, secret, verified, created_at) VALUES (?, ?, 1, ?) "
+            "ON CONFLICT(user_id) DO UPDATE SET "
+            "secret = excluded.secret, verified = 1, pending_secret = NULL, "
+            "pending_created_at = NULL, last_used_counter = NULL, "
+            "created_at = excluded.created_at",
             (user_id, secret, created),
         )
 
     async def get_otp_secret(self, user_id: int) -> str | None:
-        """get_otp_secret."""
-        row = await self._fetchone("SELECT secret FROM otp_secrets WHERE user_id = ?", (user_id,))
-        return row["secret"] if row else None
+        """Return the active (verified) OTP secret, if any."""
+        row = await self._fetchone(
+            "SELECT secret FROM otp_secrets WHERE user_id = ? AND verified = 1", (user_id,)
+        )
+        if row and row["secret"]:
+            return row["secret"]
+        return None
 
-    async def verify_otp(self, user_id: int, code: str, *, window: int = 1) -> bool:
-        """verify_otp."""
-        secret = await self.get_otp_secret(user_id)
-        if not secret:
-            return False
+    async def get_pending_otp_secret(self, user_id: int) -> str | None:
+        """Return the pending (unverified) OTP secret, if any."""
+        row = await self._fetchone(
+            "SELECT pending_secret FROM otp_secrets WHERE user_id = ?", (user_id,)
+        )
+        return row["pending_secret"] if row else None
+
+    async def clear_pending_otp_secret(self, user_id: int) -> None:
+        """Discard a pending OTP secret."""
+        await self._write(
+            "UPDATE otp_secrets SET pending_secret = NULL, pending_created_at = NULL WHERE user_id = ?",
+            (user_id,),
+        )
+
+    async def clear_otp_secret(self, user_id: int) -> None:
+        """Remove a user's TOTP enrolment entirely (pending and active)."""
+        await self._write("DELETE FROM otp_secrets WHERE user_id = ?", (user_id,))
+
+    async def otp_user_ids(self) -> set[int]:
+        """Return the ids of every user with a verified TOTP secret."""
+        rows = await self._fetchall(
+            "SELECT user_id FROM otp_secrets WHERE verified = 1 AND secret <> ''"
+        )
+        return {int(row["user_id"]) for row in rows}
+
+    @staticmethod
+    def totp_match_counter(
+        secret: str, code: str, *, window: int = 1, at: float | None = None
+    ) -> int | None:
+        """Return the TOTP time-step that *code* matches, or ``None``.
+
+        ``window`` accepts that many 30-second steps either side of the current
+        one to tolerate clock drift. A malformed secret or code never matches.
+        """
+        import base64
+        import binascii
+        import hashlib
+        import hmac
+        import struct
+
+        code = (code or "").strip()
+        if len(code) != 6 or not code.isdigit():
+            return None
         try:
-            import base64
-            import binascii
-            import hashlib
-            import hmac
-            import struct
-            key = base64.b32decode(secret.upper().replace(' ', ''), casefold=True)
-            interval = int(time.time() // 30)
-            for offset in range(-window, window + 1):
-                counter = interval + offset
-                msg = struct.pack('>Q', counter)
-                h = hmac.new(key, msg, hashlib.sha1).digest()
-                o = h[-1] & 0x0F
-                token = (struct.unpack('>I', h[o:o+4])[0] & 0x7fffffff) % 1000000
-                if f"{token:06d}" == code:
-                    return True
-        except (binascii.Error, TypeError, struct.error):
-            return False
+            key = base64.b32decode(secret.upper().replace(" ", ""), casefold=True)
+        except (binascii.Error, TypeError, ValueError):
+            return None
+        interval = int((at if at is not None else time.time()) // 30)
+        for offset in range(-window, window + 1):
+            counter = interval + offset
+            digest = hmac.new(
+                key, struct.pack(">Q", counter), hashlib.sha1
+            ).digest()
+            start = digest[-1] & 0x0F
+            token = (
+                struct.unpack(">I", digest[start : start + 4])[0] & 0x7FFFFFFF
+            ) % 1_000_000
+            if f"{token:06d}" == code:
+                return counter
+        return None
+
+    @staticmethod
+    def totp_matches(
+        secret: str, code: str, *, window: int = 1, at: float | None = None
+    ) -> bool:
+        """Return ``True`` when *code* is a valid TOTP for *secret*."""
+        return Database.totp_match_counter(secret, code, window=window, at=at) is not None
+
+    async def verify_otp(
+        self, user_id: int, code: str, *, window: int = 1, at: float | None = None
+    ) -> bool:
+        """Verify *code* and spend the time-step it matched.
+
+        The pending secret is tried first and promoted on success. A pending
+        secret that does not match does **not** hide the active one: an
+        abandoned re-enrolment must never stop the authenticator the user
+        already has from signing in, because that would lock them out of the
+        page that can finish the enrolment.
+
+        The step that matched is recorded in ``last_used_counter`` by the same
+        ``UPDATE`` that accepts the code, and a replay of that code (or of an
+        older step still inside ``window``) is refused. Checking and writing in
+        one statement keeps two concurrent requests from spending one code.
+        """
+        active = await self.get_otp_secret(user_id)
+        pending = await self.get_pending_otp_secret(user_id)
+        for secret, is_pending in ((pending, True), (active, False)):
+            if not secret:
+                continue
+            counter = self.totp_match_counter(secret, code, window=window, at=at)
+            if counter is None:
+                continue
+            if is_pending:
+                # Promote the pending secret to the active one. Promotion is
+                # idempotent and only possible while the pending row exists, so
+                # it does not need the replay guard.
+                written = await self._write_count(
+                    "UPDATE otp_secrets SET secret = ?, verified = 1, "
+                    "pending_secret = NULL, pending_created_at = NULL, "
+                    "created_at = ?, last_used_counter = ? WHERE user_id = ?",
+                    (secret, time.time(), counter, user_id),
+                )
+            else:
+                written = await self._write_count(
+                    "UPDATE otp_secrets SET last_used_counter = ? "
+                    "WHERE user_id = ? "
+                    "AND (last_used_counter IS NULL OR last_used_counter < ?)",
+                    (counter, user_id, counter),
+                )
+            if written:
+                return True
         return False
 
 

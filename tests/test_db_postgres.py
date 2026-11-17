@@ -156,6 +156,12 @@ class TestPostgresDatabaseInit:
             # member index, seed the default Users group)
             MagicMock(), MagicMock(), MagicMock(), MagicMock(), MagicMock(),
             insert_result,  # v6 insert version
+            # v7: OTP enrolment columns + backfill
+            MagicMock(), MagicMock(), MagicMock(), MagicMock(),
+            insert_result,  # v7 insert version
+            # v8: TOTP replay counter
+            MagicMock(),
+            insert_result,  # v8 insert version
         ]
         # Build a proper async context manager for the engine.begin() call.
         mock_cm = AsyncMock()
@@ -857,7 +863,7 @@ class TestPostgresDatabaseOtp:
 
     async def test_get_otp_secret(self) -> None:
         session, result = _MockSession(), MagicMock()
-        result.fetchone.return_value = _row(secret="SECRET", user_id=1)
+        result.fetchone.return_value = _row(secret="SECRET", verified=1, user_id=1)
         session.execute.return_value = result
         db, _ = await self._make_db(session=session)
         secret = await db.get_otp_secret(user_id=1)
@@ -865,7 +871,9 @@ class TestPostgresDatabaseOtp:
 
     async def test_verify_otp(self) -> None:
         session, result = _MockSession(), MagicMock()
-        result.fetchone.return_value = _row(secret="SECRET", user_id=1)
+        result.fetchone.return_value = _row(
+            secret="JBSWY3DPEHPK3PXP", pending_secret=None, verified=1, user_id=1
+        )
         session.execute.return_value = result
         db, _ = await self._make_db(session=session)
         valid = await db.verify_otp(user_id=1, code="123456", window=1)

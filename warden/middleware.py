@@ -9,10 +9,12 @@ adds a strict set of security response headers to every outgoing response.
 
 from __future__ import annotations
 
+import hmac
 import logging
 import uuid
 from collections.abc import Callable, MutableMapping
 from typing import Any
+from urllib.parse import parse_qsl
 
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.responses import HTMLResponse, JSONResponse, Response
@@ -33,7 +35,6 @@ from warden.utils import (
     is_navigation,
     login_url,
     next_from_scope,
-    request_wants_json,
 )
 
 logger = logging.getLogger("warden.middleware")
@@ -48,7 +49,10 @@ _PUBLIC_AUTH_PREFIXES = (
 )
 #: Admin-host pages a signed-in non-admin may open. These pages only show or
 #: change the requesting user's own data.
-_USER_PAGE_PATHS = ("/portal", "/passkeys", "/backup_codes")
+_USER_PAGE_PATHS = ("/portal", "/passkeys", "/backup_codes", "/otp")
+#: Admin-host endpoints that expose Prometheus metrics and may be reached with a
+#: ``server.metrics_token`` instead of a passkey session.
+_METRICS_PATHS = frozenset({f"{INTERNAL_PREFIX}/metrics", "/metrics"})
 #: Admin-host APIs that are scoped to the session user, so non-admins may use
 #: them from those pages (passkey rename/remove, session revoke).
 _USER_API_PREFIXES = (
@@ -136,6 +140,29 @@ class WardenMiddleware:
         allowed = _USER_PAGE_PATHS + _USER_API_PREFIXES
         return any(path == prefix or path.startswith(f"{prefix}/") for prefix in allowed)
 
+    def _metrics_token_allowed(self, scope: MutableMapping[str, Any], config: WardenConfig) -> bool:
+        """Return ``True`` when *scope* carries a valid ``server.metrics_token``.
+
+        Accepts the token as an ``Authorization: Bearer`` header or as a
+        ``token`` query parameter, and compares it in constant time. The token
+        only ever unlocks the Prometheus metrics endpoints.
+        """
+        token = config.server.metrics_token
+        if not token:
+            return False
+        authorization = Headers(scope=scope).get("authorization", "")
+        candidate = authorization[7:].strip() if authorization.lower().startswith("bearer ") else ""
+        if not candidate:
+            query = scope.get("query_string", b"").decode("latin-1")
+            for key, value in parse_qsl(query, keep_blank_values=True):
+                if key == "token":
+                    candidate = value
+                    break
+        candidate = candidate.strip()
+        if not candidate:
+            return False
+        return hmac.compare_digest(candidate.encode("utf-8"), token.encode("utf-8"))
+
     # ------------------------------------------------------------------- http
     async def _handle_http(
         self,
@@ -180,18 +207,23 @@ class WardenMiddleware:
                 )
                 await response(scope, receive, send)
                 return
-            if session is None:
-                if request_wants_json(scope):
+            metrics_token_ok = (
+                session is None
+                and path in _METRICS_PATHS
+                and self._metrics_token_allowed(scope, config)
+            )
+            if session is None and not metrics_token_ok:
+                # Only browser-like navigations get the sign-in redirect; every
+                # other client (Prometheus, curl, scripts) gets a 401 so a
+                # machine endpoint never answers with an HTML page.
+                if not is_navigation(scope):
                     await self._json_unauthorized("Sign in to continue.")(scope, receive, send)
                     return
-                if method in {"GET", "HEAD"}:
-                    target = login_url(scope, config, next_from_scope(scope))
-                    response = self._redirect(target)
-                    await response(scope, receive, send)
-                    return
-                await self._json_unauthorized("Sign in to continue.")(scope, receive, send)
+                target = login_url(scope, config, next_from_scope(scope))
+                response = self._redirect(target)
+                await response(scope, receive, send)
                 return
-            if not session.user.is_admin:
+            if session is not None and not session.user.is_admin:
                 # The portal and the per-user credential pages are the only
                 # admin-host destinations open to non-admins. ``/`` lands them
                 # on the portal instead of the admin dashboard.
@@ -224,6 +256,34 @@ class WardenMiddleware:
                     await self._no_dashboard_access(scope, receive, send, host)
                     return
                 response = self._json_unauthorized("Admin access required.")
+                await response(scope, receive, send)
+                return
+            if (
+                session is not None
+                and session.user.is_admin
+                and config.server.require_otp_for_admins
+                and not self._is_user_portal_path(path)
+                and await self.db.get_otp_secret(session.user.id) is None
+            ):
+                # The passkeys page and its APIs stay reachable so an admin can
+                # enrol without a second account; auth endpoints returned above
+                # as public paths, so sign-in and OTP setup still work.
+                if not is_navigation(scope):
+                    response = JSONResponse(
+                        {
+                            "detail": (
+                                "Two-factor authentication is required for admins. "
+                                "Enrol an authenticator to continue."
+                            ),
+                            "otp_setup_required": True,
+                            "setup_url": "/passkeys?otp_required=1",
+                        },
+                        status_code=403,
+                    )
+                    response.headers["Cache-Control"] = "no-store"
+                    await response(scope, receive, send)
+                    return
+                response = self._redirect("/passkeys?otp_required=1")
                 await response(scope, receive, send)
                 return
             if path.startswith(f"{INTERNAL_PREFIX}/api/") and method not in {"GET", "HEAD", "OPTIONS"}:
@@ -286,18 +346,13 @@ class WardenMiddleware:
         if route.auth and not route.is_public_path(path):
             if session is None:
                 target = login_url(scope, config, next_from_scope(scope))
-                if request_wants_json(scope):
+                if not is_navigation(scope):
                     await self._json_unauthorized(
                         "Sign in to continue.", extra={"login_url": target}
                     )(scope, receive, send)
                     return
-                if method in {"GET", "HEAD"}:
-                    response = self._redirect(target)
-                    await response(scope, receive, send)
-                    return
-                await self._json_unauthorized(
-                    "Sign in to continue.", extra={"login_url": target}
-                )(scope, receive, send)
+                response = self._redirect(target)
+                await response(scope, receive, send)
                 return
             user = session.user
         else:
@@ -330,9 +385,9 @@ class WardenMiddleware:
                 headers.setdefault(
                     "Content-Security-Policy",
                     "default-src 'self'; script-src 'self'; "
-                    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+                    "style-src 'self' 'unsafe-inline'; "
                     "img-src 'self' data:; connect-src 'self'; "
-                    "font-src 'self' https://fonts.gstatic.com; "
+                    "font-src 'self'; "
                     "frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
                 )
                 if config.server.external_scheme == "https" or str(scope.get("scheme")) == "https":
@@ -425,7 +480,9 @@ class WardenMiddleware:
         Returns JSON if the request prefers JSON, otherwise renders the ``error.html``
         template with the given *title* and *message*.
         """
-        if request_wants_json(scope):
+        if not is_navigation(scope):
+            # Only a browser navigation deserves an HTML page: Prometheus, curl
+            # and scripts get JSON even when they send no Accept header.
             response: Response = JSONResponse({"detail": title}, status_code=404)
             response.headers["Cache-Control"] = "no-store"
             await response(scope, receive, send)

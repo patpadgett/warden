@@ -76,8 +76,8 @@ The code must be at least 12 characters after removing punctuation. If no code
 is active (for example after it expires), restart Warden to generate a fresh one.
 
 For a non-`localhost` hostname during development, run `warden serve --dev-tls`
-to generate a self-signed certificate under `/tmp/opencode/warden-dev-tls`
-(override with `--tls-dir`). Browsers still need to trust that certificate.
+to generate a self-signed certificate under `.warden/dev-tls` (override with
+`--tls-dir`). Browsers still need to trust that certificate.
 
 ## Security notes
 
@@ -100,7 +100,9 @@ to generate a self-signed certificate under `/tmp/opencode/warden-dev-tls`
 - Upstreams see sanitized `X-Forwarded-For`, `X-Forwarded-Host`,
   `X-Forwarded-Proto`, `X-Real-IP`, and (for authenticated routes) identity
   headers. Client-supplied identity and forwarding headers are stripped.
-- `public_paths` and `auth: false` are deliberate holes. Review them.
+- `public_paths` and `auth: false` are deliberate holes. Review them. Path
+  rules are matched after collapsing `.`/`..` segments and duplicate slashes, so
+  `/public/../admin` cannot slip through a `/public/*` bypass.
 - The SQLite database contains sensitive material (passkey metadata, session
   hashes, WireGuard private keys). Use file permissions and encrypted backups.
 - Keep Warden to a single process. Sessions and rate limits are process-local;
@@ -265,7 +267,9 @@ both bind ports 8080/8443. Expose the Deployment through the chart's Service.
    and cookies with unreachable `Domain` attributes can be cleaned up.
 
 `PATH` and query strings are preserved. The upstream path in the route (for
-example `http://10.0.0.5:3000/api`) is used as a prefix. WebSocket upgrades are
+example `http://10.0.0.5:3000/api`) is used as a prefix, unless the request path
+already starts with it — `/api/users` is not sent on as `/api/api/users`.
+WebSocket upgrades are
 relayed in both directions when `websocket: true`.
 
 ### Public paths
@@ -305,6 +309,7 @@ fast. All relative paths are resolved from the directory containing
 | `forward_user_header` | `X-Warden-User` | Header carrying the username to authenticated upstreams (`null` disables). |
 | `external_scheme` | unset | Force `http`/`https` in generated URLs. |
 | `public_url` | unset | Canonical admin origin, e.g. `https://warden.home.lan`. |
+| `metrics_token` | unset | Bearer token for `/_warden/metrics`. When set, that endpoint (and the `/metrics` alias) also accepts `Authorization: Bearer <token>` or `?token=<token>` without a passkey session. Compare is constant-time. |
 | `request_timeout_seconds` | `60` | Default upstream timeout. |
 | `health_interval_seconds` | `30` | Dashboard health-check interval. |
 | `cleanup_interval_seconds` | `3600` | How often expired sessions/challenges are pruned. Set `0` to disable. |
@@ -312,6 +317,7 @@ fast. All relative paths are resolved from the directory containing
 | `max_vacuum_bytes` | `104857600` | Only vacuum SQLite when the database is larger than this many bytes. |
 | `max_body_size_mb` | `10` | Maximum request body size in MB, enforced for both `Content-Length` and chunked uploads. |
 | `max_sessions_per_user` | unset | Maximum concurrent sessions per user (`null` disables). |
+| `require_otp_for_admins` | `false` | Refuse admin dashboard access until the admin has enrolled TOTP. The passkeys page stays reachable, so switching it on cannot lock anyone out. |
 | `log_level` | `info` | `debug`, `info`, `warning`, `error`, or `critical`. |
 | `log_file` | unset | Write logs to this path instead of stderr. |
 | `log_rotation` | `size` | `size` for size-based rotation or `time` for time-based rotation. |
@@ -367,6 +373,7 @@ Optional SMTP settings. When enabled, `POST /_warden/api/invites` emails the fir
 | `user` | unset | SMTP username (omit for anonymous/relay auth). |
 | `password` | unset | SMTP password. |
 | `starttls` | `true` | Upgrade the SMTP connection with STARTTLS. |
+| `ssl` | `false` | Use implicit TLS (SMTPS, usually port 465) instead of STARTTLS. Cannot be combined with `starttls`. |
 | `from_address` | `warden@localhost` | `From:` address for invite mail. |
 | `subject_prefix` | `Your first-login invite` | Subject prefix for invite mail. |
 
@@ -407,13 +414,16 @@ The database stores the admin account, passkey public keys, hashed sessions, mes
 
 ### Database schema and migrations
 
-Warden ships with an embedded, transactional schema-migration system so that upgrading between versions never leaves the database behind. The current schema version is defined by the `SCHEMA_VERSION` constant (currently `5`). Each upgrade step is a plain-SQL script stored in the `_MIGRATIONS` dictionary, keyed by the target version:
+Warden ships with an embedded, transactional schema-migration system so that upgrading between versions never leaves the database behind. The current schema version is defined by the `SCHEMA_VERSION` constant (currently `8`). Each upgrade step is a plain-SQL script stored in the `_MIGRATIONS` dictionary, keyed by the target version:
 
 - **v1** – Users, settings, and the audit log (initial schema).
 - **v2** – WireGuard `mesh_peers` table for peer configuration.
 - **v3** – Credentials, sessions, challenges, backup codes, and OTP secrets (passkeys and MFA).
 - **v4** – `invites` table for first-login passkey registration.
 - **v5** – `users.email` column for invite delivery and account notices.
+- **v6** – `acl_groups` / `acl_members` for per-route ACLs; every account joins the seeded `Users` group.
+- **v7** – `otp_secrets.verified`, `pending_secret`, `pending_created_at`, so an enrolment never clobbers a working authenticator.
+- **v8** – `otp_secrets.last_used_counter`, so an accepted TOTP code cannot be replayed inside its drift window.
 
 When `Database.init()` runs, it reads the highest `version` already recorded in `schema_migrations` and applies every script for versions greater than that, in order, inside a single `BEGIN IMMEDIATE` transaction. If the DB already contains a newer version than this build supports, initialization fails loudly instead of silently applying a stale schema. SQLite runs the migration inside `BEGIN IMMEDIATE`; PostgreSQL inlines the same logic with `async with self.engine.begin()` and uses PostgreSQL-native types (`BIGINT GENERATED ALWAYS AS IDENTITY`, `DOUBLE PRECISION`, `BYTEA`, `BOOLEAN`, etc.).
 
@@ -520,8 +530,11 @@ All mutations require an authenticated admin session, the admin `Host`, and the
 | `POST` | `/_warden/auth/logout` | Revoke the current session. |
 | `POST` | `/_warden/auth/invite/begin` | Start invited-user passkey registration. |
 | `POST` | `/_warden/auth/invite/complete` | Finish invited-user registration. |
-| `POST` | `/_warden/auth/otp/setup` | Provision TOTP for the current user. |
-| `POST` | `/_warden/auth/otp/verify` | Verify a TOTP code. |
+| `POST` | `/_warden/auth/login/otp` | Finish a sign-in that requires a TOTP code. |
+| `POST` | `/_warden/auth/otp/setup` | Provision TOTP for the current user (stored pending). |
+| `GET` | `/_warden/auth/otp/status` | Report the current user's two-factor state. |
+| `POST` | `/_warden/auth/otp/verify` | Verify a TOTP code and enable the pending secret. |
+| `POST` | `/_warden/auth/otp/disable` | Remove TOTP (requires a current code). |
 | `POST` | `/_warden/auth/register/begin` | Add another passkey for the current user. |
 | `POST` | `/_warden/auth/register/complete` | Finish adding a passkey. |
 | `GET` | `/_warden/auth/unsupported` | Explain that a browser lacks WebAuthn/secure-context support. |
@@ -559,6 +572,7 @@ These HTML pages are served only on the admin host and require a session
 | `POST` | `/_warden/api/users` | Create a user (optionally with `email`). |
 | `PATCH` | `/_warden/api/users/{id}` | Update display name, email, or `is_admin`. |
 | `DELETE` | `/_warden/api/users/{id}` | Delete a user and their credentials/sessions. |
+| `POST` | `/_warden/api/users/{id}/otp/reset` | Clear another user's TOTP enrolment (admins cannot clear their own here). |
 | `POST` | `/_warden/api/invites` | Create a single-use first-login invite. |
 | `POST` | `/_warden/api/services` | Add a route. |
 | `PUT` | `/_warden/api/services/{host}` | Replace a route. |
@@ -609,7 +623,15 @@ datasource.
 
 ### Scraping with Prometheus
 
-`/_warden/metrics` is admin-host protected and requires a valid session / `Host` header. For machine scraping, either expose it behind an internal reverse proxy or configure Prometheus with a bearer token / basic auth. Example `prometheus.yml` scrape config (`job_name: warden_scrape`):
+`/_warden/metrics` is admin-host protected: it requires the admin `Host` and a
+valid passkey session. Browsers are redirected to the sign-in page; machine
+clients (Prometheus, curl) get `401` JSON, never an HTML page.
+
+For unattended scraping, set `server.metrics_token` to a long random value
+(`openssl rand -hex 32`) and let Prometheus send it as a bearer token — no
+session needed. Without a token, put a small reverse proxy in front of Warden
+that injects the session cookie. Example `prometheus.yml` scrape config
+(`job_name: warden_scrape`):
 
 ```yaml
 scrape_configs:
@@ -617,15 +639,18 @@ scrape_configs:
     scrape_interval: 15s
     metrics_path: /_warden/metrics
     scheme: https
+    bearer_token: '<server.metrics_token>'
     tls_config:
       insecure_skip_verify: true  # only if using self-signed TLS
     static_configs:
       - targets: ['warden-host:8443']
         labels:
           instance: 'warden-homelab'
-    # If scraping without cookies, put a basic-auth or bearer token here,
-    # or expose /metrics through a proxy with auth (see README proxy notes).
 ```
+
+The token is accepted as `Authorization: Bearer <token>` or `?token=<token>`,
+and only unlocks the two metrics endpoints. Treat it like a password: it grants
+read access to your traffic, auth, and mesh-handshake counters.
 
 For cookie/session scraping (not recommended for Prometheus): use `scrape_interval` with `relabel_configs` that inject the session header via the `proxy_url` or a sidecar. The simpler path: run a small nginx/traefik sidecar on the cluster that proxies `/metrics` to the Warden admin port with basic auth, and point Prometheus at the proxy.
 
@@ -783,7 +808,7 @@ serve                 run the proxy and dashboard
   --port PORT         HTTP port override
   --https-port PORT   HTTPS port override
   --dev-tls           generate/use a self-signed cert and force HTTPS
-  --tls-dir PATH      directory for --dev-tls cert/key (default: /tmp/opencode/warden-dev-tls)
+  --tls-dir PATH      directory for --dev-tls cert/key (default: .warden/dev-tls)
   --no-access-log     hide per-request logs
 
 init                  write a starter warden.yaml
@@ -826,17 +851,61 @@ mesh peer remove NAME [--yes]
 
 ## OTP (One-Time Password)
 
-Warden supports optional TOTP‑based two‑factor authentication.
+Warden supports optional TOTP‑based two‑factor authentication. It is opt-in per
+account: sign-in only asks for a code once that account has enrolled.
 
-* **Enable OTP** – An authenticated user can POST to `/_warden/auth/otp/setup`. The endpoint is CSRF‑protected (requires `X-Warden-Request: 1` and same‑origin). It returns a Base32 secret and an `otpauth://` URL that can be scanned by Google Authenticator, Authy, or any TOTP app.
+* **Enrol on the passkeys page.** `/passkeys` has a **Two-factor** panel. It
+  calls `POST /_warden/auth/otp/setup`, shows the Base32 secret and the
+  `otpauth://` URL for Google Authenticator, Authy, or any TOTP app, and enables
+  the secret only after `POST /_warden/auth/otp/verify` accepts a code from it.
+  The new secret is stored as *pending*, so abandoning the flow leaves a working
+  secret untouched. The endpoints are CSRF‑protected (`X-Warden-Request: 1` and
+  same‑origin).
 
-* **Verify OTP** – After provisioning, the user POSTs to `/_warden/auth/otp/verify` with the current 6‑digit code. Successful verification increments the `warden_otp_success_total` metric; failures increment `warden_otp_failure_total`.
+* **Sign-in asks for the code.** When an enrolled user finishes the passkey
+  ceremony, `POST /_warden/auth/login/complete` returns `otp_required` and a
+  short-lived challenge instead of a session. The sign-in page shows a code
+  field and posts to `/_warden/auth/login/otp`, which creates the session only
+  after the code verifies. A mistyped code can be retried without repeating the
+  passkey ceremony; the challenge expires after five minutes and is spent on
+  success.
 
-* **Rate limiting** – OTP verification is limited to 30 attempts per minute per IP.
+* **Turn it off again.** `POST /_warden/auth/otp/disable` requires a current
+  code, so a stolen session cannot silently drop the second factor.
+  `GET /_warden/auth/otp/status` reports `{"enabled": …, "pending": …}`.
 
-* **Metrics** — Both success and failure counters are exposed at `/_warden/metrics`, visualised in the Grafana dashboard, and available as a live snapshot inside the app at `/metrics/view` (admin-host protected).
+* **Recovery codes still work.** A backup code is a single-use 64-bit factor in
+  its own right, so `POST /_warden/auth/login/backup` finishes sign-in without a
+  TOTP code. Without that rule a lost authenticator would need
+  `warden auth reset` on the server.
 
-* **Storage** – The secret is stored in SQLite; OTP codes are time-based and can be regenerated by the client at any time.
+* **Rate limiting** – 30 attempts per minute per IP for management endpoints and
+  10 per minute for the sign-in step, which allows in-place retries.
+
+* **Metrics** — Success and failure counters are exposed at `/_warden/metrics`,
+  visualised in the Grafana dashboard, and available as a live snapshot inside
+  the app at `/metrics/view` (admin-host protected).
+
+* **A code works once.** The accepted time-step is recorded in
+  `last_used_counter` by the same `UPDATE` that verifies the code, so replaying
+  a code — or an older step still inside the drift window — is refused, and two
+  concurrent requests cannot both spend it.
+
+* **An admin can reset someone else's second factor.** The Users page has a
+  **Reset 2FA** action for enrolled accounts, and
+  `POST /_warden/api/users/{id}/otp/reset` does the same over the API. Your own
+  factor is refused there: removing it requires a current code on the passkeys
+  page, so a stolen admin session cannot silently drop it.
+
+* **Require it for admins.** Set `server.require_otp_for_admins: true` and an
+  admin without an enrolled authenticator is confined to the passkeys page until
+  they enrol one; every other dashboard page redirects there (API clients get
+  `403` with `otp_setup_required: true`). Because enrolment stays reachable, the
+  policy cannot strand a deployment.
+
+* **Storage** – The secret (or pending secret) is stored next to the account in
+  SQLite/PostgreSQL; codes are time-based and generated by the client. A code
+  stays valid for its 30-second step, plus one step either side for clock drift.
 
 ## Backup codes UI
 

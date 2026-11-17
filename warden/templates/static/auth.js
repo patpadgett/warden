@@ -27,6 +27,13 @@
       button.title = W.passkeySupportMessage();
     }
 
+    const otpStep = W.$("#otp-step");
+    const otpCode = W.$("#otp-login-code");
+    const otpSubmit = W.$("#otp-login-submit");
+    let otpChallenge = null;
+
+    const finish = (result) => window.location.assign(result.redirect || "/");
+
     const signIn = async () => {
       W.hide(errorBox);
       W.setBusy(button, true, "Waiting for your passkey…");
@@ -35,12 +42,40 @@
           username: username?.value?.trim() || null,
           next,
         });
-        window.location.assign(result.redirect || "/");
+        if (result && result.otp_required) {
+          otpChallenge = result.login_challenge || result.challenge;
+          if (otpStep) otpStep.hidden = false;
+          W.setBusy(button, false);
+          otpCode?.focus();
+          return;
+        }
+        finish(result);
       } catch (error) {
         fail(error);
         W.setBusy(button, false);
       }
     };
+
+    const submitOtp = async () => {
+      if (!otpChallenge) return;
+      W.hide(errorBox);
+      W.setBusy(otpSubmit, true, "Checking…");
+      try {
+        finish(await W.completeLoginOtp(otpChallenge, otpCode?.value || ""));
+      } catch (error) {
+        fail(error);
+        W.setBusy(otpSubmit, false);
+        otpCode?.select();
+      }
+    };
+
+    otpSubmit?.addEventListener("click", submitOtp);
+    otpCode?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        submitOtp();
+      }
+    });
 
     button.addEventListener("click", signIn);
     username?.addEventListener("keydown", (event) => {

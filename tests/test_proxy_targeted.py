@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -115,6 +115,21 @@ def test_proxy_rewrite_location() -> None:
     assert engine._rewrite_location("https://other.com/", route, scope) == "https://other.com/"
 
 
+def test_proxy_rewrite_location_survives_malformed_port() -> None:
+    """An unparseable port in an upstream Location must not raise.
+
+    `_response_headers` runs inside `handle_http`'s try, so a ValueError here
+    would surface to the client as a 502 for an otherwise good response.
+    """
+    manager = MagicMock(spec=ConfigManager)
+    manager.config = WardenConfig()
+    engine = ProxyEngine(manager, MetricsModule())
+    route = RouteConfig(host="app.local", upstream="http://192.168.1.5:3000", rewrite_redirects=True)
+    scope = {"scheme": "https", "headers": [(b"host", b"app.local")]}
+    for location in ("http://192.168.1.5:99999/x", "http://192.168.1.5:abc/x"):
+        assert engine._rewrite_location(location, route, scope) == location
+
+
 def test_proxy_rewrite_set_cookie_drops_secure_on_http() -> None:
     manager = MagicMock(spec=ConfigManager)
     manager.config = WardenConfig()
@@ -184,6 +199,8 @@ def test_proxy_path_denial_normalizes_dot_segments() -> None:
     for path in ("/secret/", "//secret", "/./secret", "/public/../secret"):
         assert ProxyEngine._path_denial(route, path) is not None, path
     assert ProxyEngine._path_denial(route, "/admin/./users") is not None
+    assert ProxyEngine._path_denial(route, "/ADMIN/users") is not None
+    assert ProxyEngine._path_denial(route, "/SECRET") is not None
     assert ProxyEngine._path_denial(route, "/public/secret") is None
     assert ProxyEngine._path_denial(route, "/administrator") is None
     # ``/*`` still blocks everything, as it did before normalisation.
@@ -204,6 +221,16 @@ def test_proxy_rewrite_set_cookie_drops_unreachable_domain() -> None:
     rewritten = engine._rewrite_set_cookie(cookie, scope, route)
     assert rewritten is not None
     assert "Domain" not in rewritten
+
+
+def test_proxy_rewrite_set_cookie_tolerates_bare_domain() -> None:
+    """`Set-Cookie: ***; Domain` (attribute with no value) must not raise."""
+    manager = MagicMock(spec=ConfigManager)
+    manager.config = WardenConfig()
+    engine = ProxyEngine(manager, MetricsModule())
+    route = RouteConfig(host="app.local", upstream="http://192.168.1.5:3000", rewrite_cookies=True)
+    scope = {"scheme": "https", "headers": [(b"host", b"app.local")]}
+    assert engine._rewrite_set_cookie("sid=1; Domain", scope, route) == "sid=1"
 
 
 def test_proxy_response_headers_strip_hop_by_hop() -> None:
@@ -285,9 +312,23 @@ class TestProxyHandleHttp:
         engine._client = AsyncMock()
         return engine
 
-    def _client(self, upstream):
+    def _client(self, upstream, *, consume=False):
         client = MagicMock()
-        client.send = AsyncMock(return_value=upstream)
+
+        def _build(method, url, **kwargs):
+            request = MagicMock()
+            request.content = kwargs.get("content")
+            return request
+
+        client.build_request.side_effect = _build
+
+        async def _send(request, **kwargs):
+            if consume:
+                async for _ in request.content:
+                    pass
+            return upstream
+
+        client.send = AsyncMock(side_effect=_send)
         return client
 
     def _scope(
@@ -347,20 +388,18 @@ class TestProxyHandleHttp:
         upstream.request = MagicMock()
         return upstream
 
-    def _make_request(self, body=b"", method="GET"):
-        async def _body():
-            return body
-        req = MagicMock()
-        req.body = _body
-        req.method = method
-        return req
+    @staticmethod
+    def _receive(body=b""):
+        """ASGI receive that yields *body* once, then reports a disconnect."""
+        messages = [{"type": "http.request", "body": body, "more_body": False}]
 
-    async def _call(self, engine, scope, receive, send, route, body=b"", method="GET"):
-        with patch(
-            "warden.proxy.Request",
-            return_value=self._make_request(body=body, method=method),
-        ):
-            return await engine.handle_http(scope, receive, send, route, None)
+        async def receive():
+            return messages.pop(0) if messages else {"type": "http.disconnect"}
+
+        return receive
+
+    async def _call(self, engine, scope, receive, send, route):
+        return await engine.handle_http(scope, receive, send, route, None)
 
     async def test_handle_http_acme_challenge(self, engine):
         # ACME challenge returns early with the challenge token.
@@ -369,9 +408,22 @@ class TestProxyHandleHttp:
         engine.acme_tokens = {"abc123": "token-response"}
         receive = AsyncMock()
         send = MagicMock()
-        with patch("warden.proxy.Request", return_value=self._make_request()):
-            await self._call(engine, scope, receive, send, route)
+        await self._call(engine, scope, receive, send, route)
         engine._client.assert_not_called()
+        engine._send.assert_awaited_once()
+        assert engine._send.call_args[0][0].status_code == 200
+        assert engine._send.call_args[0][0].body == b"token-response"
+
+    async def test_acme_challenge_is_not_rate_limited(self, engine):
+        # A CA validating a certificate must not be refused because the route's
+        # per-client window is already full.
+        route = self._route(rate_limit=1)
+        engine.acme_tokens = {"abc123": "token-response"}
+        assert engine._per_route_rate_limit(route, "127.0.0.1") is False
+        assert engine._per_route_rate_limit(route, "127.0.0.1") is True
+        scope = self._scope(path="/.well-known/acme-challenge/abc123")
+        engine._send.reset_mock()
+        await self._call(engine, scope, AsyncMock(), MagicMock(), route)
         engine._send.assert_awaited_once()
         assert engine._send.call_args[0][0].status_code == 200
         assert engine._send.call_args[0][0].body == b"token-response"
@@ -382,11 +434,14 @@ class TestProxyHandleHttp:
         scope = self._scope(client=("192.168.1.100", 12345))
         upstream = self._upstream(status=403)
         engine._client = MagicMock(return_value=self._client(upstream))
-        with patch("warden.proxy.Request", return_value=self._make_request()):
-            await self._call(engine, scope, AsyncMock(), MagicMock(), route)
+        await self._call(engine, scope, AsyncMock(), MagicMock(), route)
         engine._client.assert_not_called()
         engine._send.assert_awaited_once()
         assert engine._send.call_args[0][0].status_code == 403
+        # A denial never reaches the upstream, but must still be counted.
+        recorded = engine.stats.metrics["app.local"]
+        assert recorded.requests == 1
+        assert recorded.last_status == 403
 
     async def test_handle_http_ip_not_allowed(self, engine):
         # Client IP is not in route.allowed_ips -> 403.
@@ -394,8 +449,7 @@ class TestProxyHandleHttp:
         scope = self._scope(client=("192.168.1.100", 12345))
         upstream = self._upstream(status=403)
         engine._client = MagicMock(return_value=self._client(upstream))
-        with patch("warden.proxy.Request", return_value=self._make_request()):
-            await self._call(engine, scope, AsyncMock(), MagicMock(), route)
+        await self._call(engine, scope, AsyncMock(), MagicMock(), route)
         engine._client.assert_not_called()
         engine._send.assert_awaited_once()
         assert engine._send.call_args[0][0].status_code == 403
@@ -406,8 +460,7 @@ class TestProxyHandleHttp:
         scope = self._scope(client=("not-an-ip", 12345))
         upstream = self._upstream(status=403)
         engine._client = MagicMock(return_value=self._client(upstream))
-        with patch("warden.proxy.Request", return_value=self._make_request()):
-            await self._call(engine, scope, AsyncMock(), MagicMock(), route)
+        await self._call(engine, scope, AsyncMock(), MagicMock(), route)
         engine._client.assert_not_called()
         engine._send.assert_awaited_once()
         assert engine._send.call_args[0][0].status_code == 403
@@ -419,21 +472,36 @@ class TestProxyHandleHttp:
         scope = self._scope(path="/public/../secret")
         upstream = self._upstream(status=200)
         engine._client = MagicMock(return_value=self._client(upstream))
-        with patch("warden.proxy.Request", return_value=self._make_request()):
-            await self._call(engine, scope, AsyncMock(), MagicMock(), route)
+        await self._call(engine, scope, AsyncMock(), MagicMock(), route)
         engine._client.assert_not_called()
         engine._send.assert_awaited_once()
         assert engine._send.call_args[0][0].status_code == 403
 
     async def test_handle_http_max_body_too_large(self, engine):
-        # Request body exceeds max_body_size_mb -> 413.
+        # A declared Content-Length above max_body_size_mb is refused before the
+        # upstream is contacted.
         route = self._route()
-        scope = self._scope()
-        upstream = self._upstream(status=413)
-        engine._client = MagicMock(return_value=self._client(upstream))
-        with patch("warden.proxy.Request", return_value=self._make_request()):
-            await self._call(engine, scope, AsyncMock(), MagicMock(), route, body=b"x" * 10485761)
-        engine._client.assert_called_once()
+        scope = self._scope(
+            method="POST",
+            headers=[(b"host", b"test.local"), (b"content-length", b"10485761")],
+        )
+        engine._client = MagicMock(return_value=self._client(self._upstream()))
+        await self._call(engine, scope, self._receive(b"x"), MagicMock(), route)
+        engine._client.assert_not_called()
+        engine._send.assert_awaited_once()
+        assert engine._send.call_args[0][0].status_code == 413
+
+    async def test_handle_http_chunked_body_over_limit_is_rejected(self, engine):
+        # No Content-Length: the limit is enforced while the body streams, so a
+        # chunked upload cannot slip past the size check.
+        route = self._route()
+        scope = self._scope(
+            method="POST",
+            headers=[(b"host", b"test.local"), (b"transfer-encoding", b"chunked")],
+        )
+        engine._client = MagicMock(return_value=self._client(self._upstream(), consume=True))
+        over = b"x" * (engine.manager.config.server.max_body_size_mb * 1024 * 1024 + 1)
+        await self._call(engine, scope, self._receive(over), MagicMock(), route)
         engine._send.assert_awaited_once()
         assert engine._send.call_args[0][0].status_code == 413
 
@@ -443,8 +511,7 @@ class TestProxyHandleHttp:
         scope = self._scope(method="HEAD")
         upstream = self._upstream(status=200)
         engine._client = MagicMock(return_value=self._client(upstream))
-        with patch("warden.proxy.Request", return_value=self._make_request(method="HEAD")):
-            await self._call(engine, scope, AsyncMock(), MagicMock(), route)
+        await self._call(engine, scope, AsyncMock(), MagicMock(), route)
         engine._client.assert_called_once()
         engine._send.assert_awaited_once()
         assert engine._send.call_args[0][0].status_code == 200
@@ -455,8 +522,7 @@ class TestProxyHandleHttp:
         scope = self._scope()
         upstream = self._upstream(status=204)
         engine._client = MagicMock(return_value=self._client(upstream))
-        with patch("warden.proxy.Request", return_value=self._make_request()):
-            await self._call(engine, scope, AsyncMock(), MagicMock(), route)
+        await self._call(engine, scope, AsyncMock(), MagicMock(), route)
         engine._client.assert_called_once()
         engine._send.assert_awaited_once()
         assert engine._send.call_args[0][0].status_code == 204
@@ -469,8 +535,7 @@ class TestProxyHandleHttp:
         client = self._client(upstream)
         client.send = AsyncMock(side_effect=httpx.TimeoutException("timed out"))
         engine._client = MagicMock(return_value=client)
-        with patch("warden.proxy.Request", return_value=self._make_request()):
-            await self._call(engine, scope, AsyncMock(), MagicMock(), route)
+        await self._call(engine, scope, AsyncMock(), MagicMock(), route)
         engine._client.assert_called_once()
         engine._send.assert_awaited_once()
         assert engine._send.call_args[0][0].status_code == 504
@@ -483,8 +548,7 @@ class TestProxyHandleHttp:
         client = self._client(upstream)
         client.send = AsyncMock(side_effect=httpx.HTTPError("boom"))
         engine._client = MagicMock(return_value=client)
-        with patch("warden.proxy.Request", return_value=self._make_request()):
-            await self._call(engine, scope, AsyncMock(), MagicMock(), route)
+        await self._call(engine, scope, AsyncMock(), MagicMock(), route)
         engine._client.assert_called_once()
         engine._send.assert_awaited_once()
         assert engine._send.call_args[0][0].status_code == 502
@@ -495,8 +559,7 @@ class TestProxyHandleHttp:
         scope = self._scope()
         upstream = self._upstream(status=200, body=b"hello", aiter_raw=[b"hel", b"lo"])
         engine._client = MagicMock(return_value=self._client(upstream))
-        with patch("warden.proxy.Request", return_value=self._make_request()):
-            await self._call(engine, scope, AsyncMock(), MagicMock(), route)
+        await self._call(engine, scope, AsyncMock(), MagicMock(), route)
         engine._client.assert_called_once()
         engine._send.assert_awaited_once()
         assert engine._send.call_args[0][0].status_code == 200
@@ -509,8 +572,7 @@ class TestProxyHandleHttp:
         client = self._client(upstream)
         client.send = AsyncMock(side_effect=httpx.HTTPError("boom"))
         engine._client = MagicMock(return_value=client)
-        with patch("warden.proxy.Request", return_value=self._make_request()):
-            await self._call(engine, scope, AsyncMock(), MagicMock(), route)
+        await self._call(engine, scope, AsyncMock(), MagicMock(), route)
         sent = engine._send.call_args[0][0]
         assert sent.status_code == 502
         assert b"out of reach" in sent.body

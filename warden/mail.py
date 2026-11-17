@@ -40,7 +40,13 @@ def _build_message(email: EmailConfig, to: str, subject: str, body: str) -> Emai
 
 def _connect(email: EmailConfig):
     """Open an SMTP connection and authenticate, returning the SMTP client."""
-    if email.starttls:
+    if email.ssl:
+        # Implicit TLS (port 465): the connection is wrapped before the SMTP
+        # greeting, so STARTTLS must not be attempted on top of it.
+        client = smtplib.SMTP_SSL(
+            email.host, email.port, timeout=10.0, context=ssl.create_default_context()
+        )
+    elif email.starttls:
         client = smtplib.SMTP(email.host, email.port, timeout=10.0)
         context = ssl.create_default_context()
         client.starttls(context=context)

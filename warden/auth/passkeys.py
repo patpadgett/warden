@@ -693,7 +693,16 @@ class PasskeyService:
             backup_eligible=verification.credential_backed_up,
             backup_state=verification.credential_backed_up,
         )
-        await self.db.mark_invite_used(int(invite["id"]))
+        # The UPDATE is atomic and returns whether this request won the race.
+        # Two ceremonies can be started from one invite token; only the first
+        # to finish may consume it. Without this check both would succeed and
+        # the invite would be usable more than once.
+        if not await self.db.mark_invite_used(int(invite["id"])):
+            # Another ceremony with the same token won the claim. Its credential
+            # is the one that counts, so remove the row this request just wrote
+            # and fail: otherwise a single-use invite leaves two passkeys.
+            await self.db.delete_credential(user.id, saved.id)
+            raise AuthError("That invite has already been used.", 400, event="invite_invalid")
         return {"flow": "invite", "user": user, "credential": saved}
 
 

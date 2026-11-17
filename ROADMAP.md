@@ -4,12 +4,17 @@ Known gaps in Warden, ordered by value rather than by effort. Defects live in
 [KNOWN_ISSUES.md](KNOWN_ISSUES.md); this file is for work that is missing rather
 than broken.
 
-## 1. Per-route access control
+## 1. Per-user route grants (design alternative to ACL groups)
 
-`GET /portal` lists every enabled route to every signed-in user, and the proxy
-authorises on "has a session", not "may open this host" (KNOWN_ISSUES #16).
-For a proxy whose purpose is gating services, that is the largest functional
-gap: a guest account works as a key to every route the admin adds.
+Per-route access control itself is **done**: `routes[].allowed_groups` plus
+`acl_groups`/`acl_members` (schema v6) enforce group membership in
+`ProxyEngine` on both HTTP and WebSocket paths, the portal hides routes the
+user cannot open, and the users page edits membership (KNOWN_ISSUES #35).
+
+This item is now a *different* model, not a missing feature: per-user grants
+with optional expiry, for deployments that want one-off access without
+creating a group. It has not been built and there is no confirmed demand for
+it. Revisit only when a deployment needs time-boxed, individual grants.
 
 Roughly, in dependency order:
 
@@ -71,7 +76,6 @@ Not worth building without a specific deployment that needs it.
   assertions in `tests/test_invite_flow.py` name `AuthError` and match the
   message the flow raises. The workflow still lints only `warden`, so widening
   that step is what stops the debt coming back.
-* **Self-hosted webfont.** Every page loads JetBrains Mono from
-  `fonts.googleapis.com`, which KNOWN_ISSUES #12 added to the CSP. Serving it
-  from `static/` would remove the third-party request and let the CSP drop two
-  hosts.
+* **Self-hosted webfont.** Done: JetBrains Mono is now served from
+  `/_warden/static/fonts/` (variable woff2, 6 subset files) and the CSP no
+  longer allows `fonts.googleapis.com` / `fonts.gstatic.com`.

@@ -244,10 +244,18 @@ class EmailConfig(BaseModel):
     password: str | None = None
     #: Use STARTTLS when connecting to the SMTP server.
     starttls: bool = True
+    #: Use implicit TLS (SMTPS, usually port 465) instead of STARTTLS.
+    ssl: bool = False
     #: From address used for invite emails.
     from_address: str = "warden@localhost"
     #: Subject prefix for invite emails.
     subject_prefix: str = "Your first-login invite"
+
+    @model_validator(mode="after")
+    def _check_tls_mode(self) -> EmailConfig:
+        if self.ssl and self.starttls:
+            raise ValueError("email.ssl and email.starttls cannot both be true")
+        return self
 
 
 class ServerConfig(BaseModel):
@@ -273,6 +281,10 @@ class ServerConfig(BaseModel):
     external_scheme: str | None = None
     #: Optional canonical admin origin, e.g. https://admin.home.lan.
     public_url: str | None = None
+    #: Optional bearer token for the Prometheus metrics endpoint. When set,
+    #: ``GET /_warden/metrics`` (and its ``/metrics`` alias) accepts a valid
+    #: token without a passkey session, so an unscraped Prometheus can reach it.
+    metrics_token: str | None = None
     request_timeout_seconds: float = Field(default=60.0, ge=1, le=3600)
     health_interval_seconds: int = Field(default=30, ge=10, le=3600)
     #: How often the cleanup loop runs (seconds). The loop runs once an hour by
@@ -292,6 +304,10 @@ class ServerConfig(BaseModel):
     log_level: str = "info"
     #: Maximum concurrent sessions per user. ``None`` disables the limit.
     max_sessions_per_user: int | None = Field(default=None, ge=1)
+    #: Require every admin to enrol TOTP. When true, an admin with no verified
+    #: authenticator can only reach the passkeys page (and its APIs) until one
+    #: is enrolled, so switching the policy on can never lock anyone out.
+    require_otp_for_admins: bool = False
     #: Optional log file path. When set, logs are written to this file with
     #: rotation enabled. Requires ``log_rotation`` to be set.
     log_file: str | None = None
@@ -341,6 +357,15 @@ class ServerConfig(BaseModel):
             raise ValueError("forward_user_header cannot be a reserved header")
         return value
 
+    @field_validator("metrics_token", mode="before")
+    @classmethod
+    def _validate_metrics_token(cls, value: str | None) -> str | None:
+        """_validate_metrics_token."""
+        if value is None:
+            return None
+        value = str(value).strip()
+        return value or None
+
     @field_validator("external_scheme")
     @classmethod
     def _validate_external_scheme(cls, value: str | None) -> str | None:
@@ -365,6 +390,30 @@ class ServerConfig(BaseModel):
         if value not in {"debug", "info", "warning", "error", "critical"}:
             raise ValueError("log_level must be debug, info, warning, error, or critical")
         return value
+
+
+def normalize_path(path: str) -> str:
+    """Collapse ``.``/``..`` segments and duplicate or trailing slashes.
+
+    Warden forwards the original request path and the upstream normalises it,
+    so path rules must be evaluated against the normalised form; otherwise
+    ``/public/../secret`` reaches a protected resource while still matching a
+    ``/public/*`` rule.
+    """
+    if not path:
+        return "/"
+    if not path.startswith("/"):
+        path = "/" + path
+    segments: list[str] = []
+    for segment in path.split("/"):
+        if segment in {"", "."}:
+            continue
+        if segment == "..":
+            if segments:
+                segments.pop()
+            continue
+        segments.append(segment)
+    return "/" + "/".join(segments)
 
 
 class RouteConfig(BaseModel):
@@ -554,10 +603,23 @@ class RouteConfig(BaseModel):
         return False
 
     def is_public_path(self, path: str) -> bool:
-        """is_public_path."""
+        """Return ``True`` when *path* matches a configured ``public_paths`` rule.
+
+        Both sides are normalised first. Warden forwards the raw path and the
+        upstream collapses dot segments, so a bypass matched on the raw path is
+        an authentication hole: ``/public/../admin`` would reach ``/admin``
+        without a session.
+        """
         from fnmatch import fnmatch
 
-        return any(fnmatch(path, pattern) for pattern in self.public_paths)
+        # Case-insensitive: many upstreams (IIS, Windows filesystems) treat
+        # paths case-insensitively. A rule written /Public/* must not become an
+        # auth hole when the browser requests /public/admin on such a backend.
+        normalized = normalize_path(path).casefold()
+        return any(
+            fnmatch(normalized, normalize_path(pattern).casefold())
+            for pattern in self.public_paths
+        )
 
     def allows_user(self, user: Any | None) -> bool:
         """Return ``True`` when *user* may open this route.
@@ -1045,7 +1107,12 @@ class ConfigManager:
         """
         if not self.path or not self.path.exists():
             raise ConfigError("This Warden instance is not running from a YAML file.")
-        yaml = YAML()
+        yaml = YAML(typ="rt")
+        # Round-trip loading is deliberate here: the returned CommentedMap is
+        # handed to _save_document(), which must preserve the user's comments,
+        # key order and quoting when the dashboard edits a route. Config
+        # *validation* uses typ="safe" elsewhere; do not swap this for the safe
+        # loader without rewriting the editor to merge text instead.
         yaml.allow_duplicate_keys = False
         yaml.indent(mapping=2, sequence=4, offset=2)
         yaml.preserve_quotes = True

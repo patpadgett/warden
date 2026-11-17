@@ -219,22 +219,30 @@ class MetricsModule:
         lines.append("# TYPE warden_uptime_seconds gauge")
         lines.append(f"warden_uptime_seconds {int(now - self.started_at)}")
         
-        # Route metrics
+        # Route metrics. HELP/TYPE describe a metric family, not a single
+        # sample, so they are declared once outside the per-route loop: a
+        # repeated HELP line (with a different host name in the text) is what
+        # the text format forbids and what Prometheus records inconsistently.
+        lines.append('# HELP warden_route_requests_total Total requests handled per route')
+        lines.append('# TYPE warden_route_requests_total counter')
+        lines.append('# HELP warden_route_errors_total Total responses with status >= 500 per route')
+        lines.append('# TYPE warden_route_errors_total counter')
+        lines.append('# HELP warden_route_latency_ms Last request latency per route')
+        lines.append('# TYPE warden_route_latency_ms gauge')
+        lines.append(
+            '# HELP warden_route_authenticated_requests_total Total authenticated requests per route'
+        )
+        lines.append('# TYPE warden_route_authenticated_requests_total counter')
         for host, m in self.metrics.items():
             host_label = escape_label(host)
-            lines.append(f'# HELP warden_route_requests_total Total requests for {host}')
-            lines.append('# TYPE warden_route_requests_total counter')
             lines.append(f'warden_route_requests_total{{host="{host_label}"}} {m.requests}')
-            lines.append(f'# HELP warden_route_errors_total Total errors for {host}')
-            lines.append('# TYPE warden_route_errors_total counter')
             lines.append(f'warden_route_errors_total{{host="{host_label}"}} {m.errors}')
             if m.last_latency_ms is not None:
-                lines.append(f'# HELP warden_route_latency_ms Last request latency for {host}')
-                lines.append('# TYPE warden_route_latency_ms gauge')
                 lines.append(f'warden_route_latency_ms{{host="{host_label}"}} {m.last_latency_ms}')
-            lines.append(f'# HELP warden_route_authenticated_requests_total Total authenticated requests for {host}')
-            lines.append('# TYPE warden_route_authenticated_requests_total counter')
-            lines.append(f'warden_route_authenticated_requests_total{{host="{host_label}"}} {m.authenticated}')
+            lines.append(
+                f'warden_route_authenticated_requests_total{{host="{host_label}"}} '
+                f'{m.authenticated}'
+            )
         # Auth and access metrics
         lines.append('# HELP warden_auth_success_total Total successful authentication attempts')
         lines.append('# TYPE warden_auth_success_total counter')

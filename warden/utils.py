@@ -52,17 +52,35 @@ def get_host_header(scope: MutableMapping[str, Any]) -> str:
     return str(server[0])
 
 
-def get_port(scope: MutableMapping[str, Any]) -> int | None:
-    """Extract the numeric port from the Host header if present; returns ``None`` when no explicit port is specified."""
+def host_port(scope: MutableMapping[str, Any]) -> int | None:
+    """Return the port the client actually used, or ``None`` for the scheme default.
+
+    Unlike :func:`get_port` this never falls back to the local listening port:
+    behind a TLS terminator the listener (say ``8080``) is not the public port
+    (``443``), so passing it on in ``X-Forwarded-Port`` or an absolute URL hands
+    clients an address they cannot reach.
+    """
     host = get_host_header(scope)
     if host.startswith("["):
         match = re.match(r"^\[[^\]]+\]:(\d+)$", host)
-        if match:
-            return int(match.group(1))
+        return int(match.group(1)) if match else None
     if host.count(":") == 1:
         _, port = host.rsplit(":", 1)
         if port.isdigit():
             return int(port)
+    return None
+
+
+def get_port(scope: MutableMapping[str, Any]) -> int | None:
+    """Extract the numeric port from the Host header, falling back to the listener port.
+
+    Use :func:`host_port` for anything that leaves the process (forwarded
+    headers, absolute links); this fallback is only meaningful for local
+    decisions.
+    """
+    port = host_port(scope)
+    if port is not None:
+        return port
     server = scope.get("server")
     return int(server[1]) if server and server[1] else None
 
@@ -96,7 +114,7 @@ def external_url(scope: MutableMapping[str, Any], config: WardenConfig, host: st
         port = parts.port
         if port:
             return f"{scheme}://{host}:{port}"
-    port = get_port(scope)
+    port = host_port(scope)
     if port and port not in {80, 443}:
         return f"{scheme}://{host}:{port}"
     return f"{scheme}://{host}"
@@ -141,7 +159,12 @@ def session_cookie_name(config_server: Any, scope: MutableMapping[str, Any]) -> 
         server = config_server.server
     else:
         server = config_server
-    secure = bool(server.secure_cookies) if server.secure_cookies is not None else base_scheme(scope) == "https"
+    # is_secure_request() decides the Secure attribute from public_scheme(),
+    # which honours external_scheme behind a TLS terminator. Use the same
+    # source here: otherwise an internal http:// listener with
+    # external_scheme=https emits a Secure cookie without the __Host- prefix.
+    scheme = server.external_scheme or base_scheme(scope)
+    secure = bool(server.secure_cookies) if server.secure_cookies is not None else scheme == "https"
     domain = server.cookie_domain
     if secure and not domain:
         return f"__Host-{SESSION_COOKIE}"
@@ -319,9 +342,9 @@ def apply_security_headers(response: Response) -> Response:
     headers.setdefault(
         "Content-Security-Policy",
         "default-src 'self'; script-src 'self'; "
-        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data:; connect-src 'self'; "
-        "font-src 'self' https://fonts.gstatic.com; "
+        "font-src 'self'; "
         "frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
     )
     return response
@@ -523,7 +546,10 @@ def upstream_url(
     if not path.startswith("/"):
         path = "/" + path
     base = parts.path.rstrip("/")
-    if base:
+    # A client that already includes the upstream prefix (e.g. requests
+    # /api/users to an upstream of http://host/api) must not end up at
+    # /api/api/users. Only prepend the prefix when it is not already there.
+    if base and path != base and not path.startswith(base + "/"):
         joined = base + ("/" if path == "/" else path)
     else:
         joined = path

@@ -101,6 +101,51 @@ async def test_invite_flow(app_and_path):
 
 
 @pytest.mark.asyncio
+async def test_invite_losing_a_race_rolls_back_the_passkey(app_and_path):
+    """Two ceremonies from one token: the loser must not leave a passkey."""
+    from unittest.mock import AsyncMock
+
+    app, _ = app_and_path
+    app.state.config = app.state.manager.config
+    db = app.state.db
+    pk = app.state.passkeys
+
+    user = await db.create_user("racer", "Racer", b"r" * 16, is_admin=False)
+    token = "INVITE-RACE-0001"
+    invite_id = await db.create_invite(user.id, token, time.time() + 3600)
+    ceremony = await pk.begin_invite_registration(
+        user=user,
+        name="Race",
+        origin="http://admin.home.lan",
+        config=app.state.config,
+        invite_token=token,
+    )
+    original_add = db.add_credential
+
+    async def add_then_lose(**kwargs):
+        credential = await original_add(**kwargs)
+        # The other ceremony claims the invite between the initial "used" check
+        # and this request's atomic UPDATE.
+        assert await db.mark_invite_used(invite_id) is True
+        return credential
+
+    with (
+        patch("warden.auth.passkeys.verify_registration_response", return_value=VERIFY_STUB),
+        patch.object(db, "add_credential", new=AsyncMock(side_effect=add_then_lose)),
+        pytest.raises(AuthError, match="already been used"),
+    ):
+        await pk.complete_invite_registration(
+            credential=_credential(),
+            challenge_id=ceremony.challenge_id,
+            origin="http://admin.home.lan",
+            config=app.state.config,
+            invite_token=token,
+        )
+
+    assert await db.list_credentials(user.id) == []
+
+
+@pytest.mark.asyncio
 async def test_invite_expired(app_and_path):
     """An expired invite must be rejected at completion time."""
     app, _ = app_and_path

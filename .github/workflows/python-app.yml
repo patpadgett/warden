@@ -5,13 +5,20 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+# A newer push to the same branch makes the previous run's result irrelevant.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -31,14 +38,23 @@ jobs:
           --health-retries 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
+      # Lint the tests and the shipped scripts too, not just the package: the
+      # test suite had accumulated findings the old `ruff check warden` missed.
       - name: Lint
-        run: ruff check warden
+        run: ruff check warden tests scripts
+      # --strict-markers fails on a typo'd marker instead of silently skipping,
+      # and -W error::RuntimeWarning catches un-awaited coroutines.
       - name: Test
-        run: pytest --cov=warden --cov-report=term-missing --cov-fail-under=75
+        run: |
+          pytest --strict-markers -W error::RuntimeWarning \
+            --cov=warden --cov-report=term-missing --cov-fail-under=75

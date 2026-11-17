@@ -97,7 +97,11 @@ class MeshManager:
         return await self.adapter.status()
 
     async def refresh_handshakes(self) -> dict[str, Any]:
-        """refresh_handshakes."""
-        status = await self.adapter.refresh_handshakes()
-        self.last_apply = status
-        return status
+        """Refresh live handshake data without touching the last apply result.
+
+        ``last_apply`` backs the dashboard banner that reports the outcome of
+        pressing "Apply to host". Assigning the status dict here made every
+        visit to /mesh replace that outcome with a payload that has no ``ok``,
+        ``timestamp`` or ``output``, so the banner then claimed a failed apply.
+        """
+        return await self.adapter.refresh_handshakes()

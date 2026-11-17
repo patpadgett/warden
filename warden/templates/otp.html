@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="panel-title" style="margin-bottom: 6px;">Security</p>
+    <h1 class="page-title">Two-factor authentication.</h1>
+    <p class="subhead">Add a TOTP authenticator (Google Authenticator, 1Password, Authy…) as a second sign-in factor. Your passkey is still required.</p>
+  </div>
+</section>
+
+<div class="panel" style="max-width: 640px;">
+  <div class="panel-body">
+    <div class="access-row">
+      <span class="access-label">Status</span>
+      <span class="access-value" id="otp-status">{{ 'Enabled' if otp_enabled else 'Disabled' }}</span>
+    </div>
+
+    {% if not otp_enabled %}
+    <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.55; margin: 12px 0;">
+      Click <strong>Start enrolment</strong> to generate a new secret. The secret is only activated after you enter a valid code, so abandoning this page never replaces a working factor.
+    </p>
+    <button class="btn btn-primary" type="button" id="otp-setup">Start enrolment</button>
+    {% else %}
+    <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.55; margin: 12px 0;">
+      Two-factor authentication is active. Keep a backup code handy in case you lose your authenticator.
+    </p>
+    <button class="btn btn-danger" type="button" id="otp-disable">Disable 2FA</button>
+    {% endif %}
+
+    <div id="otp-secret" hidden style="margin-top: 16px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-raised);">
+      <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 6px;">Secret (base32)</p>
+      <code id="otp-secret-text" class="mono" style="word-break: break-all;"></code>
+      <p style="font-size: 12px; color: var(--text-muted); margin: 10px 0 6px;">otpauth URL</p>
+      <code id="otp-url" class="mono" style="word-break: break-all; font-size: 11px;"></code>
+      <div style="margin-top: 12px; display: flex; gap: 8px; align-items: center;">
+        <input class="input" id="otp-code" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="123456" autocomplete="one-time-code" style="max-width: 160px;">
+        <button class="btn btn-primary btn-sm" type="button" id="otp-verify">Verify &amp; enable</button>
+      </div>
+    </div>
+
+    <p id="otp-message" hidden style="margin-top: 12px; font-size: 13px;"></p>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/_warden/static/otp.js"></script>
+{% endblock %}

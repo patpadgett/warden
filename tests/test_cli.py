@@ -19,6 +19,37 @@ def run(capsys: pytest.CaptureFixture[str], *args: object) -> tuple[int, str, st
     return code, captured.out, captured.err
 
 
+def test_config_command_prints_the_effective_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = write_config(tmp_path, config_dict(tmp_path))
+    code, out, err = run(capsys, "-c", path, "config")
+    assert code == 0
+    assert "version:" in out
+    assert err == ""
+
+
+def test_module_entry_point_can_build_the_parser() -> None:
+    """``python -m warden.cli`` must work, not only the console script.
+
+    ``cmd_config_show`` used to be defined after the ``__main__`` guard, so
+    building the parser under the module entry point raised NameError.
+    """
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, "-m", "warden.cli", "--help"],
+        check=False,
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "usage: warden" in result.stdout
+
+
 # ------------------------------------------------------------------------ init
 def test_init_writes_valid_config(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     output = tmp_path / "conf" / "warden.yaml"

@@ -145,7 +145,7 @@ class ACMEToken:
 
 class ACMEManager:
     """Handles automated certificate issuance via ACME (Let's Encrypt/ZeroSSL)."""
-    """Handles automated certificate issuance via ACME (Let's Encrypt/ZeroSSL)."""
+
     def __init__(self, manager: ConfigManager) -> None:
         """__init__."""
         self.manager = manager
@@ -164,7 +164,15 @@ class ACMEManager:
         return t.response
 
     def set_challenge_token(self, token: str, response: str, validity: float = 3600) -> None:
-        """Publish *response* (the key authorization) for the HTTP-01 *token*."""
+        """Publish *response* (the key authorization) for the HTTP-01 *token*.
+
+        Expired entries are dropped here rather than only on lookup: the CA
+        fetches each token once, so nothing ever asks for a stale one again and
+        the store would otherwise keep every renewal's key authorizations until
+        the process restarts.
+        """
+        for stale in [key for key, item in self._tokens.items() if item.expired]:
+            del self._tokens[stale]
         self._tokens[token] = ACMEToken(token, response, validity)
 
     def _get_account_key(self) -> Path:
@@ -398,8 +406,20 @@ def certificate_status(config: WardenConfig) -> dict[str, Any]:
     return status
 
 
+def _public_key_bytes(key: Any) -> bytes:
+    """Return a public key as DER, so two keys can be compared across types."""
+    return key.public_bytes(
+        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+
+
 def validate_runtime_files(config: WardenConfig) -> None:
-    """Fail fast when TLS files are missing or unreadable at startup."""
+    """Fail fast when TLS files are missing, unreadable, or inconsistent.
+
+    A readable but unusable key (garbage, passphrase-protected, or the key from
+    another certificate) used to pass this check and only fail during the TLS
+    handshake, which for a reverse proxy means every site behind it is down.
+    """
     if not config.server.tls.enabled:
         return
     certfile = config.certfile_path
@@ -412,9 +432,26 @@ def validate_runtime_files(config: WardenConfig) -> None:
         raise TLSError(f"TLS private key not found: {keyfile}")
     read_certificate(certfile)
     try:
-        keyfile.read_bytes()
+        key_bytes = keyfile.read_bytes()
     except OSError as exc:
         raise TLSError(f"Could not read TLS private key {keyfile}: {exc}") from exc
+    try:
+        private_key = serialization.load_pem_private_key(key_bytes, password=None)
+    except TypeError as exc:
+        # ``cryptography`` raises TypeError when a passphrase is required.
+        raise TLSError(
+            f"TLS private key {keyfile} is passphrase-protected; Warden cannot "
+            "load it unattended. Use an unencrypted key for the listener."
+        ) from exc
+    except ValueError as exc:
+        raise TLSError(f"Could not parse TLS private key {keyfile}.") from exc
+    certificate = x509.load_pem_x509_certificate(certfile.read_bytes())
+    if _public_key_bytes(certificate.public_key()) != _public_key_bytes(
+        private_key.public_key()
+    ):
+        raise TLSError(
+            f"TLS private key {keyfile} does not match the certificate {certfile}."
+        )
 
 
 async def renewal_loop(app: Any) -> None:

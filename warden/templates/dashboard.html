@@ -303,11 +303,18 @@
                   <input class="input" id="service-public-paths" name="public_paths" type="text" placeholder="/assets/*, /health" autocomplete="off">
                 </label>
               </div>
-              <label class="field">
-                <span class="field-label">Allowed groups <span class="optional">comma separated — empty means every signed-in user</span></span>
-                <input class="input" id="service-allowed-groups" name="allowed_groups" type="text" placeholder="Users, Family" autocomplete="off">
+              <fieldset class="field" style="border: 0; padding: 0; margin: 0; min-width: 0;">
+                <legend class="field-label" style="padding: 0;">Allowed groups <span class="optional">empty means every signed-in user</span></legend>
+                <div id="service-allowed-groups" style="display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 8px;">
+                  {% for group in groups %}
+                  <label style="display: flex; align-items: center; gap: 6px; font-size: 13px;">
+                    <input type="checkbox" name="allowed_groups" value="{{ group.name }}">
+                    <span>{{ group.name }}</span>
+                  </label>
+                  {% endfor %}
+                </div>
                 <span class="field-hint">Restrict this route to members of these groups. Admins always have access.</span>
-              </label>
+              </fieldset>
               <div class="form-row">
                 <label class="switch">
                   <input type="checkbox" id="service-websocket" name="websocket" checked>

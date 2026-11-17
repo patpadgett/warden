@@ -12,8 +12,10 @@ from warden.utils import (
     RateLimiter,
     RedisRateLimiter,
     check_origin,
+    external_url,
     get_host,
     get_port,
+    host_port,
     is_reserved_cookie,
     parse_cookies,
     parse_user_agent,
@@ -21,6 +23,7 @@ from warden.utils import (
     route_color,
     route_initials,
     safe_next,
+    session_cookie_name,
     strip_reserved_cookies,
     upstream_url,
 )
@@ -70,6 +73,41 @@ def test_get_port_prefers_host_header() -> None:
     assert get_port(scope(host="admin.home.lan")) == 8080
     assert get_port(scope(host="[::1]:443", server=("::1", 8080))) == 443
     assert get_port(scope(host="[::1]", server=("::1", 8080))) == 8080
+
+
+def test_host_port_ignores_the_listener_fallback() -> None:
+    assert host_port(scope(host="admin.home.lan:9443")) == 9443
+    assert host_port(scope(host="admin.home.lan")) is None
+    assert host_port(scope(host="[::1]:443", server=("::1", 8080))) == 443
+    assert host_port(scope(host="[::1]", server=("::1", 8080))) is None
+
+
+def test_external_url_behind_a_tls_terminator_omits_the_listener_port(
+    tmp_path: Path,
+) -> None:
+    # The listener is 8080 but the public scheme is https on 443: handing out
+    # https://host:8080 produces a link the browser cannot reach.
+    config = parse_config_text(
+        dump_yaml(config_dict(tmp_path, external_scheme="https")), base_dir=tmp_path
+    )
+    assert (
+        external_url(scope(host="app.home.lan"), config, "app.home.lan")
+        == "https://app.home.lan"
+    )
+    # An explicit port in the Host header is still preserved.
+    assert (
+        external_url(scope(host="app.home.lan:9443"), config, "app.home.lan")
+        == "https://app.home.lan:9443"
+    )
+
+
+def test_session_cookie_prefix_follows_the_public_scheme(tmp_path: Path) -> None:
+    # An internal http:// listener behind a TLS terminator still issues the
+    # __Host- name, because that is what the browser sees and sends back.
+    config = parse_config_text(
+        dump_yaml(config_dict(tmp_path, external_scheme="https")), base_dir=tmp_path
+    )
+    assert session_cookie_name(config, scope(host="admin.home.lan")) == "__Host-warden_session"
 
 
 def test_parse_cookies_and_strip_reserved() -> None:
@@ -138,6 +176,9 @@ def test_upstream_url_joins_base_path_and_query() -> None:
     assert upstream_url(route, b"/hello", b"a=1") == "http://127.0.0.1:9000/base/hello?a=1"
     assert upstream_url(route, b"/", b"") == "http://127.0.0.1:9000/base/"
     assert upstream_url(route, b"/ws", b"", websocket=True) == "ws://127.0.0.1:9000/base/ws"
+    # A path that already includes the prefix is not prefixed twice.
+    assert upstream_url(route, b"/base/hello", b"") == "http://127.0.0.1:9000/base/hello"
+    assert upstream_url(route, b"/base", b"") == "http://127.0.0.1:9000/base"
     plain = RouteConfig(host="app.home.lan", upstream="https://example.internal")
     assert (
         upstream_url(plain, b"/x", b"", websocket=True)

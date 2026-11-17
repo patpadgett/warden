@@ -7,6 +7,7 @@ from email.message import EmailMessage
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pydantic import ValidationError
 
 from warden.config import EmailConfig
 from warden.mail import send_email
@@ -61,6 +62,28 @@ def test_send_email_without_starttls():
 
     mock_client.starttls.assert_not_called()
     mock_client.login.assert_called_once_with(cfg.user, cfg.password)
+
+
+def test_send_email_uses_implicit_tls_when_configured():
+    cfg = _config(starttls=False, ssl=True, port=465)
+    mock_client = MagicMock()
+    with (
+        patch("warden.mail.smtplib.SMTP_SSL", return_value=mock_client) as mock_smtp,
+        patch("warden.mail.ssl.create_default_context") as mock_ctx,
+    ):
+        send_email(cfg, "to@example.com", "Hello", "Body")
+
+    mock_smtp.assert_called_once_with(
+        cfg.host, cfg.port, timeout=10.0, context=mock_ctx.return_value
+    )
+    mock_client.starttls.assert_not_called()
+    mock_client.login.assert_called_once_with(cfg.user, cfg.password)
+    mock_client.send_message.assert_called_once()
+
+
+def test_email_tls_modes_cannot_be_combined():
+    with pytest.raises(ValidationError, match="cannot both be true"):
+        EmailConfig(enabled=True, ssl=True, starttls=True)
 
 
 def test_send_email_without_auth():

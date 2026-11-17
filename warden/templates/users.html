@@ -42,6 +42,9 @@
           <span class="badge {{ 'badge-accent' if user.is_admin else 'badge-indigo' }}">
             {{ 'Administrator' if user.is_admin else 'User' }}
           </span>
+          {% if user.id in otp_users %}
+          <span class="badge otp-badge" title="Two-factor enabled">2FA</span>
+          {% endif %}
         </td>
         <td>
           <div class="group-badges" style="display: flex; flex-wrap: wrap; gap: 6px;">
@@ -55,6 +58,11 @@
           <button class="btn btn-ghost btn-sm toggle-admin" type="button">
             {{ 'Demote' if user.is_admin else 'Promote' }}
           </button>
+          {% if user.id in otp_users and user.id != current_user_id %}
+          <button class="btn btn-ghost btn-sm reset-otp" type="button">
+            Reset 2FA
+          </button>
+          {% endif %}
           <button class="btn btn-ghost btn-sm btn-danger delete-user" type="button">
             Delete
           </button>

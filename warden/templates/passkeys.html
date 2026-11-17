@@ -27,6 +27,15 @@
 </div>
 {% endif %}
 
+{% if otp_required %}
+<div class="panel" style="border-color: var(--amber); background: var(--amber-soft);">
+  <div class="panel-body" style="color: var(--amber);">
+    <strong>Two-factor is required.</strong> This instance requires every administrator to enrol an
+    authenticator. Set one up under <em>Two-factor</em> to unlock the rest of the dashboard.
+  </div>
+</div>
+{% endif %}
+
 <div class="dash-layout" style="display: grid; grid-template-columns: 1fr 340px; gap: 16px; align-items: start;">
   <div class="stack-lg">
     <section class="panel" aria-labelledby="passkeys-title">
@@ -156,6 +165,38 @@
       </div>
     </div>
 
+    <section class="panel" aria-labelledby="otp-title">
+      <div class="panel-head">
+        <h2 class="panel-title" id="otp-title">
+          <svg viewBox="0 0 24 24" width="16" height="16" style="color: var(--text-muted);" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+          Two-factor
+        </h2>
+        <span class="badge" id="otp-badge">…</span>
+      </div>
+      <div class="panel-body">
+        <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.55;">
+          Ask for a 6-digit authenticator code after your passkey. A backup code still signs you in if the authenticator is lost.
+        </p>
+        <div id="otp-enrol" hidden>
+          <p style="font-size: 12px; color: var(--text-muted); margin: 10px 0 6px;">Add this secret to your authenticator app, then enter the code it shows:</p>
+          <code class="code mono" id="otp-secret"></code>
+        </div>
+        <label class="field" id="otp-code-field" hidden style="margin-top: 10px;">
+          <span class="field-label">Authenticator code</span>
+          <input class="input" id="otp-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456" spellcheck="false">
+        </label>
+        <div class="flex" style="gap: 8px; margin-top: 10px; flex-wrap: wrap;">
+          <button class="btn btn-primary btn-sm" id="otp-start" type="button">Set up authenticator</button>
+          <button class="btn btn-primary btn-sm" id="otp-submit" type="button" hidden>
+            <span>Turn on</span>
+            <span class="btn-spinner" aria-hidden="true"></span>
+          </button>
+          <button class="btn btn-ghost btn-sm" id="otp-cancel" type="button" hidden>Cancel</button>
+        </div>
+        <p id="otp-message" role="status" hidden style="font-size: 12px; margin-top: 8px;"></p>
+      </div>
+    </section>
+
     <div class="panel" style="border-left: 2px solid var(--red);">
       <div class="panel-body">
         <h3 style="font-size: 13px; font-weight: 600; margin-bottom: 8px; color: var(--red);">Before you remove one</h3>
@@ -231,4 +272,8 @@
     </div>
   </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ static_prefix }}/otp.js" defer></script>
 {% endblock %}

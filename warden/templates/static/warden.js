@@ -315,6 +315,15 @@
     });
   };
 
+  // The second factor is finished by the login page, which renders a code field.
+  // A browser prompt cannot be retried in place and is blocked in some embedded
+  // browsers.
+  W.completeLoginOtp = (challenge, code) =>
+    W.fetchJSON("/_warden/auth/login/otp", {
+      method: "POST",
+      body: { challenge, code: String(code || "").trim() },
+    });
+
   W.registerPasskey = async ({ mode = "add", name = "", username = "", displayName = "", setupCode = "", next = "/" } = {}) => {
     if (!W.passkeysSupported()) throw new WardenError(W.passkeySupportMessage());
     const beginBody = mode === "setup"

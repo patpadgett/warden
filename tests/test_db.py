@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from pathlib import Path
 
@@ -174,6 +175,118 @@ async def test_challenges_are_single_use_and_expire(db: Database) -> None:
     assert await db.delete_expired_challenges() >= 1
 
 
+async def test_get_challenge_peeks_without_consuming(db: Database) -> None:
+    now = time.time()
+    await db.create_challenge("peek", "login_otp", {"user_id": 1}, 300, now=now)
+
+    first = await db.get_challenge("peek", "login_otp", now=now + 1)
+    assert first is not None
+    assert first.payload == {"user_id": 1}
+    # A second look still finds it: only consume_challenge spends the row.
+    assert await db.get_challenge("peek", "login_otp", now=now + 2) is not None
+    assert await db.consume_challenge("peek", "login_otp", now=now + 3) is not None
+    assert await db.get_challenge("peek", "login_otp", now=now + 4) is None
+
+    # Expired and wrong-kind challenges are never returned.
+    await db.create_challenge("stale", "login_otp", {}, 5, now=now - 10)
+    assert await db.get_challenge("stale", "login_otp", now=now) is None
+    assert await db.get_challenge("stale", "register", now=now) is None
+
+
+async def test_pending_otp_secret_never_blocks_the_active_one(db: Database) -> None:
+    """An abandoned re-enrolment must not lock out the current authenticator."""
+    import base64
+    import hashlib
+    import hmac
+    import struct
+
+    def code_for(secret: str) -> str:
+        key = base64.b32decode(secret)
+        digest = hmac.new(key, struct.pack(">Q", int(time.time() // 30)), hashlib.sha1).digest()
+        start = digest[-1] & 0x0F
+        token = struct.unpack(">I", digest[start : start + 4])[0] & 0x7FFFFFFF
+        return f"{token % 1_000_000:06d}"
+
+    user, _ = await make_user(db)
+    await db.set_otp_secret(user.id, "JBSWY3DPEHPK3PXP")
+    await db.set_pending_otp_secret(user.id, "GEZDGNBVGY3TQOJQ")
+
+    # The already-working secret still signs in while a new one is pending.
+    assert await db.verify_otp(user.id, code_for("JBSWY3DPEHPK3PXP")) is True
+    assert await db.get_otp_secret(user.id) == "JBSWY3DPEHPK3PXP"
+    assert await db.get_pending_otp_secret(user.id) == "GEZDGNBVGY3TQOJQ"
+
+    # The pending one promotes itself once it verifies.
+    assert await db.verify_otp(user.id, code_for("GEZDGNBVGY3TQOJQ")) is True
+    assert await db.get_otp_secret(user.id) == "GEZDGNBVGY3TQOJQ"
+    assert await db.get_pending_otp_secret(user.id) is None
+
+    await db.clear_otp_secret(user.id)
+    assert await db.get_otp_secret(user.id) is None
+    assert await db.verify_otp(user.id, code_for("GEZDGNBVGY3TQOJQ")) is False
+
+
+async def test_totp_codes_cannot_be_replayed(db: Database) -> None:
+    """The verification that accepts a code spends its time-step."""
+    import base64
+    import hashlib
+    import hmac
+    import struct
+
+    def code_at(secret: str, at: float) -> str:
+        key = base64.b32decode(secret)
+        digest = hmac.new(key, struct.pack(">Q", int(at // 30)), hashlib.sha1).digest()
+        start = digest[-1] & 0x0F
+        token = struct.unpack(">I", digest[start : start + 4])[0] & 0x7FFFFFFF
+        return f"{token % 1_000_000:06d}"
+
+    user, _ = await make_user(db)
+    secret = "JBSWY3DPEHPK3PXP"
+    await db.set_otp_secret(user.id, secret)
+    now = 1_700_000_000.0
+
+    assert await db.verify_otp(user.id, code_at(secret, now), at=now) is True
+    # The same code, and an older step still inside the drift window, are spent.
+    assert await db.verify_otp(user.id, code_at(secret, now), at=now) is False
+    assert await db.verify_otp(user.id, code_at(secret, now - 30), at=now) is False
+    # The next step still works, so a legitimate user is not locked out.
+    assert await db.verify_otp(user.id, code_at(secret, now + 30), at=now + 30) is True
+
+    # Promoting a pending secret also spends the code that proved it.
+    await db.clear_otp_secret(user.id)
+    replacement = "GEZDGNBVGY3TQOJQ"
+    await db.set_pending_otp_secret(user.id, replacement)
+    assert await db.verify_otp(user.id, code_at(replacement, now), at=now) is True
+    assert await db.get_otp_secret(user.id) == replacement
+    assert await db.verify_otp(user.id, code_at(replacement, now), at=now) is False
+
+
+async def test_delete_credential_can_keep_the_last_key(db: Database) -> None:
+    user, credential = await make_user(db)
+
+    assert await db.delete_credential(user.id, credential.id, keep_last=True) is False
+    assert len(await db.list_credentials(user.id)) == 1
+
+    await db.add_credential(
+        user_id=user.id,
+        credential_id=b"s" * 32,
+        public_key=b"q" * 64,
+        sign_count=1,
+        transports=["internal"],
+        name="Spare",
+        aaguid=None,
+        fmt="none",
+        user_verified=True,
+        backup_eligible=False,
+        backup_state=False,
+    )
+    assert await db.delete_credential(user.id, credential.id, keep_last=True) is True
+
+    spare = (await db.list_credentials(user.id))[0]
+    assert await db.delete_credential(user.id, spare.id, keep_last=True) is False
+    assert await db.delete_credential(user.id, spare.id) is True
+
+
 async def test_settings_audit_and_reset(db: Database) -> None:
     await db.set_setting("theme", "dark")
     assert await db.get_setting("theme") == "dark"
@@ -250,6 +363,32 @@ async def test_database_init_is_idempotent(tmp_path: Path) -> None:
     uninitialized = Database(tmp_path / "other.db")
     with pytest.raises(DatabaseError):
         uninitialized._require_conn()
+
+
+async def test_init_failure_closes_connection_and_leaves_no_thread(tmp_path: Path) -> None:
+    """A corrupt database must not leave an open connection behind.
+
+    ``PRAGMA journal_mode = WAL`` is the first statement that touches the file,
+    so it is where a non-database file fails. If the connection is not closed
+    there, aiosqlite's worker thread stays alive and the process never exits —
+    the CLI hangs instead of returning non-zero.
+    """
+    import sqlite3
+    import threading
+
+    corrupt = tmp_path / "corrupt.db"
+    corrupt.write_text("this is not a sqlite database\n", encoding="utf-8")
+
+    before = {t.ident for t in threading.enumerate()}
+    database = Database(corrupt)
+    with pytest.raises(sqlite3.DatabaseError):
+        await database.init()
+
+    assert database._conn is None
+    # Give a would-be worker thread a moment to appear, then assert none did.
+    await asyncio.sleep(0.05)
+    leaked = [t for t in threading.enumerate() if t.ident not in before and not t.daemon]
+    assert leaked == []
 
 
 async def test_invite_lifecycle(db: Database) -> None:

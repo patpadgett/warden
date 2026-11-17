@@ -65,6 +65,7 @@ include = ["warden*"]
 warden = [
   "templates/*.html",
   "templates/static/*",
+  "templates/static/fonts/*",
 ]
 
 [tool.pytest.ini_options]

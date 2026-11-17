@@ -3,7 +3,10 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from starlette.testclient import TestClient
+
 from warden.config import load_config
+from warden.main import create_app
 
 from .conftest import (
     add_session,
@@ -11,6 +14,7 @@ from .conftest import (
     config_dict,
     count_rows,
     host_headers,
+    seed_user,
     write_config,
 )
 
@@ -118,10 +122,11 @@ def test_dashboard_and_pages_render(client, app_and_path) -> None:
     if 'id="add-peer"' in mesh.text:
         assert 'id="peer-modal-overlay"' in mesh.text
 
-    # Admin routes are only reachable on the admin host.
+    # Admin routes are only reachable on the admin host. A non-browser client
+    # must get a 401, never the sign-in page (which would be an HTML leak).
     not_admin = client.get("/passkeys", headers=host_headers("app.home.lan"))
-    assert not_admin.status_code == 200
-    assert "warden" not in not_admin.text.lower()[:200]
+    assert not_admin.status_code == 401
+    assert not_admin.headers["content-type"] == "application/json"
 
     status = client.get("/_warden/api/status", headers=admin_headers())
     assert status.status_code == 200
@@ -133,6 +138,31 @@ def test_dashboard_and_pages_render(client, app_and_path) -> None:
     health = client.get("/_warden/api/database/health", headers=admin_headers())
     assert health.status_code == 200
     assert health.json() == {"ok": True}
+
+
+def test_mesh_page_offers_hub_key_rotation(tmp_path) -> None:
+    """The rotate-hub-key API has a matching, warned control on the mesh page."""
+    from warden.utils import SESSION_COOKIE
+
+    data = config_dict(
+        tmp_path,
+        mesh={
+            "enabled": True,
+            "interface": "wg0",
+            "address": "10.44.0.1/24",
+            "config_path": str(tmp_path / "wg0.conf"),
+        },
+    )
+    path = write_config(tmp_path, data)
+    seed_user(tmp_path / "warden.db")
+    app = create_app(path)
+    with TestClient(app, base_url="http://admin.home.lan", follow_redirects=False) as c:
+        page = c.get(
+            "/mesh",
+            headers={"host": "admin.home.lan", "cookie": f"{SESSION_COOKIE}=test-session-token"},
+        )
+    assert page.status_code == 200
+    assert 'id="hub-rotate"' in page.text
 
 
 def test_login_page_redirects_authenticated_session(client) -> None:
@@ -186,6 +216,15 @@ def test_unknown_host_and_internal_prefix(client) -> None:
     assert "Warden" in missing.text or "not found" in missing.text.lower()
 
 
+def test_machine_404_is_json_without_an_accept_header(client) -> None:
+    """A client that does not ask for HTML (Prometheus, curl) gets JSON."""
+    response = client.get(
+        "/anything", headers={"host": "unknown.home.lan"}, follow_redirects=False
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"] == "No service here"
+
+
 def test_public_route_is_proxied(client) -> None:
     response = client.get(
         "/hello?x=1",
@@ -203,6 +242,34 @@ def test_public_route_is_proxied(client) -> None:
     public = client.get("/public/info", headers=host_headers("app.home.lan"))
     assert public.status_code == 200
     assert "path=/public/info" in public.text
+
+
+def test_public_path_cannot_be_escaped_with_dot_segments(client) -> None:
+    """``public_paths`` is matched on the normalised path.
+
+    The proxy forwards the raw path and the upstream collapses dot segments, so
+    ``/public/../secret`` reaches a protected path while still matching
+    ``/public/*``. ``%2e%2e`` is decoded before the rule runs.
+    """
+    public = client.get("/public/report.txt", headers=host_headers("app.home.lan"))
+    assert public.status_code == 200
+
+    # A machine client gets 401 JSON, never the protected upstream response.
+    for path in ("/public/../secret", "/public/%2e%2e/secret", "/public/./../secret"):
+        response = client.get(
+            path, headers=host_headers("app.home.lan"), follow_redirects=False
+        )
+        assert response.status_code == 401, path
+        assert response.headers["content-type"] == "application/json", path
+
+    # A browser is sent to the sign-in page instead.
+    browser = client.get(
+        "/public/%2e%2e/secret",
+        headers=host_headers("app.home.lan", accept="text/html"),
+        follow_redirects=False,
+    )
+    assert browser.status_code == 303
+    assert browser.headers["location"].startswith("/_warden/login?next=")
 
 
 def test_protected_route_requires_session(client) -> None:
@@ -230,6 +297,59 @@ def test_protected_route_requires_session(client) -> None:
         follow_redirects=False,
     )
     assert post.status_code == 401
+
+
+def test_metrics_endpoint_never_returns_html(client) -> None:
+    """Machine clients get 401 JSON from the metrics endpoint, never HTML."""
+    for accept in ("*/*", "text/plain;version=0.0.4,*/*", "application/openmetrics-text,*/*"):
+        response = client.get(
+            "/_warden/metrics",
+            headers={"host": "admin.home.lan", "accept": accept},
+            follow_redirects=False,
+        )
+        assert response.status_code == 401, accept
+        assert response.headers["content-type"] == "application/json", accept
+
+    browser = client.get(
+        "/_warden/metrics",
+        headers={"host": "admin.home.lan", "accept": "text/html"},
+        follow_redirects=False,
+    )
+    assert browser.status_code == 303
+    assert browser.headers["location"].startswith("/_warden/login?next=")
+
+    for path in ("/_warden/metrics", "/metrics"):
+        authed = client.get(path, headers=admin_headers(), follow_redirects=False)
+        assert authed.status_code == 200, path
+        assert authed.headers["content-type"].startswith("text/plain"), path
+        assert "warden_uptime_seconds" in authed.text, path
+
+
+def test_metrics_token_allows_scraping_without_session(tmp_path) -> None:
+    """`server.metrics_token` unlocks only the metrics endpoints."""
+    path = write_config(tmp_path, config_dict(tmp_path, metrics_token="test-scrape-token"))
+    seed_user(tmp_path / "warden.db")
+    app = create_app(path)
+
+    with TestClient(app, base_url="http://admin.home.lan", follow_redirects=False) as c:
+        host = {"host": "admin.home.lan", "accept": "text/plain"}
+        bearer = {"authorization": "Bearer test-scrape-token"}
+
+        assert c.get("/_warden/metrics", headers=host).status_code == 401
+        assert c.get("/_warden/metrics", headers={**host, "authorization": "Bearer wrong"}).status_code == 401
+
+        ok = c.get("/_warden/metrics", headers={**host, **bearer})
+        assert ok.status_code == 200
+        assert ok.headers["content-type"].startswith("text/plain")
+        assert "warden_uptime_seconds" in ok.text
+
+        assert c.get("/metrics", headers={**host, **bearer}).status_code == 200
+        assert c.get("/_warden/metrics?token=test-scrape-token", headers=host).status_code == 200
+
+        # The token must not unlock anything else.
+        assert c.get("/", headers={**host, **bearer}).status_code == 401
+        assert c.get("/_warden/api/status", headers={**host, **bearer}).status_code == 401
+        assert c.get("/metrics/view", headers={**host, **bearer}).status_code == 401
 
 
 def test_proxy_authenticates_and_sanitizes_headers(client) -> None:

@@ -164,6 +164,64 @@ def test_mesh_write_config_success() -> None:
         # The method writes to file; just verify it completes without error when mocked properly
         pass
 
+def test_mesh_write_config_only_tightens_directories_it_creates(tmp_path) -> None:
+    """Writing a peer config must not chmod an existing directory.
+
+    ``mesh.config_path`` may live in a shared directory (``/tmp``,
+    ``/etc/wireguard``); locking that directory to 0700 breaks every other
+    file and user in it.
+    """
+    import stat
+
+    db = AsyncMock()
+    db.get_setting = AsyncMock(return_value="hub-private-key")
+    db.list_mesh_peers = AsyncMock(return_value=[])
+    manager = MagicMock()
+    manager.config.mesh.enabled = True
+    manager.config.mesh.address = "10.44.0.1/24"
+    manager.config.mesh.listen_port = 51820
+
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    shared.chmod(0o755)
+    manager.config.mesh_config_path = shared / "wg0.conf"
+    path = asyncio.run(MeshManager(db, manager).write_config())
+    assert path.exists()
+    assert stat.S_IMODE(shared.stat().st_mode) == 0o755
+
+    fresh = tmp_path / "created" / "wg0.conf"
+    manager.config.mesh_config_path = fresh
+    asyncio.run(MeshManager(db, manager).write_config())
+    assert stat.S_IMODE(fresh.parent.stat().st_mode) == 0o700
+
+
+def test_refresh_handshakes_keeps_the_last_apply_result() -> None:
+    """Polling for handshakes must not overwrite what the last apply reported."""
+    db = AsyncMock()
+    db.list_mesh_peers = AsyncMock(return_value=[])
+    manager = MagicMock()
+    manager.config.mesh.enabled = True
+    manager.config.mesh.interface = "wg0"
+    mesh_mgr = MeshManager(db, manager)
+    applied = {
+        "ok": True,
+        "output": "applied",
+        "config_path": "/etc/wireguard/wg0.conf",
+        "interface": "wg0",
+        "timestamp": 1.0,
+    }
+    mesh_mgr.last_apply = applied
+
+    with patch.object(
+        mesh_mgr.adapter,
+        "refresh_handshakes",
+        new=AsyncMock(return_value={"available": True, "applied": True, "peers": {}}),
+    ):
+        asyncio.run(mesh_mgr.refresh_handshakes())
+
+    assert mesh_mgr.last_apply is applied
+
+
 def test_mesh_apply_raises_no_wg() -> None:
     db = AsyncMock()
     manager = MagicMock()

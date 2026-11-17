@@ -20,6 +20,22 @@
     <span class="btn-spinner" aria-hidden="true"></span>
   </button>
 
+  <div class="panel" id="otp-step" hidden style="border-color: var(--accent);">
+    <div class="panel-body">
+      <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 10px;">
+        Enter the 6-digit code from your authenticator app to finish signing in.
+      </p>
+      <label class="field">
+        <span class="field-label">Authenticator code</span>
+        <input class="input" id="otp-login-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456" spellcheck="false">
+      </label>
+      <button class="btn btn-primary btn-block" id="otp-login-submit" type="button" style="margin-top: 10px;">
+        <span>Verify code</span>
+        <span class="btn-spinner" aria-hidden="true"></span>
+      </button>
+    </div>
+  </div>
+
   <div class="divider">
     <span style="flex: 1; height: 1px; background: var(--border);"></span>
     <span>or</span>
